@@ -161,4 +161,16 @@ in
     # Wifi mixin appended by flake.nix only when wifi.conf exists.
     artifact = "sd";
   }
+
+  # ===== nanokvm-pcie / mainline (extlinux SD image) =====
+  # Mainline kernel + mainline U-Boot + extlinux. Reachable over the
+  # USB-ECM gadget (usb0 + ttyGS0 console) since mainline lacks the
+  # vendor bm-dwmac ethernet driver.
+  {
+    path = [ "pcie" "mainline" "sd" ];
+    boardName = "nanokvm-pcie";
+    kernel = "mainline";
+    profile = "sd-image-mainline";
+    artifact = "sd";
+  }
 ]
