@@ -5,6 +5,19 @@
 { lib }:
 with lib.kernel; {
   # =====================================================================
+  # Early-boot compatibility for the T-Head C906 (SG2002).
+  #
+  # The old, *booting* mainline kernel used `make riscv defconfig` as its
+  # base; this one uses the NixOS `linux_latest` common-config. Same 7.0.3
+  # source + same patches — the ONLY difference is the base config, and
+  # with the NixOS base the kernel hangs silently before initrd. KASLR is
+  # the prime suspect: NixOS enables RANDOMIZE_BASE, but riscv defconfig
+  # and the Milk-V Duo (same C906) both leave it off, and KASLR's early
+  # self-relocation is a known early-hang trigger on T-Head cores. Turn it
+  # off to match the defconfig base that booted.
+  RANDOMIZE_BASE = no;
+
+  # =====================================================================
   # Live-boot infrastructure: NBD root (usb0-served erofs) + kexec for
   # the stage2 -> stage2 dev loop.
   # =====================================================================
