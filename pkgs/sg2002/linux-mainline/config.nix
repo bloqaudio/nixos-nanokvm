@@ -37,6 +37,21 @@ with lib.kernel; {
   RISCV_VECTOR_MISALIGNED = no;
   RISCV_PROBE_VECTOR_UNALIGNED_ACCESS = no;
 
+  # More NixOS-base-only options that *do work during early boot* and that
+  # the booting defconfig lacks. Vector/KASLR/RELOCATABLE off didn't fix
+  # the hang, so batch-disable the next tier of boot-active machinery:
+  #   - FTRACE: DYNAMIC_FTRACE + patchable-function-entry + CALL_OPS patches
+  #     every kernel function's entry at early boot — RISC-V's newer
+  #     code-patching path is a prime silent-hang suspect on the C906.
+  #   - NUMA: single C906, no NUMA topology; OF_NUMA/arch-numa init runs
+  #     early and defconfig never enables it.
+  #   - KFENCE / PAGE_POISONING: set up guard pools / poison pages at boot.
+  # If this boots, binary-search which one mattered.
+  FTRACE = no;
+  NUMA = no;
+  KFENCE = no;
+  PAGE_POISONING = no;
+
   # =====================================================================
   # Live-boot infrastructure: NBD root (usb0-served erofs) + kexec for
   # the stage2 -> stage2 dev loop.
