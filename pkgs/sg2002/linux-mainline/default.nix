@@ -22,6 +22,9 @@
   # any extra args callPackage / linuxPackagesFor threads through.
   ...
 }:
+# Standard nixpkgs riscv64 kernel: buildLinux installs the uncompressed
+# `Image` (kernelFile default) into $out on its own — no compress/install
+# dance needed. We only layer on the SG2002 patch queue + config delta.
 (linux_latest.override {
   # config.nix is the authoritative SG2002 delta, so force every entry
   # over the generic NixOS base (otherwise our `turn off` of e.g. DRM
@@ -33,19 +36,4 @@
   # We prune hard against the full NixOS config; let olddefconfig drop
   # options whose deps we turned off instead of failing the build.
   ignoreConfigErrors = true;
-})
-.overrideAttrs (old: {
-  # RISC-V `make install` hardcodes Image.gz; the build only produces
-  # Image. Compress before install, then copy Image back into $out
-  # (NixOS's kernelFile default is Image).
-  postBuild =
-    (old.postBuild or "")
-    + ''
-      gzip -9 --keep --no-name arch/riscv/boot/Image
-    '';
-  postInstall =
-    (old.postInstall or "")
-    + ''
-      gunzip -c $out/Image.gz > $out/Image
-    '';
 })
