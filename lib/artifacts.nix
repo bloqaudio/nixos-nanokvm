@@ -4,7 +4,7 @@
 #                          (see lib/host-prelude.nix).
 #
 # Returns a function `pkgs -> { mkBootFit, mkKexecPayload, mkLiveRootfs,
-# mkKexecRunner, mkUsbBootRunner, mkBoardFdt, sg2002OledOverlayDtbo,
+# mkKexecRunner, mkUsbBootRunner, sg2002OledOverlayDtbo,
 # kernelTestBootargs, mkLiveBootargs }`.
 #
 # Split out of flake.nix so flake.nix stays roughly the size of an
@@ -15,22 +15,10 @@
 }: pkgs:
 let
   # Select the board DTB for direct FIT boot and kexec payloads. The
-  # wifi variant needs sdhci1 wired up (AIC8800 lives on it); the OLED
-  # variant disables sdhci1 and wires those pads to IIC1.
-  mkBoardFdt =
-    { board
-    , kernel
-    , variant ? null
-    ,
-    }:
-    if board == "licheerv" && variant == "wifi"
-    then pkgs.sg2002-dtb-mainline
-    else if board == "licheerv" && variant == "oled"
-    then pkgs.sg2002-dtb-mainline-oled
-    else if kernel == "vendor"
-    then pkgs.sg2002-dtb-vendor-gadget
-    else pkgs.sg2002-dtb-mainline-nowifi;
-
+  # NB: the DTB is no longer chosen here — every board's
+  # `config.sg2002.fdt` is the single source of truth (set by the
+  # platform default + the WiFi/OLED/ethernet modules). mkBootFit and
+  # mkKexecPayload read it straight off the resolved NixOS config.
   mkFeatureBootargs = { oled ? false }:
     lib.optionals oled [
       "fbcon=font:MINI4x6"
@@ -41,14 +29,6 @@ let
     lib.optionals oled [ "nanokvm.kexec_target_overlay=oled" ]
     ++ mkFeatureBootargs { inherit oled; };
 
-  mkFitVariant =
-    { variant ? null
-    , oled ? false
-    ,
-    }:
-    if oled
-    then "oled"
-    else variant;
 
   sg2002OledOverlayDtbo =
     pkgs.runCommand "sg2002-licheerv-nano-oled.dtbo"
@@ -59,21 +39,16 @@ let
     '';
 
   mkBootFit =
-    { board
-    , kernel
-    , profile
+    { profile
     , cfg
     , description
-    , variant ? null
-    , oled ? false
     ,
     }:
     pkgs.sg2002-boot-fit {
       kernel = cfg.config.system.build.kernel;
-      fdt = mkBoardFdt {
-        inherit board kernel;
-        variant = mkFitVariant { inherit variant oled; };
-      };
+      # Single source of truth — the board config already resolved which
+      # DTB to boot (platform default + WiFi/OLED/ethernet modules).
+      fdt = cfg.config.sg2002.fdt;
       initrd = "${cfg.config.system.build.initialRamdisk}/initrd";
       loadAddrs = {
         kernel = "0x80200000";
@@ -104,11 +79,8 @@ let
 
   mkKexecPayload =
     { name
-    , board
-    , kernel
     , cfg
     , rootfsCfg ? cfg
-    , variant ? null
     , oled ? false
     , extraBootargs ? [ ]
     ,
@@ -122,7 +94,7 @@ let
       inherit name;
       kernel = "${cfg.config.system.build.kernel}/Image";
       initrd = "${cfg.config.system.build.initialRamdisk}/initrd";
-      dtb = mkBoardFdt { inherit board kernel variant; };
+      dtb = cfg.config.sg2002.fdt;
       dtbo =
         if oled
         then sg2002OledOverlayDtbo
@@ -656,7 +628,6 @@ in
     mkLiveRootfs
     mkKexecRunner
     mkUsbBootRunner
-    mkBoardFdt
     sg2002OledOverlayDtbo
     mkFeatureBootargs
     oledBootargs

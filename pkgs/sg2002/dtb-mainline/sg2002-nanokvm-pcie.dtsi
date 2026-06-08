@@ -1,0 +1,20 @@
+/* NanoKVM-PCIe carrier overlay (mainline).
+ *
+ * The SG2002 has an on-die GMAC (snps,dwmac-3.70a) at 0x4070000 with an
+ * internal 10/100 EPHY reached through the mmioreg mdio-mux. The
+ * upstream cv180x.dtsi defines both but leaves them `status =
+ * "disabled"` (the LicheeRV-Nano dev board has no ethernet). The
+ * NanoKVM-PCIe carrier wires the GMAC to the RJ45, so enable them.
+ *
+ * Layered on top of sg2002-licheerv-nano-bw.dtsi, which already keeps
+ * SDIO1 (AIC8800 WiFi) enabled — so this DTB carries both ethernet and
+ * WiFi for the PCIe board.
+ */
+
+&mdio {
+	status = "okay";
+};
+
+&gmac0 {
+	status = "okay";
+};

@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NixOS NanoKVM <nanokvm@localhost>
+Date: Mon, 8 Jun 2026 00:00:00 +0200
+Subject: [PATCH] mmc: cv1800b_sdhci: program cv18xx SD PHY at probe
+
+The upstream cv1800b_sdhci driver assumes the FSBL left the SD PHY
+initialised and only touches PHY_TX_RX_DLY/PHY_CONFIG during tuning.
+Our mainline FIP boots via the *vendor* FSBL, which leaves those
+registers at 0 -- with no TX/RX clock inversion the card never answers
+ACMD41 ("Card did not respond to voltage select! : -110"). The kernel
+(sdhci-of-dwcmshc cv18xx_sdhci_reset) programs them on every reset.
+
+U-Boot has no sdhci .reset op and only does RESET_ALL once (in
+sdhci_init via sdhci_probe), so program the PHY right after sdhci_probe;
+it then survives to card init.
+---
+ drivers/mmc/cv1800b_sdhci.c | 46 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 45 insertions(+), 1 deletion(-)
+
+--- a/drivers/mmc/cv1800b_sdhci.c
++++ b/drivers/mmc/cv1800b_sdhci.c
+@@ -14,6 +14,24 @@
+ 
+ #define PHY_TX_SRC_INVERT  BIT(8)
+ 
++/*
++ * cv18xx SD PHY init, ported from the kernel's sdhci-of-dwcmshc
++ * cv18xx_sdhci_reset(). Our mainline FIP uses the vendor FSBL, which
++ * leaves PHY_TX_RX_DLY / PHY_CONFIG unprogrammed; without the TX/RX
++ * clock inversion the card never answers ACMD41 (mmc init -110). The
++ * upstream driver only touches the PHY during tuning, which never runs
++ * because init fails first.
++ */
++#define DWCMSHC_P_VENDOR_AREA1  0xe8
++#define DWCMSHC_AREA1_MASK      0xfff
++#define CV18XX_MSHC_CTRL        0x00
++#define CV18XX_LATANCY_1T       BIT(1)
++#define CV18XX_PHY_TX_RX_DLY    0x40
++#define CV18XX_PHY_TX_SRC_INV   BIT(8)
++#define CV18XX_PHY_RX_SRC_INV   BIT(24)
++#define CV18XX_PHY_CONFIG       0x4c
++#define CV18XX_PHY_TX_BPS       BIT(0)
++
+ struct cv1800b_sdhci_plat {
+ 	struct mmc_config cfg;
+ 	struct mmc mmc;
+@@ -77,6 +95,24 @@
+ 	return sdhci_bind(dev, &plat->mmc, &plat->cfg);
+ }
+ 
++static void cv1800b_sdhci_phy_init(struct sdhci_host *host)
++{
++	u32 area1, val;
++
++	area1 = sdhci_readl(host, DWCMSHC_P_VENDOR_AREA1) & DWCMSHC_AREA1_MASK;
++
++	val = sdhci_readl(host, area1 + CV18XX_MSHC_CTRL);
++	val |= CV18XX_LATANCY_1T;
++	sdhci_writel(host, val, area1 + CV18XX_MSHC_CTRL);
++
++	val = sdhci_readl(host, area1 + CV18XX_PHY_CONFIG);
++	val |= CV18XX_PHY_TX_BPS;
++	sdhci_writel(host, val, area1 + CV18XX_PHY_CONFIG);
++
++	sdhci_writel(host, CV18XX_PHY_TX_SRC_INV | CV18XX_PHY_RX_SRC_INV,
++		     area1 + CV18XX_PHY_TX_RX_DLY);
++}
++
+ static int cv1800b_sdhci_probe(struct udevice *dev)
+ {
+ 	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
+@@ -102,7 +138,15 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	return sdhci_probe(dev);
++	ret = sdhci_probe(dev);
++	if (ret)
++		return ret;
++
++	/* Program the SD PHY now; sdhci_probe() already did RESET_ALL and
++	 * no further full reset happens before card init. */
++	cv1800b_sdhci_phy_init(host);
++
++	return 0;
+ }
+ 
+ static const struct udevice_id cv1800b_sdhci_match[] = {

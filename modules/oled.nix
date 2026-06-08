@@ -71,6 +71,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # OLED uses the variant DTB that disables SDIO1 and wires those pads
+    # to IIC1 + the SH1107 panel (mainline only; vendor handles it in
+    # its own DTS).
+    sg2002.fdt = lib.mkIf (config.sg2002.kernel == "mainline") (
+      lib.mkDefault pkgs.sg2002-dtb-mainline-oled
+    );
+
     # NixOS enables `getty@tty1` by default — it grabs /dev/tty1 and
     # paints "<host> login:" via fbcon onto fb0. Our oled-app wants
     # tty1 too. Disable the default so the app's writes aren't

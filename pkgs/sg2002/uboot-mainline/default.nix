@@ -51,5 +51,9 @@ buildUBoot {
     ./patches/0002-riscv-dts-sg2002-licheerv-nano-b-add-U-Boot-dtsi-wit.patch
     ./patches/0003-usb-gadget-dwc2_udc_otg-treat-ENOENT-as-no-clocks.patch
     ./patches/0004-usb-gadget-dwc2_udc_otg-lift-ARM-only-gate-drop-asm-.patch
+    # cv1800b SD won't init under our vendor-FSBL FIP because the upstream
+    # MMC driver never programs the cv18xx SD PHY at init (only during
+    # tuning). Port the kernel's PHY setup so the card answers ACMD41.
+    ./patches/0005-mmc-cv1800b_sdhci-program-cv18xx-sd-phy-at-probe.patch
   ];
 }

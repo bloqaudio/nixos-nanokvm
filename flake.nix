@@ -200,15 +200,13 @@
 
           art = mkArtifacts pkgs;
 
-          # Specialise the three artifact builders so the catalog-walker
-          # below can just call them with a catalog entry.
-          # For mkBoardFdt: only `licheerv` (cv1800/SG2002) produces these
-          # artifacts; nanokvm-pcie is its own sdImage-only path.
-          board = "licheerv";
+          # Specialise the artifact builders so the catalog-walker below
+          # can just call them with a catalog entry. The DTB each artifact
+          # boots comes from the entry's resolved `config.sg2002.fdt`, so
+          # nothing board-specific needs threading through here anymore.
           entryCfg = entry: lib.getAttrFromPath entry.path boardSystems;
           entryArtifactArgs = entry: entry.artifactArgs or { };
           entryArtifactArg = name: default: entry: (entryArtifactArgs entry).${name} or default;
-          entryVariant = entry: entry.variant or null;
           entryOled = entryArtifactArg "oled" false;
           entryExtraBootargs = entryArtifactArg "extraBootargs" [ ];
           entryRootfsBindIp = entryArtifactArg "rootfsBindIp" null;
@@ -222,9 +220,7 @@
             }:
             art.mkKexecPayload {
               name = "nanokvm-kexec-${entry.tag}.erofs";
-              inherit board cfg extraBootargs;
-              inherit (entry) kernel;
-              variant = entryVariant entry;
+              inherit cfg extraBootargs;
               oled = entryOled entry;
             };
 
@@ -236,10 +232,7 @@
             ,
             }:
             art.mkBootFit {
-              inherit board cfg profile description;
-              inherit (entry) kernel;
-              variant = entryVariant entry;
-              oled = entryOled entry;
+              inherit cfg profile description;
             };
 
           liveArtifacts = entry:

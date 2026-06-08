@@ -31,19 +31,6 @@ let
     licheerv-nano-build = inputs.licheerv-nano-build;
   };
 
-  # Kernel config + patches for the mainline build. Reused by both
-  # the kernel derivation and the kconfig step (kconfig has to apply
-  # the same patches so olddefconfig doesn't drop symbols touched by
-  # them).
-  mainlineKernelExtras = with lib.kernel; {
-    BLK_DEV_NBD = yes;
-    KEXEC = yes;
-    KEXEC_FILE = yes;
-  };
-  mainlineConfig =
-    (import ./sg2002/linux-mainline/config.nix { inherit lib; })
-    // mainlineKernelExtras;
-  mainlinePatches = (import ./sg2002/linux-mainline/patches.nix).patches;
 in
 {
   # -----------------------------------------------------------------
@@ -251,13 +238,9 @@ in
 
   sg2002-uboot-mainline = cross.callPackage ./sg2002/uboot-mainline { };
 
-  sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline {
-    configfile = final.buildPackages.callPackage ./sg2002/linux-mainline/make-config.nix {
-      src = final.buildPackages.linux_latest.src;
-      config = mainlineConfig;
-      patches = map (p: p.patch) mainlinePatches;
-    };
-  };
+  # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
+  # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
+  sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline { };
 
   # Vendor 5.10 tree with NanoKVM extras (NBD, erofs). Built from
   # licheerv-nano-build's vendor kernel tarball; baseExtraConfig is
@@ -287,6 +270,7 @@ in
   sg2002-dtbs-mainline = dtbMainline.dtbs;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
+  sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-vendor = dtbVendor.boot;
   sg2002-dtb-vendor-gadget = dtbVendor.gadget;
 

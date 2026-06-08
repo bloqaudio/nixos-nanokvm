@@ -32,8 +32,17 @@
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;
   hardware.deviceTree.enable = true;
-  # Override the kernel build's default dtbs dir with our SG2002 DTB.
-  hardware.deviceTree.package = lib.mkForce pkgs.sg2002-dtbs-mainline;
+  # Same single source of truth as the FIT path: wrap config.sg2002.fdt
+  # (set by the platform default + WiFi/OLED/ethernet modules) into the
+  # dtbs dir extlinux expects, so the SD image and the USB boot-fit
+  # always agree on the DTB.
+  hardware.deviceTree.name = "sg2002.dtb";
+  hardware.deviceTree.package = lib.mkForce (
+    pkgs.runCommand "sg2002-fdt-dir" {} ''
+      mkdir -p "$out"
+      cp ${config.sg2002.fdt} "$out/sg2002.dtb"
+    ''
+  );
 
   # Both sg2002-sd-image.nix and sg2002-usb-gadget-initrd.nix mkForce
   # boot.initrd.{available,}KernelModules; resolve the tie in favour of

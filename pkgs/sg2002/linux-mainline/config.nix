@@ -5,6 +5,14 @@
 { lib }:
 with lib.kernel; {
   # =====================================================================
+  # Live-boot infrastructure: NBD root (usb0-served erofs) + kexec for
+  # the stage2 -> stage2 dev loop.
+  # =====================================================================
+  BLK_DEV_NBD = yes;
+  KEXEC = yes;
+  KEXEC_FILE = yes;
+
+  # =====================================================================
   # Enables — SoC + gadget + aic8800 OOT driver
   # =====================================================================
 
@@ -70,9 +78,12 @@ with lib.kernel; {
   MFD_SYSCON = yes;
 
   # Wireless stack — needed for out-of-tree aic8800 driver
-  # (exposes `struct net_device.ieee80211_ptr` etc.)
+  # (exposes `struct net_device.ieee80211_ptr` etc.). cfg80211 is a
+  # module: the full NixOS base builds RFKILL as a module and a built-in
+  # can't depend on a module. The OOT aic8800 module loads against
+  # cfg80211.ko all the same.
   WIRELESS = yes;
-  CFG80211 = yes;
+  CFG80211 = module;
   CFG80211_WEXT = yes;
   WEXT_CORE = yes;
   WEXT_PROC = yes;
@@ -163,19 +174,12 @@ with lib.kernel; {
   PWM = yes;
   PWM_SOPHGO_CV1800 = yes;
 
-  # On-chip audio: I2S/TDM controller + internal RXADC (mic) +
-  # internal TXDAC (speaker amp). LicheeRV Nano B-W has the analog
-  # mic and ~1 W speaker amp wired straight to those internal blocks
-  # — no external i2c codec. simple-audio-card glues them via the
-  # nodes added in pkgs/dtb-mainline/sg2002-licheerv-nano-bw.dtsi.
-  SOUND = yes;
-  SND = yes;
-  SND_SOC = yes;
-  SND_SOC_GENERIC_DMAENGINE_PCM = yes;
-  SND_SOC_CV1800B_TDM = module;
-  SND_SOC_CV1800B_ADC_CODEC = module;
-  SND_SOC_CV1800B_DAC_CODEC = module;
-  SND_SOC_SIMPLE_CARD = module;
+  # Audio OFF on the KVM: the SoC has I2S/TDM + internal mic/speaker,
+  # but turning SND_SOC on against the full NixOS base drags ~400 codec
+  # modules we'll never use, and a KVM doesn't need audio. Force the
+  # whole sound subsystem off. (Re-enable SOUND/SND_SOC + the
+  # SND_SOC_CV1800B_* drivers here if audio is ever wanted.)
+  SOUND = no;
   # DMA engine + dmamux required for the I2S DMA paths to work.
   # dw_axi_dmac drives the 8-channel AXI DMA at 4330000; the dmamux
   # (drivers/dma/cv1800b-dmamux.c) routes the peripheral request
@@ -323,7 +327,23 @@ with lib.kernel; {
   NET_VENDOR_SOLARFLARE = no;
   NET_VENDOR_SMSC = no;
   NET_VENDOR_SOCIONEXT = no;
-  NET_VENDOR_STMICRO = no;
+  # SG2002 *does* have an on-die GMAC (snps,dwmac-3.70a) at 0x4070000 —
+  # the LicheeRV-Nano dev board leaves it unwired, but the NanoKVM-PCIe
+  # carrier routes it to the RJ45. Enable the stmmac stack + the Sophgo
+  # glue + the internal-EPHY mdio-mux so the pcie DTB can light it up.
+  # Modules, not built-in: ethernet isn't needed at boot (NBD root runs
+  # over usb0), and against the full NixOS base these tristate drivers
+  # can only be modules anyway (their deps are modular). stmmac +
+  # dwmac-sophgo + the internal-EPHY mdio-mux load at stage-2 → eth0.
+  NET_VENDOR_STMICRO = yes;
+  STMMAC_ETH = module;
+  STMMAC_PLATFORM = module;
+  DWMAC_SOPHGO = module;
+  PHYLIB = yes;
+  MDIO_BUS = yes;
+  MDIO_DEVICE = yes;
+  MDIO_BUS_MUX = module;
+  MDIO_BUS_MUX_MMIOREG = module;
   NET_VENDOR_SUN = no;
   NET_VENDOR_SYNOPSYS = no;
   NET_VENDOR_TEHUTI = no;
@@ -389,4 +409,59 @@ with lib.kernel; {
   WLAN_VENDOR_TI = no;
   WLAN_VENDOR_ZYDAS = no;
   WLAN_VENDOR_QUANTENNA = no;
+
+  # =====================================================================
+  # Hard prune — the normal NixOS base builds ~3800 modules; the 256 MB
+  # NanoKVM (erofs-over-NBD rootfs) has none of this hardware and needs
+  # none of these subsystems. Disable the top-level menus to drop the
+  # bulk of that module tree. Anything genuinely needed is turned back
+  # on explicitly above.
+  # =====================================================================
+
+  # No SCSI / ATA / NVMe / RAID / device-mapper / multipath — the only
+  # storage is the SD/eMMC controller (cv-sd, kept above).
+  MD = no;
+  TARGET_CORE = no;
+
+  # Gadget-only USB: keep dwc2 + the configfs functions (above); drop
+  # host-class drivers, serial converters, USB-net, USB mass-storage
+  # host, USB HID, and the host-side device zoo.
+  USB_SERIAL = no;
+  USB_NET_DRIVERS = no;
+  USB_STORAGE = no;
+  USB_HID = no;
+  USB_PRINTER = no;
+  USB_MDC800 = no;
+  USB_MICROTEK = no;
+
+  # No external PMICs / regulators / MFDs / battery / charger / power.
+  REGULATOR = no;
+
+  # Industrial-IO / 1-wire / IR / comedi / typec / hwtracing / firewire
+  # / thunderbolt / infiniband / GPU-DRM / V4L-DVB media — no hardware.
+
+  # Networking: no firewall (firewall.enable = false), no exotic L4
+  # protocols, no traffic shaping, no tunnels/wireguard-in-kernel.
+  NETFILTER = no;
+  IP_SCTP = no;
+  IP_DCCP = no;
+  RDS = no;
+  TIPC = no;
+  L2TP = no;
+  NET_SCHED = no;
+  BRIDGE = no;
+  VLAN_8021Q = no;
+  WIREGUARD = no;
+
+  # No remote/exotic filesystems — keep ext4/vfat/erofs/overlay/tmpfs
+  # /configfs/autofs (those stay on via the base / above).
+  NETWORK_FILESYSTEMS = no;
+
+  # Audio: keep the SoC I2S codec (cv1800b-sound, pulled in by the
+  # board); drop USB / PCI / FireWire / other-SoC sound.
+  SND_USB = no;
+  SND_PCI = no;
+  SND_PCMCIA = no;
+  SND_FIREWIRE = no;
+  SND_SPI = no;
 }

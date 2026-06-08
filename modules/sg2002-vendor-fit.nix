@@ -19,20 +19,17 @@
     else pkgs.sg2002-fip;
 
   # The plain `sg2002-dtb-vendor` leaves the dwc2 USB controller in
-  # the vendor's default mode, which on this board comes up as host —
-  # so the dev USB-C port enumerates nothing and we can't ssh in.
-  # The `-gadget` variant overrides dr_mode=peripheral + bumped FIFOs.
-  # uEnv.txt's bootargs= line takes precedence over chosen.bootargs in
-  # the DTB, so the gadget wrapper's missing `root=` doesn't matter
-  # here — we still get root=/dev/disk/by-label/NIXOS_SD from sd-image.
-  dtbFile =
-    if cfg.kernel == "vendor"
-    then pkgs.sg2002-dtb-vendor-gadget
-    else pkgs.sg2002-dtb-mainline;
-
+  # The DTB comes from the single source of truth, sg2002.fdt (set by
+  # the platform default + feature/board modules). For the vendor kernel
+  # that resolves to the `-gadget` variant: vendor OTG auto-detect lands
+  # on host mode, so the dev USB-C port enumerates nothing; the gadget
+  # DTS forces dr_mode=peripheral + bumped FIFOs. uEnv.txt's bootargs=
+  # line takes precedence over chosen.bootargs in the DTB, so the gadget
+  # wrapper's missing `root=` doesn't matter — we still get
+  # root=/dev/disk/by-label/NIXOS_SD from sd-image.
   bootFit = pkgs.sg2002-boot-fit {
     kernel = config.system.build.kernel;
-    fdt = dtbFile;
+    fdt = cfg.fdt;
     initrd = "${config.system.build.initialRamdisk}/initrd";
     loadAddrs = {
       kernel = "0x80200000";

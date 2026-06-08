@@ -10,6 +10,7 @@
 {
   config,
   lib,
+  pkgs,
   rootWifiConf ? null,
   ...
 }: {
@@ -19,6 +20,14 @@
     enable = true;
     wpaConf = lib.mkDefault rootWifiConf;
   };
+
+  # On mainline, WiFi needs SDIO1 wired (the WiFi-variant DTB). The
+  # vendor DTS already enables it, so only override there. A carrier
+  # board with its own combined DTB (PCIe = ethernet+WiFi) wins over
+  # this via a higher-priority definition.
+  sg2002.fdt = lib.mkIf (config.sg2002.kernel == "mainline") (
+    lib.mkDefault pkgs.sg2002-dtb-mainline
+  );
 
   assertions = [
     {

@@ -133,6 +133,46 @@ let
     # the kexec runner from the output set. usb-boot still publishes.
     artifactArgs.includeKexec = false;
   };
+
+  # nanokvm-pcie carrier (ethernet + WiFi + OLED footprint), mirroring
+  # the `lichee` helpers above so PCIe entries stay one-liners too.
+  pcie =
+    kernel: pathTail: attrs:
+    {
+      path = [ "pcie" kernel ] ++ pathTail;
+      boardName = "nanokvm-pcie";
+      inherit kernel;
+    }
+    // attrs;
+
+  pcieLive =
+    kernel: tag: attrs:
+    pcie kernel [ "live" "usb" ] (
+      {
+        profile = "usb-nbd-live";
+        artifact = "live";
+        inherit tag;
+      }
+      // attrs
+    );
+
+  # PCIe-live bring-up extras:
+  #   - WiFi driver only (wlan0 enumerates so the radio is exercisable;
+  #     associating needs ./wifi.conf + the wifi-aic8800 mixin, so we
+  #     avoid that mixin's wpaConf assertion to build without a conf).
+  #   - nanokvm-server (the web UI + ATX/GPIO control), which the live
+  #     profile doesn't enable on its own.
+  pcieLiveExtras = {
+    modules = [
+      ({ ... }: {
+        sg2002.wifi.enable = true;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  };
 in
 [
   # ===== licheerv-nano-w / mainline =====
@@ -152,25 +192,19 @@ in
   (debug "vendor")
   (live "vendor" "usb" "live-vendor" vendorUsb)
 
-  # ===== nanokvm-pcie / vendor (production SD image) =====
-  {
-    path = [ "pcie" "vendor" "sd" ];
-    boardName = "nanokvm-pcie";
-    kernel = "vendor";
-    profile = "sd-image";
-    # Wifi mixin appended by flake.nix only when wifi.conf exists.
-    artifact = "sd";
-  }
+  # ===== nanokvm-pcie / vendor =====
+  # Production SD image (vendor kernel + vendor-FIT). Wifi mixin appended
+  # by flake.nix only when wifi.conf exists.
+  (pcie "vendor" [ "sd" ] { profile = "sd-image"; artifact = "sd"; })
+  # USB-NBD live for hardware bring-up: ethernet (bm-dwmac) + WiFi work
+  # natively off the vendor DTS.
+  (pcieLive "vendor" "live-pcie-vendor" (pcieLiveExtras // vendorUsb))
 
-  # ===== nanokvm-pcie / mainline (extlinux SD image) =====
-  # Mainline kernel + mainline U-Boot + extlinux. Reachable over the
-  # USB-ECM gadget (usb0 + ttyGS0 console) since mainline lacks the
-  # vendor bm-dwmac ethernet driver.
-  {
-    path = [ "pcie" "mainline" "sd" ];
-    boardName = "nanokvm-pcie";
-    kernel = "mainline";
-    profile = "sd-image-mainline";
-    artifact = "sd";
-  }
+  # ===== nanokvm-pcie / mainline =====
+  # extlinux SD image (mainline U-Boot). Ethernet via stmmac + the
+  # ethernet-enabled DTB; reachable over the USB-ECM gadget too.
+  (pcie "mainline" [ "sd" ] { profile = "sd-image-mainline"; artifact = "sd"; })
+  # USB-NBD live exercising the full PCIe hardware — eth0 (stmmac) and
+  # wlan0 (AIC8800) both come up.
+  (pcieLive "mainline" "live-pcie-mainline" pcieLiveExtras)
 ]

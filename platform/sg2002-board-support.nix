@@ -62,6 +62,20 @@ in {
       description = "Which U-Boot/FIP to install on the firmware partition.";
     };
 
+    fdt = mkOption {
+      type = types.path;
+      description = ''
+        Device-tree blob this board boots. Single source of truth shared
+        by the vendor-FIT SD path (modules/sg2002-vendor-fit.nix) and the
+        USB boot-fit / kexec artifacts (lib/artifacts.nix) — neither
+        re-derives the DTB itself anymore.
+
+        The platform sets a sensible default per kernel; feature modules
+        (WiFi, OLED) and carrier boards (NanoKVM-PCIe ethernet) override
+        it, lowest-priority-wins so a carrier board beats a feature mixin.
+      '';
+    };
+
     wifi = {
       enable =
         mkEnableOption "AIC8800DC onboard WiFi (Nano-W variant)"
@@ -120,6 +134,16 @@ in {
           '';
         }
       ];
+
+      # Default DTB per kernel: vendor uses its gadget DTS; mainline
+      # defaults to the cable-only (no-WiFi) DTB. Feature mixins / carrier
+      # boards override at a higher priority. mkOptionDefault keeps this
+      # below an mkDefault from a mixin.
+      sg2002.fdt = lib.mkOptionDefault (
+        if cfg.kernel == "vendor"
+        then pkgs.sg2002-dtb-vendor-gadget
+        else pkgs.sg2002-dtb-mainline-nowifi
+      );
 
       # sd-image pulls a grab-bag of modules; board doesn't need
       # most, and vendor kernel ships no module tree (modules-shrunk

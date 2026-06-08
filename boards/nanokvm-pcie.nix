@@ -10,8 +10,9 @@
   imports = [
     ../platform/cv181x.nix
     # PCIe carrier wires RJ45 to ethernet@4070000 — pull in the
-    # mixin that brings the controller up and routes link traffic.
-    ../modules/ethernet-bm-dwmac.nix
+    # kernel-aware ethernet mixin (bm-dwmac on vendor, stmmac + the
+    # ethernet-enabled DTB on mainline).
+    ../modules/ethernet.nix
   ];
 
   services.nanokvm.hardwareVersion = lib.mkDefault "pcie";
