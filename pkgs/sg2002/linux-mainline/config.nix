@@ -10,12 +10,17 @@ with lib.kernel; {
   # The old, *booting* mainline kernel used `make riscv defconfig` as its
   # base; this one uses the NixOS `linux_latest` common-config. Same 7.0.3
   # source + same patches — the ONLY difference is the base config, and
-  # with the NixOS base the kernel hangs silently before initrd. KASLR is
-  # the prime suspect: NixOS enables RANDOMIZE_BASE, but riscv defconfig
-  # and the Milk-V Duo (same C906) both leave it off, and KASLR's early
-  # self-relocation is a known early-hang trigger on T-Head cores. Turn it
-  # off to match the defconfig base that booted.
+  # with the NixOS base the kernel hangs silently before initrd. Diffing
+  # the resolved riscv defconfig (old, booted) against the NixOS base
+  # (new, hangs) the meaningful early-boot deltas are RANDOMIZE_BASE *and*
+  # RELOCATABLE: the old kernel was non-relocatable, the NixOS one
+  # relocates itself in early boot (head.S, before any console). That
+  # early relocation pass is the most likely silent pre-console hang on
+  # the T-Head C906. Turn both off to match the defconfig base that booted
+  # (EFI/VMAP_STACK/RISCV_ISA_V are y in *both* defconfig and NixOS, and
+  # the DT advertises only rv64imafdc — no vector — so those aren't it).
   RANDOMIZE_BASE = no;
+  RELOCATABLE = no;
 
   # =====================================================================
   # Live-boot infrastructure: NBD root (usb0-served erofs) + kexec for
