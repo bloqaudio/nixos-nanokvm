@@ -94,7 +94,7 @@ def main():
                         'miss the window. Behind a USB hub the cdc_acm bind '
                         'is slower so the window is missed more often — just '
                         'retry more (see --attempts).')
-    p.add_argument('--attempts', type=int, default=30,
+    p.add_argument('--attempts', type=int, default=60,
                    help='how many rom-dl invocations to make before '
                         'giving up. Per-attempt timeout = rom-dl-timeout / '
                         'attempts, floored at 15s. After each attempt we '
