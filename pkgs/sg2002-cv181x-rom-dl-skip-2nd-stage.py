@@ -163,9 +163,23 @@ def patch_pyserial_flush_eio(path):
     if n == 0:
         print(f"WARN: flush-eio pattern not found in {path}; skipping")
         return
+
+    # serial_write also catches only `serial.SerialTimeoutException` on
+    # both the write() and the recv_ack read(). Over a hub the device
+    # cycles mid-2nd-stage push and read() raises the *parent*
+    # serial.SerialException ("device reports readiness to read but
+    # returned no data") — not a Timeout subclass — so it crashes too.
+    # Broaden every SerialTimeoutException handler in the file to
+    # Exception so any transient cycle just fails that chunk (-> the
+    # caller retries) instead of killing the whole push.
+    new_src = new_src.replace(
+        "except serial.SerialTimeoutException as e:",
+        "except Exception as e:  # broadened: hub cycles raise non-Timeout errors",
+    )
+
     with open(path, "w") as f:
         f.write(new_src)
-    print(f"patched (flush-eio): {path}")
+    print(f"patched (flush-eio + broadened serial excepts): {path}")
 
 
 def patch_skip_2nd_stage(path):
