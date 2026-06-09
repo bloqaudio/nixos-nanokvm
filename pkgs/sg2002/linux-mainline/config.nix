@@ -60,6 +60,18 @@ with lib.kernel; {
   KEXEC = yes;
   KEXEC_FILE = yes;
 
+  # SD card (sdhci0 / sophgo,cv1800b-dwcmshc). The controller glue
+  # (MMC_SDHCI_OF_DWCMSHC) is already =y from the NixOS base, but
+  # MMC_BLOCK defaults to a module — make it built-in so both the
+  # live-writer initrd (dd to /dev/mmcblk0) and the SD-image boot
+  # initrd (mount root from the card) see /dev/mmcblk0 without extra
+  # initrd module wiring.
+  MMC = yes;
+  MMC_BLOCK = yes;
+  MMC_SDHCI = yes;
+  MMC_SDHCI_PLTFM = yes;
+  MMC_SDHCI_OF_DWCMSHC = yes;
+
   # =====================================================================
   # Enables — SoC + gadget + aic8800 OOT driver
   # =====================================================================
