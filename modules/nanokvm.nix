@@ -144,12 +144,18 @@ in
 
     package = mkOption {
       type = types.package;
-      # The server RUNS ON THE DEVICE (riscv64), so it must be the target
-      # build, not pkgs.buildPackages (the x86_64 build host) — the latter
-      # ships a wrong-arch binary that dies with status=203/EXEC format
-      # error on the device.
-      default = pkgs.nanokvm-server;
-      defaultText = literalExpression "pkgs.nanokvm-server";
+      # The server RUNS ON THE DEVICE (riscv64). The package gets spliced
+      # to the build host in a cross config, so we force targetSystem to
+      # get a real riscv64 binary (otherwise it's x86_64 → 203/EXEC on the
+      # device). Mainline kernels must use the nocamera variant — libkvm.so's
+      # C++ static ctors SEGV under mainline; vendor keeps camera/HDMI.
+      default =
+        (
+          if config.sg2002.kernel == "mainline"
+          then pkgs.nanokvm-server-nocamera
+          else pkgs.nanokvm-server
+        ).override { targetSystem = "riscv64-linux"; };
+      defaultText = literalExpression "pkgs.nanokvm-server (riscv64-forced)";
       description = "NanoKVM server package to run on the device.";
     };
 

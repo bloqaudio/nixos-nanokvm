@@ -39,4 +39,31 @@
       '';
     }
   ];
+
+  # Stage-2 wpa_supplicant on wlan0. sg2002-initrd-wifi.nix only runs the
+  # supplicant in the initrd (before switch-root); a persistent / SD boot
+  # that goes straight to stage 2 needs it here too, or wlan0 never
+  # associates. Gated on a wpa config being present.
+  environment.etc = lib.mkIf (config.sg2002.wifi.wpaConf != null) {
+    "wpa_supplicant/wpa_supplicant-wlan0.conf".text = config.sg2002.wifi.wpaConf;
+  };
+  systemd.services.wpa_supplicant-wlan0 = lib.mkIf (config.sg2002.wifi.wpaConf != null) {
+    description = "wpa_supplicant on wlan0 (stage 2)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "sys-subsystem-net-devices-wlan0.device" ];
+    wants = [ "sys-subsystem-net-devices-wlan0.device" ];
+    serviceConfig = {
+      ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant-wlan0.conf -D nl80211";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+  };
+  systemd.network = lib.mkIf (config.sg2002.wifi.wpaConf != null) {
+    enable = true;
+    networks."40-wlan0" = {
+      matchConfig.Name = "wlan0";
+      networkConfig.DHCP = "yes";
+      linkConfig.RequiredForOnline = "no";
+    };
+  };
 }

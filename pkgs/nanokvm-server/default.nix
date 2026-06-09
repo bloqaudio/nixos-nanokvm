@@ -15,6 +15,14 @@
   # kernels and SEGV in SAMPLE_COMM_VI_ParseIni. Vendor 5.10 builds
   # leave this false to keep the working HDMI capture path.
   noCamera ? false,
+  # Force the build target system regardless of stdenv.hostPlatform.
+  # Needed because this Go package gets spliced to the *build* platform
+  # in a cross NixOS config (so stdenv.hostPlatform.system reads
+  # x86_64-linux even when the device is riscv64), which silently
+  # produces a wrong-arch binary that dies 203/EXEC on the device. The
+  # NixOS module passes "riscv64-linux" here. nocamera builds are pure
+  # Go (CGO_ENABLED=0) so this is just a GOARCH cross-compile.
+  targetSystem ? null,
 }: let
   # Two build modes:
   #   - riscv64-cross: cross-compile from x86_64 host, link against
@@ -25,7 +33,10 @@
   #     x86_64-linux on a dev machine). No factory blobs, no
   #     C906-specific cgo flags. Forces `noCamera = true` because the
   #     libkvm.so / OpenCV runtime is riscv64-only.
-  hostSys = stdenv.hostPlatform.system;
+  hostSys =
+    if targetSystem != null
+    then targetSystem
+    else stdenv.hostPlatform.system;
   isRiscvCross = hostSys == "riscv64-linux";
   # Force noCamera on non-riscv64 — libkvm.so doesn't exist for the
   # target architecture and the cgo include path would fail anyway.
