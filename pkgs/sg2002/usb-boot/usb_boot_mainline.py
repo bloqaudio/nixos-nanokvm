@@ -85,20 +85,23 @@ def main():
     p.add_argument('--rom-dl', help='path to cv181x-rom-dl')
     p.add_argument('--fastboot', default='fastboot',
                    help='path to fastboot binary (android-tools)')
-    p.add_argument('--wait', type=float, default=20.0,
+    p.add_argument('--wait', type=float, default=40.0,
                    help='seconds to wait for fastboot gadget to enumerate')
-    p.add_argument('--rom-dl-timeout', type=float, default=90.0,
+    p.add_argument('--rom-dl-timeout', type=float, default=480.0,
                    help='total seconds to spend on rom-dl across all '
                         'attempts. The CV181x ROM only stays live ~1s per '
                         '8s cycle in USB-DL mode; one rom-dl attempt may '
-                        'miss the window. We retry — see --attempts.')
-    p.add_argument('--attempts', type=int, default=6,
+                        'miss the window. Behind a USB hub the cdc_acm bind '
+                        'is slower so the window is missed more often — just '
+                        'retry more (see --attempts).')
+    p.add_argument('--attempts', type=int, default=30,
                    help='how many rom-dl invocations to make before '
                         'giving up. Per-attempt timeout = rom-dl-timeout / '
                         'attempts, floored at 15s. After each attempt we '
-                        'poll fastboot for 4s; if found, stop retrying. '
+                        'poll fastboot for 6s; if found, stop retrying. '
                         '15s/attempt gives FSBL enough room for the '
-                        'cvi_utask 2nd-stage push (rest of FIP).')
+                        'cvi_utask 2nd-stage push. Generous default so flaky '
+                        'hub paths still converge.')
     p.add_argument('--rom-dl-verbose', action='store_true',
                    help='let cv181x-rom-dl write to our stderr instead of '
                         'discarding (useful for debugging which stage hung)')
@@ -193,7 +196,7 @@ def main():
             # for the U-Boot fastboot gadget at 18d1:d00d so a phone
             # plugged in for unrelated reasons doesn't get treated as
             # "the device".
-            probe_deadline = time.time() + 4.0
+            probe_deadline = time.time() + 6.0
             seen = None
             while time.time() < probe_deadline:
                 seen = find_fastboot_target()
