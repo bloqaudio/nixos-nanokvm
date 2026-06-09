@@ -91,6 +91,16 @@ in
   # run against a mainline kernel.
   nanokvm-server-nocamera = final.nanokvm-server.override { noCamera = true; };
 
+  # Device server, forced to riscv64. Must be instantiated via
+  # buildPackages.callPackage (build host) with an explicit targetSystem,
+  # NOT `.override` on the cross-spliced pkgs.nanokvm-server — the splice
+  # silently drops override args, so that path builds an x86_64 binary
+  # that dies 203/EXEC on the device. nocamera = pure-Go cross-compile.
+  nanokvm-server-device = final.callPackage ./nanokvm-server {
+    noCamera = true;
+    targetSystem = "riscv64-linux";
+  };
+
   nbd-client-minimal = final.callPackage ./nbd-client-minimal { };
 
   nanokvm-erofs-rootfs-for = toplevel:

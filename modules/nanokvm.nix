@@ -149,13 +149,12 @@ in
       # get a real riscv64 binary (otherwise it's x86_64 → 203/EXEC on the
       # device). Mainline kernels must use the nocamera variant — libkvm.so's
       # C++ static ctors SEGV under mainline; vendor keeps camera/HDMI.
-      default =
-        (
-          if config.sg2002.kernel == "mainline"
-          then pkgs.nanokvm-server-nocamera
-          else pkgs.nanokvm-server
-        ).override { targetSystem = "riscv64-linux"; };
-      defaultText = literalExpression "pkgs.nanokvm-server (riscv64-forced)";
+      # nanokvm-server-device is instantiated in the overlay via
+      # buildPackages.callPackage with targetSystem=riscv64 (see comment
+      # there) — a real riscv64 binary. Referencing it directly (no
+      # .override) avoids the cross-splice arg-dropping.
+      default = pkgs.nanokvm-server-device;
+      defaultText = literalExpression "pkgs.nanokvm-server-device";
       description = "NanoKVM server package to run on the device.";
     };
 
