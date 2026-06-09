@@ -149,11 +149,14 @@ def patch_pyserial_flush_eio(path):
         r'(\n            self\.device\.write\(command\)\n)'
         r'            self\.device\.flushOutput\(\)\n'
     )
+    # NB: catch Exception, not OSError — termios.error (raised by
+    # tcflush) is its OWN exception class, NOT an OSError subclass, so
+    # `except OSError` silently misses it and the tool still crashes.
     replacement = (
         r'\1'
         f'            try:  {FLUSH_EIO_MARKER}\n'
         '                self.device.flushOutput()\n'
-        '            except OSError:\n'
+        '            except Exception:\n'
         '                pass\n'
     )
     new_src, n = pattern.subn(replacement, src, count=1)
