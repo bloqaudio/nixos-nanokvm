@@ -22,4 +22,11 @@
   # LicheeRV-Nano dev board).
   sg2002.usbGadget.product = lib.mkDefault "Sipeed NanoKVM-PCIe (NixOS)";
   sg2002.usbGadget.serial = lib.mkDefault "nanokvm-pcie-0001";
+
+  # SD card slot (sdhci0). The controller is built-in but MMC_BLOCK is a
+  # module — make it available + loaded in stage-1 so /dev/mmcblk0 shows
+  # up for both writing the card (live-writer initrd) and mounting root
+  # from it (SD-image boot).
+  boot.initrd.availableKernelModules = [ "mmc_block" ];
+  boot.initrd.kernelModules = [ "mmc_block" ];
 }
