@@ -223,9 +223,8 @@ in
       # loop to `sys.exit(0)` immediately after BREAK. Bytes-for-bytes
       # of FIP go through unchanged; we just skip the dead polling.
       postPatch = ''
-        # The 2nd-stage poll block starts after `BREAK` is sent and
-        # `print("break")` runs. Replace the `while True:` that
-        # follows with `sys.exit(0)`.
+        # Applies the pyserial fast-open / short-timeout / flushOutput-EIO
+        # fixes (and, if ever re-enabled, the 2nd-stage skip).
         python3 ${./sg2002-cv181x-rom-dl-skip-2nd-stage.py} \
           rom_usb_dl/cv181x_rom_usb_download.py
       '';
