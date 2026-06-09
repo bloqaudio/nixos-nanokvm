@@ -40,9 +40,9 @@
     echo 0x0200 > $G/bcdUSB
 
     mkdir -p $G/strings/0x409
-    echo "LicheeRV Nano (NixOS)" > $G/strings/0x409/product
-    echo "Sipeed"                > $G/strings/0x409/manufacturer
-    echo "sg2002-0001"           > $G/strings/0x409/serialnumber
+    echo "${gadgetCfg.product}"      > $G/strings/0x409/product
+    echo "${gadgetCfg.manufacturer}" > $G/strings/0x409/manufacturer
+    echo "${gadgetCfg.serial}"       > $G/strings/0x409/serialnumber
 
     ${lib.optionalString networkEnable ''
       mkdir -p "$G/functions/${netFn}"
@@ -170,6 +170,23 @@
     };
   };
 in {
+  options.sg2002.usbGadget = {
+    product = lib.mkOption {
+      type = lib.types.str;
+      default = "Sipeed SG2002 (NixOS)";
+      description = "USB gadget iProduct string (board-specific; e.g. \"Sipeed NanoKVM-PCIe (NixOS)\").";
+    };
+    manufacturer = lib.mkOption {
+      type = lib.types.str;
+      default = "Sipeed";
+      description = "USB gadget iManufacturer string.";
+    };
+    serial = lib.mkOption {
+      type = lib.types.str;
+      default = "sg2002-0001";
+      description = "USB gadget iSerialNumber string.";
+    };
+  };
   options.sg2002.usbGadget.network = {
     enable = lib.mkOption {
       type = lib.types.bool;

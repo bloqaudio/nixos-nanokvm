@@ -17,4 +17,9 @@
 
   services.nanokvm.hardwareVersion = lib.mkDefault "pcie";
   services.nanokvm.hdmiVersion = lib.mkDefault "ux";
+
+  # Accurate USB gadget identity for this board (was hardcoded to the
+  # LicheeRV-Nano dev board).
+  sg2002.usbGadget.product = lib.mkDefault "Sipeed NanoKVM-PCIe (NixOS)";
+  sg2002.usbGadget.serial = lib.mkDefault "nanokvm-pcie-0001";
 }
