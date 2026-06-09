@@ -175,7 +175,13 @@ def main():
         # invocation, then a fastboot probe. If fastboot enumerates,
         # we move on. If not, try rom-dl again. Stop after a.attempts.
         outsink = None if a.rom_dl_verbose else subprocess.DEVNULL
-        per_attempt = max(15.0, a.rom_dl_timeout / max(a.attempts, 1))
+        # Per-attempt timeout floored high (45s): a *successful* push is
+        # multi-stage (1st-stage FSBL → cvi_utask 2nd-stage → OpenSBI+
+        # U-Boot), which over a hub takes 15-25s; a 15s ceiling killed it
+        # mid-2nd-stage so U-Boot never came up. EIO attempts (device
+        # cycled mid-send) still return in ~2s, so the high ceiling only
+        # bites on a real push — exactly when we want to let it finish.
+        per_attempt = max(45.0, a.rom_dl_timeout / max(a.attempts, 1))
         for attempt in range(1, a.attempts + 1):
             log(f"attempt {attempt}/{a.attempts}: "
                 f"rom-dl push (per-attempt timeout {per_attempt:.0f}s)...")
