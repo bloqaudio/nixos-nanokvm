@@ -17,4 +17,14 @@
 
 &gmac0 {
 	status = "okay";
+
+	/* Upstream cv180x.dtsi sets phy-mode = "internal", which the generic
+	 * stmmac (dwmac-generic) driver doesn't declare in its
+	 * supported_interfaces — phylink_validate then fails with -EINVAL
+	 * ("validation of internal ... failed") and the MAC can't attach to
+	 * the PHY. The Sophgo vendor DTS drives this same internal EPHY in
+	 * RMII mode, which the generic driver *does* support. Override to
+	 * rmii so phylink validates and the EPHY (already powered — it
+	 * answers MDIO) attaches. */
+	phy-mode = "rmii";
 };
