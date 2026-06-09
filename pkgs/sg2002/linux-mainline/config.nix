@@ -375,18 +375,18 @@ with lib.kernel; {
   NET_VENDOR_SOLARFLARE = no;
   NET_VENDOR_SMSC = no;
   NET_VENDOR_SOCIONEXT = no;
-  # SG2002 *does* have an on-die GMAC (snps,dwmac-3.70a) at 0x4070000 —
-  # the LicheeRV-Nano dev board leaves it unwired, but the NanoKVM-PCIe
-  # carrier routes it to the RJ45. Enable the stmmac stack + the Sophgo
-  # glue + the internal-EPHY mdio-mux so the pcie DTB can light it up.
-  # Modules, not built-in: ethernet isn't needed at boot (NBD root runs
-  # over usb0), and against the full NixOS base these tristate drivers
-  # can only be modules anyway (their deps are modular). stmmac +
-  # dwmac-sophgo + the internal-EPHY mdio-mux load at stage-2 → eth0.
+  # SG2002 *does* have an on-die GMAC (sophgo,cv1800b-dwmac /
+  # snps,dwmac-3.70a) at 0x4070000 — the LicheeRV-Nano dev board leaves it
+  # unwired, but the NanoKVM-PCIe carrier routes it to the RJ45. Mainline
+  # 7.0.3 has NO cv1800b-specific glue (dwmac-sophgo only matches
+  # sg2042/sg2044), so bind via the *generic* stmmac driver, which matches
+  # the node's second compatible "snps,dwmac-3.70a". Modules, not built-in:
+  # ethernet isn't needed at boot (NBD root runs over usb0). stmmac +
+  # dwmac-generic + the internal-EPHY mdio-mux load at stage-2 → eth0.
   NET_VENDOR_STMICRO = yes;
   STMMAC_ETH = module;
   STMMAC_PLATFORM = module;
-  DWMAC_SOPHGO = module;
+  DWMAC_GENERIC = module;
   PHYLIB = yes;
   MDIO_BUS = yes;
   MDIO_DEVICE = yes;

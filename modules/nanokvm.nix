@@ -144,8 +144,12 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.buildPackages.nanokvm-server or pkgs.nanokvm-server;
-      defaultText = literalExpression "pkgs.buildPackages.nanokvm-server";
+      # The server RUNS ON THE DEVICE (riscv64), so it must be the target
+      # build, not pkgs.buildPackages (the x86_64 build host) — the latter
+      # ships a wrong-arch binary that dies with status=203/EXEC format
+      # error on the device.
+      default = pkgs.nanokvm-server;
+      defaultText = literalExpression "pkgs.nanokvm-server";
       description = "NanoKVM server package to run on the device.";
     };
 
