@@ -78,6 +78,10 @@ let
       name = "fbdev-ssd1307fb-mark-buffer-as-virtual-framebuffer";
       patch = ./patches/0012-fbdev-ssd1307fb-mark-buffer-as-virtual-framebuffer.patch;
     })
+    (patch {
+      name = "net-stmmac-dwmac-sophgo-add-cv1800b-internal-ephy";
+      patch = ./patches/0013-net-stmmac-dwmac-sophgo-add-cv1800b-internal-EPHY.patch;
+    })
   ];
 
   meta = {
@@ -210,6 +214,25 @@ let
         RAM-backed framebuffer does not set FBINFO_VIRTFB. ssd1307fb
         allocates normal memory and flushes it via deferred I/O, so mark
         it as virtual to avoid alarming boot-time fbcon warnings.
+      '';
+    };
+    "net-stmmac-dwmac-sophgo-add-cv1800b-internal-ephy" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dwmac-sophgo (or an EPHY power-up in mainline U-Boot) supports the cv1800b/SG2002 internal EPHY";
+      notes = ''
+        Mainline 7.0's dwmac-sophgo only binds sg2042/sg2044. The
+        CV1800B/SG2002 internal 10/100 EPHY needs two things mainline
+        doesn't do: (1) power-up — the vendor U-Boot
+        (board/cvitek/mars/board.c::cv181x_ephy_id_init) releases it from
+        shutdown before Linux; without it PHY attach fails -EINVAL.
+        (2) analog calibration — the vendor PHY driver
+        (drivers/net/phy/cvitek.c::cv182xa_phy_config_init) programs the
+        MLT3/link-pulse/TP-idle/10-100BaseT/AGC/LPF-HPF tables; without
+        it the PHY attaches but never links (carrier 0 with a cable). We
+        do both via MMIO at 0x03009000 from the cv1800b init hook, using
+        non-efuse default trims and the CV181X "mars" LPF/HPF. (Per-chip
+        efuse trimming is skipped — it only tightens signal margins.)
       '';
     };
   };

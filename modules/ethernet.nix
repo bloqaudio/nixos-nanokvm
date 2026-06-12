@@ -19,14 +19,14 @@
 }: let
   mainline = config.sg2002.kernel == "mainline";
 in {
-  # vendor: load bm-dwmac. mainline: 7.0.3 has no cv1800b-specific glue
-  # (dwmac-sophgo only matches sg2042/sg2044), so bind the GMAC via the
-  # generic stmmac driver, which matches the node's second compatible
-  # "snps,dwmac-3.70a". Load dwmac-generic + the mdio-mux for the
-  # internal EPHY. (modprobe pulls stmmac/stmmac-platform as deps.)
+  # vendor: load bm-dwmac. mainline: our patch 0013 teaches dwmac-sophgo
+  # the "sophgo,cv1800b-dwmac" binding (and the internal-EPHY power-up the
+  # mainline bootloader skips), so load dwmac-sophgo. It claims the node
+  # via its first compatible before the generic glue would via the second
+  # ("snps,dwmac-3.70a"). (modprobe pulls stmmac/stmmac-platform as deps.)
   boot.kernelModules =
     lib.optionals (!mainline) ["bm-dwmac"]
-    ++ lib.optionals mainline ["dwmac-generic" "mdio-mux-mmioreg"];
+    ++ lib.optionals mainline ["dwmac-sophgo"];
 
   # Mainline needs the GMAC's DT node enabled — switch the board to the
   # combined ethernet+WiFi DTB. Normal priority beats the WiFi mixin's

@@ -384,15 +384,16 @@ with lib.kernel; {
   # SG2002 *does* have an on-die GMAC (sophgo,cv1800b-dwmac /
   # snps,dwmac-3.70a) at 0x4070000 — the LicheeRV-Nano dev board leaves it
   # unwired, but the NanoKVM-PCIe carrier routes it to the RJ45. Mainline
-  # 7.0.3 has NO cv1800b-specific glue (dwmac-sophgo only matches
-  # sg2042/sg2044), so bind via the *generic* stmmac driver, which matches
-  # the node's second compatible "snps,dwmac-3.70a". Modules, not built-in:
+  # 7.0.3's dwmac-sophgo only matches sg2042/sg2044 *and* never powers up
+  # the cv1800b internal EPHY, so our patch 0013 adds a "sophgo,cv1800b-dwmac"
+  # binding that mirrors the vendor U-Boot EPHY power-up. Build dwmac-sophgo
+  # (not the generic glue) so that binding is present. Modules, not built-in:
   # ethernet isn't needed at boot (NBD root runs over usb0). stmmac +
-  # dwmac-generic + the internal-EPHY mdio-mux load at stage-2 → eth0.
+  # dwmac-sophgo load at stage-2 → eth0.
   NET_VENDOR_STMICRO = yes;
   STMMAC_ETH = module;
   STMMAC_PLATFORM = module;
-  DWMAC_GENERIC = module;
+  DWMAC_SOPHGO = module;
   PHYLIB = yes;
   MDIO_BUS = yes;
   MDIO_DEVICE = yes;

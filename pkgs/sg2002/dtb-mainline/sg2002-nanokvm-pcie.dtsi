@@ -60,18 +60,21 @@
 	no-mmc;
 	no-sdio;
 	disable-wp;
+	/* The SD0_CD card-detect line is unreliable on this carrier (it
+	 * intermittently reports "no card" after a power-cycle, so the
+	 * kernel never probes an inserted card). Ignore CD and poll the
+	 * slot directly. */
+	broken-cd;
 };
 
 &gmac0 {
+	/* Just enable the node; the phy-mode (rmii) and the internal-EPHY
+	 * mdio-mux come from the upstream include chain. The earlier -EINVAL
+	 * ("validation of rmii/internal ... failed") was NOT a phy-mode
+	 * problem: the internal EPHY was still shut down, so MDIO read no
+	 * abilities and the MAC/PHY speed-cap intersection came out empty.
+	 * Our dwmac-sophgo patch 0013 powers the EPHY up in probe (it then
+	 * answers MDIO with phy_id 0x00435649), after which the Generic PHY
+	 * attaches and validates against the dwmac1000 10/100 caps. */
 	status = "okay";
-
-	/* Upstream cv180x.dtsi sets phy-mode = "internal", which the generic
-	 * stmmac (dwmac-generic) driver doesn't declare in its
-	 * supported_interfaces — phylink_validate then fails with -EINVAL
-	 * ("validation of internal ... failed") and the MAC can't attach to
-	 * the PHY. The Sophgo vendor DTS drives this same internal EPHY in
-	 * RMII mode, which the generic driver *does* support. Override to
-	 * rmii so phylink validates and the EPHY (already powered — it
-	 * answers MDIO) attaches. */
-	phy-mode = "rmii";
 };
