@@ -104,26 +104,28 @@
           "sophgo-host-tools"
         ];
 
-      # Extra args threaded into every NixOS module via `specialArgs`.
-      # Lets module files reference flake-level facts (the nixpkgs
-      # input, the wifi conf) without importing flake.nix.
+      # Extra args threaded into every NixOS module via `_module.args`
+      # (a module inside the list, not specialArgs — see lib/mkBoard.nix).
+      # Lets module files reference flake-level facts (the wifi conf,
+      # the overlay) without importing flake.nix.
       boardExtraArgs = {
-        inherit nixpkgs rootAuthorizedKeys allowUnfreePredicate;
+        inherit rootAuthorizedKeys allowUnfreePredicate;
         rootWifiConf = rootWifiConf;
         selfOverlay = self.overlays.default;
       };
 
-      # Compose a NixOS system from board / kernel / profile [+ mixins].
-      # See lib/mkBoard.nix.
-      mkBoard =
+      # Resolve a catalog-style {board, kernel, profile, …} record to
+      # the arg set lib/mkBoard.nix expects. Shared by the two leaf
+      # builders below so the nixosConfigurations and nixosModules
+      # views of a board can never drift apart.
+      resolveBoardArgs =
         { board
         , kernel
         , profile
         , mixins ? [ ]
         , extraModules ? [ ]
         ,
-        }:
-        mkBoardFn {
+        }: {
           board = ./boards + "/${board}.nix";
           kernel = ./profiles/kernel + "/${kernel}.nix";
           profile = ./profiles + "/${profile}.nix";
@@ -132,17 +134,30 @@
           extraArgs = boardExtraArgs;
         };
 
+      # Compose a NixOS system from board / kernel / profile [+ mixins].
+      mkBoard = args: mkBoardFn.mkBoard (resolveBoardArgs args);
+
+      # The same composition as a plain importable module, for
+      # downstream flakes that build their own nixosSystem around a
+      # board (fleet base modules, Colmena deployment options, …).
+      mkBoardModule = args: {
+        imports = mkBoardFn.mkBoardModules (resolveBoardArgs args);
+      };
+
       # Catalog of every {board, kernel, profile, variant} we publish.
       # One record per shipped configuration; both nixosConfigurations
       # and packages.boards.* are derived from this single source.
       catalog = import ./lib/catalog.nix { inherit lib; };
 
-      # Walk the catalog and produce the nested nixosConfigurations.boards
-      # attrset.  Each leaf is a `mkBoard {...}` call.
-      mkBoardSystemsFromCatalog = entries:
+      # Walk the catalog and produce a nested attrset keyed by
+      # entry.path, with each leaf built by `mkLeaf` from the entry's
+      # mkBoard-style args. Instantiated twice: once with `mkBoard`
+      # (nixosConfigurations.boards) and once with `mkBoardModule`
+      # (nixosModules.boards).
+      walkCatalog = mkLeaf: entries:
         lib.foldl'
           (acc: entry:
-            lib.recursiveUpdate acc (lib.setAttrByPath entry.path (mkBoard {
+            lib.recursiveUpdate acc (lib.setAttrByPath entry.path (mkLeaf {
               board = entry.boardName;
               inherit (entry) kernel profile;
               mixins = entry.mixins or [ ];
@@ -166,7 +181,8 @@
       # (e.g. `usb-oled` = USB transport + OLED panel mixin).
       # =============================================================
       # NixOS systems for every catalog entry, attrpath = entry.path.
-      boardSystems = mkBoardSystemsFromCatalog catalog;
+      boardSystems = walkCatalog mkBoard catalog;
+      boardModules = walkCatalog mkBoardModule catalog;
 
       # =============================================================
       # Helpers that build the host-side artifacts (FIT, kexec payload,
@@ -187,6 +203,14 @@
         imports = [ self.nixosModules.nanokvm ];
         nixpkgs.overlays = [ self.overlays.default ];
       };
+      # Every catalog entry as a plain module (same nesting as
+      # nixosConfigurations.boards). Downstream fleets import e.g.
+      # `nixosModules.boards.pcie.mainline.sd` into their own
+      # lib.nixosSystem to make the board a regular fleet member; the
+      # module list is self-contained (no specialArgs required), so
+      # Colmena-style re-instantiation from `_module.args.modules`
+      # works without reconstructing anything.
+      nixosModules.boards = boardModules;
 
       nixosConfigurations.boards = boardSystems;
 
@@ -375,6 +399,7 @@
             nanokvm-bench-usb-transport
             nanokvm-patched-src
             nanokvm-factory-runtime
+            nanokvm-host-keys
             nanokvm-server
             nanokvm-server-nocamera
             nanokvm-web
