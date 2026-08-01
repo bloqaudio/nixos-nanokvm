@@ -53,15 +53,6 @@
 	status = "disabled";
 };
 
-/* The USB/NFS LCD diagnostic can block for longer than the DesignWare
- * watchdog's 85.9-second hardware maximum while faulting stage-2 paths from
- * the one-core target's remote store.  Keep this board-specific artifact
- * observable instead of resetting it mid-bring-up; other SG2002 DTBs retain
- * the watchdog. */
-&watchdog {
-	status = "disabled";
-};
-
 &spi1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&picoclaw_lcd_cfg>;
