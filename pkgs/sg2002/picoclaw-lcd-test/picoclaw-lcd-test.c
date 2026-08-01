@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -23,6 +24,8 @@ enum {
 };
 
 static volatile sig_atomic_t stopping;
+
+static void die(const char *operation);
 
 static void on_signal(int signo)
 {
@@ -39,6 +42,51 @@ static void sleep_ms(long milliseconds)
 
     while (nanosleep(&delay, &delay) < 0 && errno == EINTR && !stopping)
         ;
+}
+
+static void route_spi1_to_ethernet_pads(void)
+{
+    enum {
+        EPHY_REG_BASE = 0x03009000,
+        EPHY_REG_SIZE = 0x1000,
+    };
+    int mem_fd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    volatile uint32_t *registers;
+    uint32_t value;
+
+    if (mem_fd < 0)
+        die("open /dev/mem for PicoClaw SPI1 pad handoff");
+    registers = mmap(NULL, EPHY_REG_SIZE, PROT_READ | PROT_WRITE,
+                     MAP_SHARED, mem_fd, EPHY_REG_BASE);
+    if (registers == MAP_FAILED)
+        die("map PicoClaw EPHY registers");
+
+#define EPHY_REGISTER(address) registers[((address) - EPHY_REG_BASE) / 4]
+    /* Sipeed's PicoClaw boot code releases ETH_TXP/TXM/RXP/RXM from the
+     * internal EPHY/top-pad path before their function-6 SPI1 mux can drive
+     * the LCD.  Keep this board-specific: the same handoff would disconnect
+     * Ethernet on a NanoKVM-PCIe. */
+    EPHY_REGISTER(0x03009804) |= UINT32_C(1);
+    value = EPHY_REGISTER(0x03009808);
+    EPHY_REGISTER(0x03009808) = (value & ~UINT32_C(0x1f)) | UINT32_C(1);
+    EPHY_REGISTER(0x03009800) |= UINT32_C(1) << 2;
+    __sync_synchronize();
+    sleep_ms(1);
+
+    value = EPHY_REGISTER(0x0300907c);
+    EPHY_REGISTER(0x0300907c) =
+        (value & ~(UINT32_C(0x1f) << 8)) | (UINT32_C(5) << 8);
+    value = EPHY_REGISTER(0x03009078);
+    EPHY_REGISTER(0x03009078) =
+        (value & ~UINT32_C(0xfff)) | UINT32_C(0xf00);
+    EPHY_REGISTER(0x03009074) = UINT32_C(0x606);
+    EPHY_REGISTER(0x03009070) = UINT32_C(0x606);
+    __sync_synchronize();
+#undef EPHY_REGISTER
+
+    if (munmap((void *)registers, EPHY_REG_SIZE) < 0)
+        die("unmap PicoClaw EPHY registers");
+    close(mem_fd);
 }
 
 static void die(const char *operation)
@@ -65,6 +113,27 @@ static void write_all(int fd, const void *buffer, size_t length)
         }
         cursor += written;
         length -= (size_t)written;
+    }
+}
+
+static void read_all(int fd, void *buffer, size_t length)
+{
+    uint8_t *cursor = buffer;
+
+    while (length > 0) {
+        ssize_t received = read(fd, cursor, length);
+
+        if (received < 0) {
+            if (errno == EINTR)
+                continue;
+            die("SPI read");
+        }
+        if (received == 0) {
+            errno = EIO;
+            die("short SPI read");
+        }
+        cursor += received;
+        length -= (size_t)received;
     }
 }
 
@@ -118,29 +187,99 @@ static void lcd_command(int spi_fd, int gpio_fd, uint8_t command,
     }
 }
 
+static void lcd_read_register(int spi_fd, int gpio_fd, uint8_t command,
+                              uint8_t *data, size_t data_length)
+{
+    gpio_set(gpio_fd, GPIO_DC_INDEX, 0);
+    write_all(spi_fd, &command, 1);
+    gpio_set(gpio_fd, GPIO_DC_INDEX, 1);
+    read_all(spi_fd, data, data_length);
+}
+
+static void lcd_log_identity(int spi_fd, int gpio_fd)
+{
+    uint8_t id[4] = {0};
+    uint8_t status[5] = {0};
+    size_t index;
+
+    lcd_read_register(spi_fd, gpio_fd, 0x04, id, sizeof(id)); /* RDDID */
+    lcd_read_register(spi_fd, gpio_fd, 0x09, status,
+                      sizeof(status)); /* RDDST */
+
+    fputs("PicoClaw ST7789 RDDID:", stdout);
+    for (index = 0; index < sizeof(id); ++index)
+        printf(" %02x", id[index]);
+    fputs("; RDDST:", stdout);
+    for (index = 0; index < sizeof(status); ++index)
+        printf(" %02x", status[index]);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
 static void lcd_reset(int gpio_fd)
 {
     gpio_set(gpio_fd, GPIO_BACKLIGHT_INDEX, 1);
-    gpio_set(gpio_fd, GPIO_RESET_INDEX, 0);
-    sleep_ms(20);
     gpio_set(gpio_fd, GPIO_RESET_INDEX, 1);
-    sleep_ms(120);
+    sleep_ms(50);
+    gpio_set(gpio_fd, GPIO_RESET_INDEX, 0);
+    sleep_ms(50);
+    gpio_set(gpio_fd, GPIO_RESET_INDEX, 1);
+    sleep_ms(50);
 }
 
 static void lcd_init(int spi_fd, int gpio_fd)
 {
-    const uint8_t pixel_format = 0x55; /* RGB565 */
-    const uint8_t madctl = 0xc0;       /* Sipeed rvclaw rotation=180 */
+    const uint8_t porch_control[] = { 0x1f, 0x1f, 0x00, 0x33, 0x33 };
+    const uint8_t madctl = 0xc0;
+    const uint8_t pixel_format = 0x05;
+    const uint8_t gate_control = 0x00;
+    const uint8_t vcom = 0x36;
+    const uint8_t lcm_control = 0x2c;
+    const uint8_t vdv_vrh_enable = 0x01;
+    const uint8_t vrh = 0x13;
+    const uint8_t vdv = 0x20;
+    const uint8_t frame_rate = 0x13;
+    const uint8_t gate_control_2 = 0xa1;
+    const uint8_t power_control[] = { 0xa4, 0xa1 };
+    const uint8_t positive_gamma[] = {
+        0xf0, 0x08, 0x0e, 0x09, 0x08, 0x04, 0x2f,
+        0x33, 0x45, 0x36, 0x13, 0x12, 0x2a, 0x2d,
+    };
+    const uint8_t negative_gamma[] = {
+        0xf0, 0x0e, 0x12, 0x0c, 0x0a, 0x15, 0x2e,
+        0x32, 0x44, 0x39, 0x17, 0x18, 0x2b, 0x2f,
+    };
+    const uint8_t gate_control_3[] = { 0x1d, 0x00, 0x00 };
 
+    /* This is the full PicoClaw-specific cold-start sequence from Sipeed's
+     * first rvclaw driver, before later releases relied on inherited vendor
+     * boot state and reduced it to a handful of refresh commands. */
     lcd_reset(gpio_fd);
-    lcd_command(spi_fd, gpio_fd, 0x01, NULL, 0); /* SWRESET */
-    sleep_ms(150);
     lcd_command(spi_fd, gpio_fd, 0x11, NULL, 0); /* SLPOUT */
     sleep_ms(120);
-    lcd_command(spi_fd, gpio_fd, 0x3a, &pixel_format, 1); /* COLMOD */
-    lcd_command(spi_fd, gpio_fd, 0x36, &madctl, 1);       /* MADCTL */
-    lcd_command(spi_fd, gpio_fd, 0x21, NULL, 0);         /* INVON */
-    lcd_command(spi_fd, gpio_fd, 0x29, NULL, 0);         /* DISPON */
+    lcd_command(spi_fd, gpio_fd, 0xb2, porch_control,
+                sizeof(porch_control));
+    lcd_command(spi_fd, gpio_fd, 0x36, &madctl, 1);
+    lcd_command(spi_fd, gpio_fd, 0x3a, &pixel_format, 1);
+    lcd_command(spi_fd, gpio_fd, 0xb7, &gate_control, 1);
+    lcd_command(spi_fd, gpio_fd, 0xbb, &vcom, 1);
+    lcd_command(spi_fd, gpio_fd, 0xc0, &lcm_control, 1);
+    lcd_command(spi_fd, gpio_fd, 0xc2, &vdv_vrh_enable, 1);
+    lcd_command(spi_fd, gpio_fd, 0xc3, &vrh, 1);
+    lcd_command(spi_fd, gpio_fd, 0xc4, &vdv, 1);
+    lcd_command(spi_fd, gpio_fd, 0xc6, &frame_rate, 1);
+    lcd_command(spi_fd, gpio_fd, 0xd6, &gate_control_2, 1);
+    lcd_command(spi_fd, gpio_fd, 0xd0, power_control,
+                sizeof(power_control));
+    lcd_command(spi_fd, gpio_fd, 0xe0, positive_gamma,
+                sizeof(positive_gamma));
+    lcd_command(spi_fd, gpio_fd, 0xe1, negative_gamma,
+                sizeof(negative_gamma));
+    lcd_command(spi_fd, gpio_fd, 0xe4, gate_control_3,
+                sizeof(gate_control_3));
+    lcd_command(spi_fd, gpio_fd, 0x21, NULL, 0); /* INVON */
+    lcd_command(spi_fd, gpio_fd, 0x11, NULL, 0); /* SLPOUT */
+    lcd_command(spi_fd, gpio_fd, 0x29, NULL, 0); /* DISPON */
     sleep_ms(100);
 }
 
@@ -254,7 +393,10 @@ static int open_spi(const char *path)
     int fd = open(path, O_RDWR | O_CLOEXEC);
     uint8_t mode = SPI_MODE_0;
     uint8_t bits = 8;
-    uint32_t speed = 10000000;
+    /* Match the conservative limit in Sipeed's released PicoClaw DT.  Its
+     * application asks spidev for 45 MHz, but 1 MHz is the known-safe cold
+     * bring-up rate and removes signal integrity from the diagnostic. */
+    uint32_t speed = 1000000;
 
     if (fd < 0)
         die("open SPI device");
@@ -275,9 +417,11 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    route_spi1_to_ethernet_pads();
     gpio_fd = request_control_lines(gpiochip);
     spi_fd = open_spi(spi_path);
     lcd_init(spi_fd, gpio_fd);
+    lcd_log_identity(spi_fd, gpio_fd);
     lcd_draw_test(spi_fd, gpio_fd);
     gpio_set(gpio_fd, GPIO_BACKLIGHT_INDEX, 0);
 

@@ -1,10 +1,11 @@
 /* PicoClaw 240x240 ST7789 panel.
  *
  * Sipeed's rvclaw application uses SPI1.0 plus GPIOA28 (D/C), GPIOA27
- * (reset), and active-low GPIOA19 (backlight).  The vendor pinmux tables
- * route SPI1 through MIPIRX4N/4P/3N/3P in two stages: pad function 7,
- * then SPI1 function 6.  Mainline's CV18xx pinctrl driver models both
- * stages with PINMUX2, so no /dev/mem pin pokes are needed here.
+ * (reset), and active-low GPIOA19 (backlight).  Its original hardware
+ * bring-up programs the four Ethernet pads directly to function 6:
+ * TXP=SDO, TXM=SDI, RXP=SCK, RXM=CS.  These are the PicoClaw's physical
+ * LCD nets; the MIPI pads provide another valid SPI1 route but are not
+ * wired to this panel.
  *
  * The panel is intentionally exposed through spidev.  Mainline's generic
  * DRM MIPI-DBI panel would require enabling the otherwise-pruned DRM stack
@@ -29,10 +30,10 @@
 &pinctrl {
 	picoclaw_lcd_cfg: picoclaw-lcd-cfg {
 		spi1-pins {
-			pinmux = <PINMUX2(PIN_MIPIRX4N, 7, 6)>,
-				 <PINMUX2(PIN_MIPIRX4P, 7, 6)>,
-				 <PINMUX2(PIN_MIPIRX3N, 7, 6)>,
-				 <PINMUX2(PIN_MIPIRX3P, 7, 6)>;
+			pinmux = <PINMUX(PIN_ETH_TXP, 6)>,
+				 <PINMUX(PIN_ETH_TXM, 6)>,
+				 <PINMUX(PIN_ETH_RXP, 6)>,
+				 <PINMUX(PIN_ETH_RXM, 6)>;
 			power-source = <1800>;
 		};
 

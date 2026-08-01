@@ -83,8 +83,8 @@ let
       patch = ./patches/0014-media-i2c-lt6911uxe-add-devicetree-probe-support.patch;
     })
     (patch {
-      name = "pinctrl-sophgo-initialize-secondary-mux-parent-function";
-      patch = ./patches/0015-pinctrl-sophgo-initialize-secondary-mux-parent-function.patch;
+      name = "pinctrl-sophgo-allow-fixed-io-pin-power-source";
+      patch = ./patches/0016-pinctrl-sophgo-allow-fixed-io-pin-power-source.patch;
     })
   ];
 
@@ -252,16 +252,16 @@ let
         and accept the LT6911 ID the vendor sensor driver reports.
       '';
     };
-    "pinctrl-sophgo-initialize-secondary-mux-parent-function" = {
+    "pinctrl-sophgo-allow-fixed-io-pin-power-source" = {
       origin = "local";
       upstreamStatus = "draft";
-      dropWhen = "Sophgo CV18xx pinctrl initializes mux2.pfunc upstream";
+      dropWhen = "Sophgo CV18xx pinctrl accepts fixed-domain pin groups upstream";
       notes = ''
-        CV1800_GENERATE_PIN_MUX2 leaves mux2.pfunc zero even though every
-        current generated entry uses primary function 7 to route through
-        the secondary mux. The verifier therefore rejects every useful
-        PINMUX2 setting. PicoClaw needs this path to route SPI1 over the
-        MIPIRX3/4 pads.
+        The binding and DT parser require power-source on every group, but
+        ETH/AUDIO pads have no configurable pinconf register and were rejected
+        unconditionally. PicoClaw's LCD is wired to SPI1 on the fixed 1.8 V
+        Ethernet pads, so accept a power-source-only group without touching a
+        nonexistent configuration register.
       '';
     };
   };
