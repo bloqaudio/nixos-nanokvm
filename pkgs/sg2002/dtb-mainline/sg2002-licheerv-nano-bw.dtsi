@@ -25,6 +25,25 @@
 &usb {
 	dr_mode = "peripheral";
 
+	/* Turn the dwc2 internal DMA on. Kernel patch 0001 removed
+	 * upstream's hard-coded g_dma=false for cv1800, which left the
+	 * gadget in slave/PIO mode — where the data path wedges after a
+	 * handful of packets (host sees `cdc_* transmit queue 0 timed
+	 * out`, link dead from the first ARP). The vendor 5.10 kernel
+	 * always ran with DMA on. Buffer DMA only, no descriptor DMA —
+	 * that's the configuration the vendor tree uses. */
+	g-use-dma;
+
+	/* Cap at full-speed. At high-speed the link shows signal-level
+	 * errors (-71 EPROTO at enumeration) and the gadget RX path
+	 * wedges after a few dozen packets on the PicoClaw carrier —
+	 * the host stops getting replies, NETDEV WATCHDOG fires, and
+	 * usb0 dies ~60 s into every boot. FS has vastly larger signal
+	 * margins; it's slow (~5 Mbps) but reliable enough for the
+	 * NFS-rooted bring-up. Revisit once the PHY tuning knobs are
+	 * known (or with a different cable/host port). */
+	maximum-speed = "full-speed";
+
 	/* Mirror the FIFO sizing we ship in U-Boot
 	 * (`uboot-mainline/patches/0002-…-u-boot.dtsi-wit.patch`). The mainline
 	 * dwc2 driver reads these per-endpoint TX FIFO depths and the
@@ -218,6 +237,10 @@
 				      0x00100000 0x00200000 0x00400000 0x00800000
 				      0x01000000 0x02000000 0x04000000 0x08000000
 				      0x10000000 0x20000000 0x40000000 0x80000000>;
+		/* Use the largest practical DesignWare TOP as the default.
+		 * Without this, dw_wdt starts from its generic 30-second
+		 * default, which is too tight for slow SG2002 bring-up paths. */
+		timeout-sec = <85>;
 		status = "okay";
 	};
 

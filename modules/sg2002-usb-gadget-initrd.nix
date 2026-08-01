@@ -23,6 +23,13 @@
   gadgetCfg = cfg.usbGadget;
   networkEnable = gadgetCfg.network.enable;
   initrdNetworkEnable = gadgetCfg.initrd.network.enable;
+  reenumerateCfg = gadgetCfg.stage2.reenumerateAfterBoot;
+  stage2NetworkControlFile = gadgetCfg.network.controlFile;
+  stage2NetworkMayExist = networkEnable || stage2NetworkControlFile != null;
+  reenumerateStage2 =
+    gadgetCfg.stage2.enable
+    && stage2NetworkMayExist
+    && reenumerateCfg.enable;
   transport = gadgetCfg.network.transport;
   netFn = "${transport}.usb0"; # configfs path component
   addOtgFlip = cfg.kernel == "vendor";
@@ -33,32 +40,67 @@
     gnugrep
   ];
 
-  mkSetup = setupNetwork:
-    pkgs.writeShellScript "usb-gadget-setup-${if setupNetwork then transport else "acm"}" ''
+  mkSetup = setupNetwork: controlFile:
+    let
+      canSetupNetwork = setupNetwork || controlFile != null;
+      initialWantNetwork =
+        if setupNetwork
+        then "1"
+        else "0";
+      controlFileCheck = lib.optionalString (controlFile != null) ''
+        if [ -e ${lib.escapeShellArg controlFile} ]; then
+          want_network=1
+        else
+          want_network=0
+        fi
+      '';
+    in
+    pkgs.writeShellScript "usb-gadget-setup-${if canSetupNetwork then transport else "acm"}" ''
     set -eu
     G=/sys/kernel/config/usb_gadget/sg2002
+    want_network=${initialWantNetwork}
+    ${controlFileCheck}
 
     for udc in /sys/kernel/config/usb_gadget/*/UDC; do
       [ -e "$udc" ] || continue
       printf '\n' > "$udc" 2>/dev/null || true
     done
 
-    mkdir -p $G
+    # Force a full dwc2 re-probe before claiming the UDC. The kernel
+    # inherits the USB controller from U-Boot's fastboot gadget, and on
+    # SG2002 that handoff intermittently leaves the net function's data
+    # path dead: enumeration and the ACM console keep working, but the
+    # host sees `cdc_ether/cdc_ncm transmit queue 0 timed out` — zero
+    # frames cross. A driver-level unbind/bind resets the core cleanly;
+    # a gadget-level "" > UDC does not.
+    if [ -d /sys/bus/platform/drivers/dwc2 ]; then
+      for udc0 in /sys/class/udc/*; do
+        [ -e "$udc0" ] || continue
+        n0="''${udc0##*/}"
+        echo "$n0" > /sys/bus/platform/drivers/dwc2/unbind 2>/dev/null || true
+        sleep 0.2
+        echo "$n0" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null || true
+      done
+    fi
 
-    echo 0x1d6b > $G/idVendor
-    echo 0x0104 > $G/idProduct
-    echo 0x0100 > $G/bcdDevice
-    echo 0x0200 > $G/bcdUSB
+    mkdir -p "$G"
 
-    mkdir -p $G/strings/0x409
-    echo "${gadgetCfg.product}"      > $G/strings/0x409/product
-    echo "${gadgetCfg.manufacturer}" > $G/strings/0x409/manufacturer
-    echo "${gadgetCfg.serial}"       > $G/strings/0x409/serialnumber
+    echo 0x1d6b > "$G/idVendor"
+    echo 0x0104 > "$G/idProduct"
+    echo 0x0100 > "$G/bcdDevice"
+    echo 0x0200 > "$G/bcdUSB"
 
-    ${lib.optionalString setupNetwork ''
+    mkdir -p "$G/strings/0x409"
+    echo "${gadgetCfg.product}"      > "$G/strings/0x409/product"
+    echo "${gadgetCfg.manufacturer}" > "$G/strings/0x409/manufacturer"
+    echo "${gadgetCfg.serial}"       > "$G/strings/0x409/serialnumber"
+
+    ${lib.optionalString canSetupNetwork ''
+    if [ "$want_network" = 1 ]; then
       mkdir -p "$G/functions/${netFn}"
       echo ${protocol.targetMac} > "$G/functions/${netFn}/dev_addr"
       echo ${protocol.hostMac}   > "$G/functions/${netFn}/host_addr"
+    fi
     ''}
 
     mkdir -p $G/functions/acm.GS0
@@ -71,15 +113,18 @@
     ''}
 
     mkdir -p $G/configs/c.1/strings/0x409
-    echo "${
-      if setupNetwork
-      then "${lib.toUpper transport} + ACM"
-      else "ACM"
-    }" \
-      > $G/configs/c.1/strings/0x409/configuration
-    echo 250 > $G/configs/c.1/MaxPower
+    if [ "$want_network" = 1 ]; then
+      echo "${lib.toUpper transport} + ACM" > "$G/configs/c.1/strings/0x409/configuration"
+    else
+      echo "ACM" > "$G/configs/c.1/strings/0x409/configuration"
+    fi
+    echo 250 > "$G/configs/c.1/MaxPower"
 
-    ${lib.optionalString setupNetwork ''[ -e "$G/configs/c.1/${netFn}" ] || ln -s "$G/functions/${netFn}" "$G/configs/c.1/"''}
+    ${lib.optionalString canSetupNetwork ''
+    if [ "$want_network" = 1 ]; then
+      [ -e "$G/configs/c.1/${netFn}" ] || ln -s "$G/functions/${netFn}" "$G/configs/c.1/"
+    fi
+    ''}
     [ -e "$G/configs/c.1/acm.GS0" ] || ln -s $G/functions/acm.GS0 $G/configs/c.1/
 
     # Bind to the first available UDC (SG2002 has exactly one).
@@ -94,29 +139,51 @@
       echo "usb-gadget: no UDC under /sys/class/udc; dwc2 didn't register" >&2
       exit 1
     fi
-    echo "$udc" > $G/UDC
+    echo "$udc" > "$G/UDC"
   '';
 
-  mkTeardown = setupNetwork:
-    pkgs.writeShellScript "usb-gadget-teardown-${if setupNetwork then transport else "acm"}" ''
+  mkTeardown = canSetupNetwork:
+    pkgs.writeShellScript "usb-gadget-teardown-${if canSetupNetwork then transport else "acm"}" ''
     set -eu
     G=/sys/kernel/config/usb_gadget/sg2002
     [ -d $G ] || exit 0
     echo "" > $G/UDC || true
-    ${lib.optionalString setupNetwork ''rm -f "$G/configs/c.1/${netFn}"''}
+    for fn in ecm.usb0 rndis.usb0 ncm.usb0 mass_storage.disk0; do
+      rm -f "$G/configs/c.1/$fn"
+    done
     rm -f $G/configs/c.1/acm.GS0
     rmdir $G/configs/c.1/strings/0x409 || true
     rmdir $G/configs/c.1               || true
-    ${lib.optionalString setupNetwork ''rmdir "$G/functions/${netFn}" || true''}
+    for fn in ecm.usb0 rndis.usb0 ncm.usb0 mass_storage.disk0; do
+      rmdir "$G/functions/$fn" || true
+    done
+    ${lib.optionalString (!gadgetCfg.console.enable) ''
     rmdir $G/functions/acm.GS0         || true
     rmdir $G/strings/0x409             || true
     rmdir $G                           || true
+    ''}
   '';
 
-  setupInitrd = mkSetup initrdNetworkEnable;
+  reenumerateStage2Script = pkgs.writeShellScript "usb-gadget-reenumerate-stage2" ''
+    set -eu
+    G=/sys/kernel/config/usb_gadget/sg2002
+    [ -d "$G" ] || exit 0
+
+    udc="$(cat "$G/UDC" 2>/dev/null || true)"
+    if [ -z "$udc" ]; then
+      udc="$(ls /sys/class/udc 2>/dev/null | head -n1 || true)"
+    fi
+    [ -n "$udc" ] || exit 0
+
+    printf '\n' > "$G/UDC" 2>/dev/null || true
+    sleep 0.25
+    echo "$udc" > "$G/UDC"
+  '';
+
+  setupInitrd = mkSetup initrdNetworkEnable null;
   teardownInitrd = mkTeardown initrdNetworkEnable;
-  setupStage2 = mkSetup networkEnable;
-  teardownStage2 = mkTeardown networkEnable;
+  setupStage2 = mkSetup networkEnable stage2NetworkControlFile;
+  teardownStage2 = mkTeardown stage2NetworkMayExist;
 
   otgFlip = pkgs.writeShellScript "usb-gadget-otg-flip" ''
     set -eu
@@ -197,7 +264,7 @@
   initrdServiceDef = mkServiceDef setupInitrd teardownInitrd;
   stage2ServiceDef = mkServiceDef setupStage2 teardownStage2;
   initrdNetworksDef = mkNetworks initrdNetworkEnable;
-  stage2NetworksDef = mkNetworks networkEnable;
+  stage2NetworksDef = mkNetworks stage2NetworkMayExist;
 in {
   imports = [./sg2002-usb-gadget-options.nix];
 
@@ -220,14 +287,49 @@ in {
       systemd = lib.mkIf gadgetCfg.stage2.enable {
         services = {
           usb-gadget = stage2ServiceDef // {
-            wantedBy = ["multi-user.target"];
-            before = ["network-pre.target"];
-            wants = ["network-pre.target"];
+            # Recreate the ACM console and optional usb0 before normal
+            # stage-2 boot proceeds. If this waits until multi-user.target,
+            # networkd has already passed network-pre.target and the USB
+            # console is unavailable for early stage-2 failures.
+            wantedBy = ["sysinit.target"];
+            before = [
+              "sysinit.target"
+              "network-pre.target"
+              "systemd-networkd.service"
+            ];
+            wants = lib.optional addOtgFlip "usb-gadget-otg-flip.service";
             after = ["sys-kernel-config.mount"];
+            requires = ["sys-kernel-config.mount"];
+            restartIfChanged = false;
+            stopIfChanged = false;
+            serviceConfig = stage2ServiceDef.serviceConfig // {
+              DefaultDependencies = false;
+            };
+          };
+        } // lib.optionalAttrs reenumerateStage2 {
+          usb-gadget-reenumerate = {
+            description = "Re-enumerate SG2002 stage-2 USB gadget";
+            after = ["usb-gadget.service"];
+            wants = ["usb-gadget.service"];
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = reenumerateStage2Script;
+            };
+          };
+        };
+        timers = lib.mkIf reenumerateStage2 {
+          usb-gadget-reenumerate = {
+            description = "Delayed SG2002 USB gadget re-enumeration";
+            wantedBy = ["timers.target"];
+            timerConfig = {
+              OnBootSec = "${toString reenumerateCfg.delaySec}s";
+              AccuracySec = "5s";
+              Unit = "usb-gadget-reenumerate.service";
+            };
           };
         };
         network = {
-          enable = lib.mkIf networkEnable true;
+          enable = lib.mkIf stage2NetworkMayExist true;
           networks = stage2NetworksDef;
         };
       };

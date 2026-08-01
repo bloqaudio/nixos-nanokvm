@@ -78,6 +78,10 @@ let
       name = "net-stmmac-dwmac-sophgo-add-cv1800b-internal-ephy";
       patch = ./patches/0013-net-stmmac-dwmac-sophgo-add-cv1800b-internal-EPHY.patch;
     })
+    (patch {
+      name = "media-i2c-lt6911uxe-add-devicetree-probe-support";
+      patch = ./patches/0014-media-i2c-lt6911uxe-add-devicetree-probe-support.patch;
+    })
   ];
 
   meta = {
@@ -229,6 +233,19 @@ let
         do both via MMIO at 0x03009000 from the cv1800b init hook, using
         non-efuse default trims and the CV181X "mars" LPF/HPF. (Per-chip
         efuse trimming is skipped — it only tightens signal margins.)
+      '';
+    };
+    "media-i2c-lt6911uxe-add-devicetree-probe-support" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = ''
+        lt6911uxe grows upstream OF bindings/probe support and NanoKVM's
+        LT6911-family bridge ID / no-HPD wiring is handled upstream.
+      '';
+      notes = ''
+        Lets the mainline LT6911UXE V4L2 subdev driver bind on NanoKVM-PCIe
+        devicetree, tolerate the board's currently undocumented HPD line,
+        and accept the LT6911 ID the vendor sensor driver reports.
       '';
     };
   };

@@ -95,6 +95,32 @@
 			power-source = <3300>;
 		};
 	};
+
+	/* HDMI bridge control bus. The Lontium LT6911-family bridge is
+	 * configured over the SoC's I2C4 controller. Use the PWR-domain
+	 * I2C4 pad pair here; the alternate MIPIRX2 I2C4 mux would steal
+	 * pins from the CSI lane bundle we need for actual capture. */
+	i2c4_cfg: i2c4-cfg {
+		i2c4-pins {
+			pinmux = <PINMUX(PIN_PWR_WAKEUP0, 5)>,
+				 <PINMUX(PIN_PWR_BUTTON1, 5)>;
+			bias-pull-up;
+			drive-strength-microamp = <37400>;
+			power-source = <1800>;
+		};
+	};
+
+	/* Vendor sysfs GPIO 451 is PWR GPIO 3, i.e. the PWR_SEQ1 pad
+	 * muxed to GPIO mode. This line holds the LT6911 bridge out of
+	 * reset. */
+	hdmi_reset_cfg: hdmi-reset-cfg {
+		hdmi-reset-pins {
+			pinmux = <PINMUX(PIN_PWR_SEQ1, 3)>;
+			bias-pull-up;
+			drive-strength-microamp = <37400>;
+			power-source = <1800>;
+		};
+	};
 };
 
 /* Front-panel SSD1306 128x64 OLED at 0x3c on a bit-banged I2C bus
@@ -173,6 +199,31 @@
 	 * kernel never probes an inserted card). Ignore CD and poll the
 	 * slot directly. */
 	broken-cd;
+};
+
+&i2c4 {
+	pinctrl-0 = <&i2c4_cfg>;
+	pinctrl-names = "default";
+	clock-frequency = <100000>;
+	status = "okay";
+
+	hdmi_bridge: hdmi-bridge@2b {
+		compatible = "lontium,lt6911", "lontium,lt6911uxe";
+		/* Vendor code names the 8-bit write address 0x56; Linux DT
+		 * uses the 7-bit I2C address. */
+		reg = <0x2b>;
+		pinctrl-0 = <&hdmi_reset_cfg>;
+		pinctrl-names = "default";
+		reset-gpios = <&portb 3 GPIO_ACTIVE_LOW>;
+
+		port {
+			lt6911_out: endpoint {
+				bus-type = <4>; /* CSI-2 D-PHY */
+				clock-lanes = <0>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+	};
 };
 
 &gmac0 {

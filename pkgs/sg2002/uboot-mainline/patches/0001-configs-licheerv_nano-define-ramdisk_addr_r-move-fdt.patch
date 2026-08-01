@@ -8,8 +8,9 @@ Upstream include/configs/licheerv_nano.h forgot to define ramdisk_addr_r,
 so distro_bootcmd's extlinux loader bails with "missing environment
 variable: ramdisk_addr_r" and skips every entry in extlinux.conf.
 
-Also move fdt_addr_r above the kernel load region so a 30+ MB Image at
-0x81000000 doesn't clobber the FDT.
+Also load the RISC-V Image at the standard RAM base + 2 MiB address
+(0x80200000), move fdt_addr_r above the kernel load region so a 30+ MB
+Image doesn't clobber the FDT.
 
 Signed-off-by: George Watson <george@hellas.ai>
 ---
@@ -33,7 +34,7 @@ index 2ea7943f..2d96372f 100644
 +#define CFG_EXTRA_ENV_SETTINGS \
 +	"consoledev=ttyS0\0" \
 +	"baudrate=115200\0" \
-+	"kernel_addr_r=0x81000000\0"    \
++	"kernel_addr_r=0x80200000\0"    \
 +	"fdt_addr_r=0x83000000\0"       \
 +	"ramdisk_addr_r=0x85000000\0"   \
 +	"scriptaddr=0x80c00000\0"       \
@@ -42,4 +43,3 @@ index 2ea7943f..2d96372f 100644
  #endif /* __CONFIG_H */
 -- 
 2.53.0
-

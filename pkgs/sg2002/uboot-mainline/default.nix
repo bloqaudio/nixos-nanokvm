@@ -1,11 +1,14 @@
-# Mainline U-Boot 2026.04 for the Sipeed LicheeRV Nano (sg2002).
+# nixpkgs' mainline U-Boot for the Sipeed LicheeRV Nano (SG2002).
 # Layered on top of the upstream `sipeed_licheerv_nano_defconfig`:
 #   - extraConfig enables USB gadget + fastboot so distro_bootcmd can
 #     fall through to "fastboot usb 0" as a recovery channel
 #   - 4 local patches (see ./patches/) fix missing ramdisk_addr_r,
 #     add an -u-boot.dtsi for the dwc2 gadget, and let the dwc2_udc_otg
 #     driver build on RISC-V
-{buildUBoot}:
+{
+  buildUBoot,
+  bootCommand ? "sysboot mmc 0:2 any 0x80c00000 /boot/extlinux/extlinux.conf; run distro_bootcmd; fastboot usb 0",
+}:
 buildUBoot {
   defconfig = "sipeed_licheerv_nano_defconfig";
   extraMeta.platforms = ["riscv64-linux"];
@@ -41,7 +44,7 @@ buildUBoot {
     # scan can stop at the active firmware partition, so try the known NixOS
     # root partition explicitly before falling back to the generic scan and
     # then fastboot.
-    CONFIG_BOOTCOMMAND="sysboot mmc 0:2 any 0x80c00000 /boot/extlinux/extlinux.conf; run distro_bootcmd; fastboot usb 0"
+    CONFIG_BOOTCOMMAND="${bootCommand}"
     # MMC command-level tracing into the console record; pr_info/pr_debug
     # on the mmc init failure paths only compile in at LOGLEVEL>=7, so
     # without these a failed `mmc dev 0` is completely silent.

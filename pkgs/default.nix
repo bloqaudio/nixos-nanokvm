@@ -1,11 +1,12 @@
 # Overlay for everything this flake adds to nixpkgs.
 #
-# Two halves:
-#   1. `sg2002-*` — board-support for the Sophgo CV181x family
+# Three halves:
+#   1. `spacemit-k3-*` — board-support for SpacemiT K3 systems.
+#   2. `sg2002-*` — board-support for the Sophgo CV181x family
 #      (kernel builds, FIP, OpenSBI, U-Boot, AIC8800 driver/firmware,
 #      USB-recovery tool, DTBs). Inlined here from nixos-sg2002 so
 #      this repo is self-contained.
-#   2. `nanokvm-*` — the userspace bits (the Go server, the web
+#   3. `nanokvm-*` — the userspace bits (the Go server, the web
 #      bundle, the erofs rootfs builder, the kexec payload format)
 #      that turn a CV181x board into a working KVM.
 { inputs
@@ -75,6 +76,22 @@ in
     else prev.vmtouch;
 
   # -----------------------------------------------------------------
+  # spacemit-k3-* (board support)
+  # -----------------------------------------------------------------
+
+  "spacemit-k3-linux" = cross.callPackage ./spacemit-k3/linux {
+    kernelPatches = [];
+  };
+  "linuxPackages_spacemit-k3" = cross.linuxPackagesFor final."spacemit-k3-linux";
+  "spacemit-k3-fsbl" = cross.callPackage ./spacemit-k3/fsbl { };
+  "spacemit-k3-rtw89-firmware" = final.callPackage ./spacemit-k3/rtw89-firmware { };
+  "spacemit-k3-uefi-blobs" = final.callPackage ./spacemit-k3/uefi-blobs { };
+  "spacemit-k3-raw-fastboot-boot" = final.callPackage ./spacemit-k3/raw-fastboot-boot { };
+  "spacemit-k3-flash-uefi" = final.callPackage ./spacemit-k3/flash-uefi {
+    uefiBlobs = final."spacemit-k3-uefi-blobs";
+  };
+
+  # -----------------------------------------------------------------
   # nanokvm-* (userspace KVM stack)
   # -----------------------------------------------------------------
 
@@ -83,7 +100,11 @@ in
     patches = nanokvmPatches;
   };
 
-  nanokvm-web = final.callPackage ./nanokvm-web { };
+  # Static web assets are built on the build host and copied into the
+  # target server package; do not cross-build Node/V8 for riscv64.
+  nanokvm-web = final.buildPackages.callPackage ./nanokvm-web {
+    nanokvm-patched-src = final.nanokvm-patched-src;
+  };
   nanokvm-factory-runtime = final.callPackage ./nanokvm-factory-runtime { };
   nanokvm-server = final.callPackage ./nanokvm-server { };
 
@@ -192,6 +213,12 @@ in
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline;
   };
+  sg2002-fip-mainline-fastboot = final.callPackage ./sg2002/fip-mainline-uboot {
+    sg2002-fip = final.sg2002-fip;
+    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
+    sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
+    sg2002-uboot-mainline = cross.sg2002-uboot-mainline-fastboot;
+  };
 
   # AIC8800DC firmware blobs (Nano-W onboard WiFi+BT). passthru
   # `compressFirmware=false` because aicbsp's rwnx_load_firmware uses
@@ -260,6 +287,9 @@ in
     };
 
   sg2002-uboot-mainline = cross.callPackage ./sg2002/uboot-mainline { };
+  sg2002-uboot-mainline-fastboot = cross.sg2002-uboot-mainline.override {
+    bootCommand = "fastboot usb 0";
+  };
 
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
@@ -302,7 +332,7 @@ in
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
-    sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-uboot;
+    sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-fastboot;
   };
 
   # AIC8800 kernel module — vendor and mainline variants, parameterised

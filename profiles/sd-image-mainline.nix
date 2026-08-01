@@ -3,8 +3,9 @@
 # Unlike profiles/sd-image.nix (vendor 5.10 + vendor-FIT), this boots
 # the mainline kernel via mainline U-Boot + extlinux: U-Boot's
 # distro_bootcmd scans the ext4 root partition for
-# /boot/extlinux/extlinux.conf and loads kernel + dtb + initrd from
-# there. fip.bin (mainline U-Boot) lives on the FAT firmware partition.
+# /boot/extlinux/extlinux.conf and loads
+# kernel + dtb + initrd from there. fip.bin (mainline U-Boot) lives on
+# the FAT firmware partition.
 #
 # Reachability: the NanoKVM-PCIe board module brings up wired Ethernet
 # in the initrd and stage 2. The USB gadget keeps only ACM serial in the
@@ -43,10 +44,14 @@
     ''
   );
 
-  # Mirror the kernel console onto the USB gadget serial so the router
-  # sees boot output on its ttyACM. (sg2002-sd-image.nix already adds
-  # console=ttyS0; kernelParams is a merged list.)
-  boot.kernelParams = ["console=ttyGS0,115200"];
+  # Mirror the kernel console onto the USB gadget serial and keep the
+  # OpenSBI firmware region reserved, matching the USB FIT boot path.
+  # (sg2002-sd-image.nix already adds console=ttyS0; kernelParams is
+  # a merged list.)
+  boot.kernelParams = [
+    "console=ttyGS0,115200"
+    "riscv.fwsz=0x80000"
+  ];
 
   # Interactive login over the USB serial console.
   systemd.services."serial-getty@ttyGS0".enable = true;

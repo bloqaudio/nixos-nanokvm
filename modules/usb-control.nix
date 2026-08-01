@@ -49,17 +49,37 @@ let
     done
     [ -e /dev/ttyGS0 ] || exit 0
 
+    # Snapshot loop, 10 s apart, so the counters evolve across the
+    # networkd/NFS-mount window. usb0 RX staying at 0 while the host
+    # ARPs means the gadget's OUT path is dead; RX moving but TX stuck
+    # means the IN path is.
+    #
+    # Output goes to /dev/kmsg, NOT /dev/ttyGS0: printk's ring buffer
+    # is replayed to a console whenever it (re)registers, so these
+    # lines survive ACM re-enumeration; direct ttyGS0 writes are
+    # dropped whenever no host reader is attached at that instant.
     sleep 2
-    {
-      echo
-      echo "===== nanokvm initrd status ====="
-      echo "--- cmdline"; cat /proc/cmdline 2>&1 || true
-      echo "--- links"; ip link show 2>&1 || true
-      echo "--- addresses"; ip addr show 2>&1 || true
-      echo "--- routes"; ip route show 2>&1 || true
-      echo "===== end nanokvm initrd status ====="
-      echo
-    } >/dev/ttyGS0 2>&1 || true
+    mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
+    # NOTE: no dyndbg here. Enabling dwc2/gadget debug prints while the
+    # kernel console rides the same dwc2 gadget (ttyGS0) deadlocks the
+    # console within seconds — printk recursion through the driver it's
+    # logging. Keep this channel quiet.
+    for i in 1 2 3 4 5 6; do
+      {
+        echo "===== snapshot $i ====="
+        echo "--- netdev"; cat /proc/net/dev 2>&1 || true
+        echo "--- udc-state"; for u in /sys/class/udc/*; do
+              [ -e "$u" ] || continue
+              printf '%s: %s\n' "''${u##*/}" "$(cat "$u/state" 2>/dev/null)"
+            done
+        echo "--- gadget-udc"; cat /sys/kernel/config/usb_gadget/sg2002/UDC 2>&1 || true
+        echo "--- usb-devices"; cat /sys/kernel/debug/usb/devices 2>&1 || true
+        echo "===== end snapshot $i ====="
+      } 2>&1 | while IFS= read -r line; do
+        printf 'nanokvm-status: %s\n' "$line" > /dev/kmsg
+      done
+      sleep 10
+    done
   '';
 
   # The 40-usb0 networkd config, identical for initrd and stage-2.
@@ -235,7 +255,7 @@ in
           };
 
           "usb-debug-acm-status" = {
-            description = "Print one NanoKVM initrd status block on USB ACM";
+            description = "Print NanoKVM initrd status snapshots to kmsg";
             wantedBy = [ "initrd.target" ];
             after = [
               "usb-debug-network.service"
@@ -247,10 +267,19 @@ in
             ];
             unitConfig.DefaultDependencies = false;
             serviceConfig = {
-              Type = "oneshot";
+              # Long-running (the script loops internally): oneshot
+              # would reap the loop with its cgroup on completion.
               ExecStart = acmStatus;
+              Restart = "no";
             };
           };
+
+          # Interactive root shell ON the ACM console would go here —
+          # REMOVED: an sh exec'd with stdin on ttyGS0 sees instant
+          # EOF whenever the host side has no writer attached and
+          # crash-loops forever (observed: 600+ restarts in minutes,
+          # churning the manager). The TCP debug shell on 2323 plus
+          # the kmsg status snapshots are the debug channels.
         };
 
         # kexec socket + agent live in modules/control-plane/kexec.nix

@@ -54,6 +54,16 @@
         Try all three under NBD load; the answer's empirical.
       '';
     };
+    controlFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Optional stage-2 runtime flag file. When set, the stage-2
+        gadget includes the network function only while this file
+        exists. This is intended for compatibility with user-space UI
+        toggles; initrd gadgets remain fully declarative.
+      '';
+    };
   };
 
   options.sg2002.usbGadget.initrd.network.enable = lib.mkOption {
@@ -67,5 +77,22 @@
     type = lib.types.bool;
     default = false;
     description = "Bring up the SG2002 debug USB gadget again in stage 2.";
+  };
+
+  options.sg2002.usbGadget.stage2.reenumerateAfterBoot = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Restart the stage-2 gadget once after boot. Some SG2002 dwc2
+        hosts enumerate the initial stage-2 ECM function but leave the
+        link without carrier until the gadget is rebound.
+      '';
+    };
+    delaySec = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 300;
+      description = "Seconds after boot before the one-shot stage-2 gadget re-enumeration.";
+    };
   };
 }

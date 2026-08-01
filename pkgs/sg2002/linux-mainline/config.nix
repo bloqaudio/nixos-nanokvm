@@ -178,6 +178,14 @@ with lib.kernel; {
   BLK_DEV_LOOP = yes;
   OVERLAY_FS = yes;
 
+  # The SD image has a small FAT firmware partition. Stage-1 mounts it
+  # before the normal rootfs module set is available, so FAT's default
+  # CP437 codepage and iso8859-1 charset must be built in rather than
+  # left as modules.
+  NLS_CODEPAGE_437 = yes;
+  NLS_ISO8859_1 = yes;
+  NLS_UTF8 = yes;
+
   # dw_wdt binds to the DesignWare WDT at 0x03010000; systemd then
   # pets /dev/watchdog0 via RuntimeWatchdogSec. Replaces the old
   # /dev/mem userspace petter.
@@ -329,9 +337,28 @@ with lib.kernel; {
   INPUT_TOUCHSCREEN = no;
   INPUT_JOYSTICK = no;
   INPUT_TABLET = no;
-  # No cameras / TV tuners / DVB.
-  MEDIA_SUPPORT = no;
-  VIDEO_DEV = no;
+  # HDMI bridge probe path. This is intentionally only the media
+  # controller / V4L2 subdev layer plus the Lontium bridge: it can prove
+  # the LT6911-family HDMI-to-MIPI chip is alive on I2C4, but the SG2002
+  # CSI/VI receiver still needs a real mainline driver before frames can
+  # land in /dev/video*.
+  MEDIA_SUPPORT = yes;
+  MEDIA_CAMERA_SUPPORT = yes;
+  MEDIA_CONTROLLER = yes;
+  VIDEO_DEV = yes;
+  VIDEO_V4L2_SUBDEV_API = yes;
+  V4L2_FWNODE = yes;
+  V4L2_CCI_I2C = yes;
+  VIDEO_LT6911UXE = yes;
+  MEDIA_SUBDRV_AUTOSELECT = no;
+  MEDIA_ANALOG_TV_SUPPORT = no;
+  MEDIA_DIGITAL_TV_SUPPORT = no;
+  MEDIA_RADIO_SUPPORT = no;
+  MEDIA_SDR_SUPPORT = no;
+  MEDIA_PLATFORM_SUPPORT = no;
+  MEDIA_TEST_SUPPORT = no;
+  MEDIA_USB_SUPPORT = no;
+  MEDIA_PCI_SUPPORT = no;
   DVB_CORE = no;
   # NFC, WWAN, IrDA, legacy PPS. (IIO is wanted on this SoC for the
   # SAR-ADC driver — see SOPHGO_CV1800B_ADC above.)
@@ -463,11 +490,28 @@ with lib.kernel; {
   USB_MUSB_HDRC = no;
 
   # Not using any of these on this board.
-  NFS_FS = no;
   NFSD = no;
   IP_VS = no;
   SECURITY_APPARMOR = no;
   SECURITY_SELINUX = no;
+
+  # NFS *client* — the PicoClaw netboot profile mounts /nix/store read-only
+  # from the development host's kernel nfsd, replacing the NBD-served
+  # erofs rootfs. Its writable overlay is local tmpfs, so the board remains
+  # completely stateless. Built-in so the initrd mounts without module
+  # loading. Server side stays off; the other network filesystems are dead
+  # compile weight.
+  NETWORK_FILESYSTEMS = yes;
+  NFS_FS = yes;
+  NFS_V4 = yes;
+  NFS_V4_1 = yes;
+  NFS_V4_2 = yes;
+  AFS_FS = no;
+  CEPH_FS = no;
+  CIFS = no;
+  CODA_FS = no;
+  NCP_FS = no;
+  "9P_FS" = no;
 
   # Kill WLAN_VENDOR_* — aic8800 is OOT, upstream stubs are compile
   # weight with no runtime value.
@@ -534,9 +578,9 @@ with lib.kernel; {
   VLAN_8021Q = no;
   WIREGUARD = no;
 
-  # No remote/exotic filesystems — keep ext4/vfat/erofs/overlay/tmpfs
+  # No other remote/exotic filesystems beyond the NFS client (enabled
+  # above for the netboot profile) — keep ext4/vfat/erofs/overlay/tmpfs
   # /configfs/autofs (those stay on via the base / above).
-  NETWORK_FILESYSTEMS = no;
 
   # Audio: keep the SoC I2S codec (cv1800b-sound, pulled in by the
   # board); drop USB / PCI / FireWire / other-SoC sound.
@@ -545,4 +589,13 @@ with lib.kernel; {
   SND_PCMCIA = no;
   SND_FIREWIRE = no;
   SND_SPI = no;
+
+  # =====================================================================
+  # Size/RAM trim — 256 MB boards, cross-compiled, no debug sessions
+  # that need DWARF. DEBUG_INFO alone is a large fraction of build time
+  # and output size. THP on a single in-order C906 with 256 MB buys
+  # nothing and costs reclaim churn.
+  # =====================================================================
+  DEBUG_INFO = no;
+  TRANSPARENT_HUGEPAGE = no;
 }

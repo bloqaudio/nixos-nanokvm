@@ -21,7 +21,7 @@ Colmena topology in the downstream flake that consumes this one.
 The primary NanoKVM-PCIe path is mainline:
 
 - `boards.pcie.mainline.sd`: SD image using mainline U-Boot/extlinux and
-  Linux 7.2-rc1
+  Linux 7.2-rc5
 - Ethernet via `stmmac`
 - AIC8800 SDIO WiFi via the Radxa driver plus local SDIO compatibility
   patching
@@ -47,6 +47,8 @@ Useful development artifacts:
 nix run .#boards.licheerv.mainline.kernel-test.usb-boot
 nix run .#boards.licheerv.mainline.live.usb.usb-boot
 nix run .#boards.licheerv.mainline.live.usb.kexec
+nix run .#boards.picoclaw.mainline.kernel-test.usb-boot
+nix run .#boards.picoclaw.mainline.live.usb.usb-boot
 ```
 
 The USB live runner configures the host side of the ECM link as
@@ -65,6 +67,22 @@ NANOKVM_NBD_ROOTFS_BIND=192.0.2.10 \
 `NANOKVM_NBD_ROOTFS_HOST` is the address the target can reach over WiFi.
 `NANOKVM_NBD_ROOTFS_BIND` is optional; omit it to let `nbd-server` bind all
 local interfaces.
+
+The PicoClaw live outputs use the diskless Strix pattern instead: `/` is
+tmpfs, `/nix/store` is Trex's read-only NFSv4 export with a local tmpfs
+overlay, and no writable state is exported. The plain variant mounts over
+the static USB gadget link; the WiFi variant avoids the SG2002 mainline
+DWC2 RX stall by using WLAN for NFS while retaining USB for ROM download,
+fastboot, and ACM diagnostics:
+
+```sh
+NANOKVM_WIFI_CONFIG=$PWD/wifi.conf \
+  nix run --impure .#boards.picoclaw.mainline.live.wifi.usb-boot
+```
+
+The initrd needs the WiFi credential before it can mount the store, so this
+necessarily places the configuration in the Nix store and FIT image. Use a
+dedicated development SSID or PSK rather than a broadly privileged credential.
 
 ## Downstream Use
 
@@ -119,6 +137,8 @@ features in the consuming configuration:
 These files are intentionally ignored and only affect local standalone builds:
 
 - `authorized_keys`: root SSH public keys baked into local images
+- `wifi.conf`: local `wpa_supplicant` configuration, injected into a standalone
+  WiFi image with `NANOKVM_WIFI_CONFIG=$PWD/wifi.conf` and `--impure`
 - `.ssh_host_*_key`: cached per-developer SSH host keys injected by USB boot
 - `.nanokvm-*.log` / `.nanokvm-*.pid`: host runner state
 - `media/captures/`: local terminal recordings and rendered GIFs

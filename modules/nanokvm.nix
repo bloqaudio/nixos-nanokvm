@@ -27,6 +27,9 @@ let
   onVendorKernelDevice =
     ((config.sg2002.kernel or null) == "vendor")
     && pkgs.stdenv.hostPlatform.isRiscV64;
+  usesSg2002Stage2Gadget =
+    (config.sg2002.usbGadget.stage2.enable or false)
+    && !cfg.usbGadget.enable;
 
   serverConfig = yaml.generate "nanokvm-server.yaml" {
     proto = "http";
@@ -116,6 +119,28 @@ let
     esac
   '';
 
+  sg2002Stage2UsbDevScript = pkgs.writeShellScript "S03usbdev-sg2002-stage2" ''
+    set -eu
+    unit=usb-gadget.service
+
+    case "''${1:-}" in
+      start)
+        exec ${pkgs.systemd}/bin/systemctl start "$unit"
+        ;;
+      stop)
+        exec ${pkgs.systemd}/bin/systemctl stop "$unit"
+        ;;
+      restart|stop_start|restart_phy)
+        ${pkgs.systemd}/bin/systemctl stop "$unit" || true
+        exec ${pkgs.systemd}/bin/systemctl start "$unit"
+        ;;
+      *)
+        echo "usage: $0 {start|stop|restart|stop_start|restart_phy}" >&2
+        exit 2
+        ;;
+    esac
+  '';
+
   activation = ''
     mkdir -p /etc/kvm /etc/init.d /boot /data /kvmapp/kvm /mnt/data
 
@@ -161,20 +186,34 @@ let
       else ": > /etc/kvm/hdmi_disabled"
     }
 
-    # cv181x vendor init.d compat shims. Only present in the
-    # riscv64 cross build (the native aarch64/x86_64 server omits
-    # /lib/nanokvm/system entirely). Skip cleanly when missing — the
-    # Rock-5B / dev-host deployments don't run S03usb*/S00kmod at all
-    # (services.nanokvm.kmods.enable + .usbGadget.enable should be
-    # set to false on those targets).
-    if [ -e ${cfg.package}/lib/nanokvm/system/init.d/S03usbdev ]; then
-      if [ ! -e /etc/init.d/S03usbdev ]; then
-        cp ${cfg.package}/lib/nanokvm/system/init.d/S03usbdev /etc/init.d/S03usbdev
-        chmod 0755 /etc/init.d/S03usbdev
+    ${if usesSg2002Stage2Gadget then ''
+      # Mainline SD images use the reusable SG2002 configfs gadget
+      # service. The web UI still calls the stock init.d entrypoints
+      # when toggling Virtual Device settings, so keep those entrypoints
+      # as wrappers around the declarative service.
+      cp ${sg2002Stage2UsbDevScript} /etc/init.d/S03usbdev
+      cp ${sg2002Stage2UsbDevScript} /etc/init.d/S03usbhid
+      chmod 0755 /etc/init.d/S03usbdev /etc/init.d/S03usbhid
+      if [ ! -e /boot/.nanokvm-usb-network-state ]; then
+        : > /boot/usb.rndis0
+        : > /boot/.nanokvm-usb-network-state
       fi
-      cp ${cfg.package}/lib/nanokvm/system/init.d/S03usbhid /etc/init.d/S03usbhid
-      chmod 0755 /etc/init.d/S03usbhid
-    fi
+    '' else ''
+      # cv181x vendor init.d compat shims. Only present in the
+      # riscv64 cross build (the native aarch64/x86_64 server omits
+      # /lib/nanokvm/system entirely). Skip cleanly when missing — the
+      # Rock-5B / dev-host deployments don't run S03usb*/S00kmod at all
+      # (services.nanokvm.kmods.enable + .usbGadget.enable should be
+      # set to false on those targets).
+      if [ -e ${cfg.package}/lib/nanokvm/system/init.d/S03usbdev ]; then
+        if [ ! -e /etc/init.d/S03usbdev ]; then
+          cp ${cfg.package}/lib/nanokvm/system/init.d/S03usbdev /etc/init.d/S03usbdev
+          chmod 0755 /etc/init.d/S03usbdev
+        fi
+        cp ${cfg.package}/lib/nanokvm/system/init.d/S03usbhid /etc/init.d/S03usbhid
+        chmod 0755 /etc/init.d/S03usbhid
+      fi
+    ''}
 
     cp ${initRestartScript} /etc/init.d/S95nanokvm
     chmod 0755 /etc/init.d/S95nanokvm
@@ -383,6 +422,11 @@ in
         script = activation;
       };
     }
+
+    (lib.mkIf usesSg2002Stage2Gadget {
+      sg2002.usbGadget.network.controlFile = lib.mkDefault "/boot/usb.rndis0";
+      sg2002.usbGadget.stage2.reenumerateAfterBoot.enable = lib.mkDefault true;
+    })
 
     (lib.mkIf cfg.kmods.enable {
       systemd.services.nanokvm-kmods = {

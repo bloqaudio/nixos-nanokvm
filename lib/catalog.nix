@@ -1,8 +1,8 @@
 # Catalog of board × kernel × profile × variant combinations.
 #
 # One record per shipped configuration. lib/catalog.nix is the single
-# source of truth for what `nixosConfigurations.boards.<...>` and
-# `packages.<sys>.boards.<...>` expose; flake.nix doesn't repeat the
+# source of truth for what flat `nixosConfigurations.<...>` names and
+# `legacyPackages.<sys>.boards.<...>` expose; flake.nix doesn't repeat the
 # matrix on the artifact side anymore.
 #
 # Record schema:
@@ -178,6 +178,40 @@ let
       })
     ];
   };
+
+  # LicheeRV-Nano PicoClaw (SG2002 + expansion board, no SD slot in
+  # use). USB-boot only; the live profile is NFS-rooted, not NBD.
+  picoclaw =
+    kernel: pathTail: attrs:
+    {
+      path = [ "picoclaw" kernel ] ++ pathTail;
+      boardName = "licheerv-nano-picoclaw";
+      inherit kernel;
+    }
+    // attrs;
+
+  picoclawKernelTest = kernel:
+    picoclaw kernel [ "kernel-test" ] {
+      profile = "usb-kernel-test";
+      artifact = "kernel-test";
+      tag = "kernel-test-picoclaw-${kernel}";
+      # The dwc2 gadget (net function AND ACM console) dies ~30-60 s
+      # into every boot, exactly when the system goes idle after
+      # bring-up. Suspect: C906 WFI cpuidle gating something the USB
+      # controller needs. cpuidle.off=1 is the A/B test.
+      artifactArgs.extraBootargs = [ "cpuidle.off=1" ];
+    };
+
+  picoclawLive = kernel: tag: attrs:
+    picoclaw kernel [ "live" "usb" ] (
+      {
+        profile = "usb-nfs-live";
+        artifact = "nfs-live";
+        inherit tag;
+        modules = [ ({ ... }: { sg2002.usbGadget.network.transport = "ncm"; }) ];
+      }
+      // attrs
+    );
 in
 [
   # ===== licheerv-nano-w / mainline =====
@@ -218,4 +252,95 @@ in
   # USB-NBD live exercising the full PCIe hardware — eth0 (stmmac) and
   # wlan0 (AIC8800) both come up.
   (pcieLive "mainline" "live-pcie-mainline" pcieLiveExtras)
+
+  # ===== licheerv-nano-w / mainline / NFS over WiFi =====
+  # Same WiFi-rooted experiment as the picoclaw wifi entry, on the
+  # original dev board (self-cycles its ROM loop on fuckup, so no
+  # physical resets while iterating). The AIC8800 is identical.
+  (lichee "mainline" [ "live" "wifi-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-nfs-mainline";
+    mixins = [
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, rootWpaConf ? null, ... }: {
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        nanokvm.nfsLive.server = "192.168.23.8";
+      })
+    ];
+  })
+
+  # ===== nanokvm-pcie / mainline / NFS over ethernet =====
+  # The cleanest data path of all: the PCIe carrier's RJ45. eth0 does
+  # DHCP in the initrd (dwmac-sophgo), the root-nfs service mounts
+  # trex over the LAN — no dwc2 data, no WiFi. Runs on the router's
+  # self-cycling board, so iteration needs no physical resets.
+  (pcie "mainline" [ "live" "nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-pcie-nfs-mainline";
+    mixins = [ ../modules/ethernet.nix ];
+    modules = [
+      ({ ... }: {
+        nanokvm.nfsLive.server = "192.168.23.8";
+        sg2002.initrd.availableKernelModules = [
+          "stmmac"
+          "stmmac_platform"
+          "dwmac-sophgo"
+        ];
+        sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig.DHCP = "yes";
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
+
+  # ===== licheerv-nano-picoclaw / mainline =====
+  # Initrd-only recovery target — the first thing to run on new silicon.
+  (picoclawKernelTest "mainline")
+  # USB-booted, NFS-rooted live system (replaces the NBD transport).
+  #
+  # Bring-up note 2026-07-27: with the WiFi DTB (sdhci1 enabled), the
+  # fragile AIC8800 init sequence spins on sdhci1 timeouts and — per
+  # the nowifi dtsi's own comment — the SDIO probing contends with the
+  # USB gadget for the SoC bus, killing usb0's data path mid-boot.
+  # Booting the nowifi DTB avoids that entirely. The wifi-aic8800
+  # mixin returns in a follow-up entry once the base boot is solid.
+  (picoclawLive "mainline" "live-picoclaw-mainline" {
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-nowifi;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
+  # WiFi-booted variant: the dwc2 gadget net function wedges on this
+  # unit (see usb-nfs-live.nix and the bring-up note above), so the
+  # store mount rides the AIC8800 over the LAN instead. USB stays on
+  # for console + debug shell + kexec control. The NFS export is
+  # trex's /export/nix-store, already served to 192.168.23.0/24.
+  (picoclaw "mainline" [ "live" "wifi" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-picoclaw-mainline";
+    mixins = [
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, rootWpaConf ? null, ... }: {
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        # NFS root over the LAN, served by trex. Runtime override:
+        # NANOKVM_NFS_SERVER env → nanokvm.nfs_server= cmdline arg.
+        nanokvm.nfsLive.server = "192.168.23.8";
+      })
+    ];
+  })
 ]

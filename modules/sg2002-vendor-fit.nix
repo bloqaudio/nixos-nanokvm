@@ -39,7 +39,7 @@
   # `loglevel=0`, which silences the kernel) and hardcodes a specific
   # FIT config name — so we override both sdboot/sdbootauto AND bootargs.
   uenv = pkgs.writeText "uEnv.txt" ''
-    bootargs=${lib.concatStringsSep " " config.boot.kernelParams}
+    bootargs=init=/nix/var/nix/profiles/system/init ${lib.concatStringsSep " " config.boot.kernelParams}
     sdboot=mmc dev 0 && fatload mmc 0:1 ''${uImage_addr} boot.sd && bootm ''${uImage_addr}
     sdbootauto=run sdboot
   '';
