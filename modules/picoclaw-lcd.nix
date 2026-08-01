@@ -59,13 +59,12 @@ in
     ];
     boot.kernelModules = [ "spi-dw-mmio" "spidev" ];
 
-    # This diagnostic image performs unusually slow first-boot work over the
-    # full-speed USB/NFS link.  Request the longest useful DesignWare period:
-    # the SG2002's 25 MHz watchdog clock and 2^31 maximum TOP cap the hardware
-    # at about 85.9 seconds.  An 80-second request selects that maximum while
-    # retaining watchdog protection across switch-root.
-    boot.initrd.systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "80s";
-    systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "80s";
+    # The DesignWare watchdog tops out at about 85.9 seconds, but the
+    # one-core USB/NFS diagnostic can block longer while faulting stage-2
+    # paths from the remote store.  Its dedicated DTB disables the watchdog;
+    # keep both systemd managers consistent with that board-specific choice.
+    boot.initrd.systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "off";
+    systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "off";
 
     systemd.services.picoclaw-lcd-test = {
       description = "PicoClaw ST7789 visible LCD self-test";
