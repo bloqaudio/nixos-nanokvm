@@ -295,6 +295,16 @@ in
     })
 
     (lib.mkIf cfg.stage2.enable {
+      # The initrd arms a nowayout DesignWare watchdog. Keep feeding the same
+      # device after switch-root: omitting this from the stage-2 manager makes
+      # systemd drop watchdog ownership during reexec, but the kernel cannot
+      # disarm it and resets the board roughly one hardware timeout later.
+      systemd.settings.Manager = {
+        RuntimeWatchdogSec = lib.mkDefault "30s";
+        RebootWatchdogSec = lib.mkDefault "off";
+        KExecWatchdogSec = lib.mkDefault "off";
+      };
+
       systemd.network = {
         enable = true;
         networks."40-usb0" = usbNetwork;
@@ -311,9 +321,9 @@ in
         description = "User shell on the USB debug network";
         wantedBy = [ "multi-user.target" ];
         after = [ "network-online.target" ]
-          ++ lib.optional config.services.userborn.enable "userborn.service";
+          ++ lib.optional (config.services.userborn.enable && !config.services.userborn.static) "userborn.service";
         wants = [ "network-online.target" ]
-          ++ lib.optional config.services.userborn.enable "userborn.service";
+          ++ lib.optional (config.services.userborn.enable && !config.services.userborn.static) "userborn.service";
         serviceConfig = {
           ExecStart = stage2DebugShellExec;
           Restart = "always";

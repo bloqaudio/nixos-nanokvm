@@ -32,30 +32,50 @@
 
   system.nixos-init.enable = true;
   system.etc.overlay.enable = true;
-  services.userborn.enable = true;
+  services.userborn = {
+    enable = true;
+    # This profile is a throw-away appliance image with switching disabled.
+    # Generate passwd/group/shadow at build time instead of making the board
+    # fetch and run userborn over full-speed USB NFS during every boot.
+    static = true;
+  };
 
   sg2002 = {
     authorizedKeys = rootAuthorizedKeys;
     usbGadget.network.enable = true;
   };
 
-  # Same fork-storm rationale as profiles/usb-nbd-live.nix: without
-  # swap the stage-2 service startup stalls systemd's mainloop past
-  # RuntimeWatchdogSec and dw_wdt resets the chip.
-  zramSwap = {
-    enable = true;
-    algorithm = "zstd";
-    memoryPercent = 50;
-  };
+  # zram0 is created before the stage-2 udev coldplug, so its generated
+  # .device unit never observes the event and delays boot by 90 seconds.
+  # Keep it off for the small bring-up closure; the large kexec staging copy
+  # that originally motivated swap is disabled below as well.
+  zramSwap.enable = false;
+
+  # Both consoles remain kernel log sinks. Avoid generator-created serial
+  # gettys whose .device units have the same lost-udev-event problem.
+  boot.kernelParams = [
+    "systemd.getty_auto=no"
+    # Ten parallel workers consumed roughly 62 MiB during the failed boot.
+    # This one-core, 256-MiB target needs a deliberately small hotplug burst.
+    "udev.children_max=2"
+  ];
 
   services.openssh = {
     enable = true;
+    # RSA-4096 generation took tens of seconds and was repeatedly killed
+    # under memory pressure. Ed25519 is sufficient for this ephemeral target.
+    hostKeys = [
+      {
+        path = "/etc/ssh/ssh_host_ed25519_key";
+        type = "ed25519";
+      }
+    ];
     settings = {
       PermitRootLogin = "yes";
       PasswordAuthentication = true;
     };
   };
-  systemd.services.sshd = lib.mkIf config.services.userborn.enable {
+  systemd.services.sshd = lib.mkIf (config.services.userborn.enable && !config.services.userborn.static) {
     after = [
       "systemd-tmpfiles-setup.service"
       "userborn.service"
@@ -81,7 +101,18 @@
 
   nanokvm.usbControl = {
     stage2ShellUser = "nixos";
+    # prepare-kexec-stage copies a ~21 MiB EROFS image into /run while its
+    # NFS source remains cached. That ~44 MiB transient peak consumed the
+    # atomic reserve DWC2 needs for RX on this 256 MiB board.
+    kexec.enable = false;
   };
+
+  # Numeric-address NFS and SSH do not need these background daemons. Avoid
+  # pulling their executables through the slow root link during bring-up.
+  services.resolved.enable = false;
+  services.timesyncd.enable = false;
+  systemd.oomd.enable = false;
+  systemd.network.wait-online.enable = false;
 
   # Unlike the NBD live profile, nanokvm-server stays off here: the
   # PicoClaw work starts from a minimal base, and the server's

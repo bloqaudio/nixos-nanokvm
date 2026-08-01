@@ -597,5 +597,10 @@ with lib.kernel; {
   # nothing and costs reclaim churn.
   # =====================================================================
   DEBUG_INFO = no;
+  # The generic NixOS config enables BTF independently of DEBUG_INFO. It
+  # leaves a ~4.5 MiB allocatable .BTF section resident on this 256 MiB
+  # target even though no BPF tooling consumes it.
+  DEBUG_INFO_BTF = no;
+  DEBUG_INFO_BTF_MODULES = no;
   TRANSPARENT_HUGEPAGE = no;
 }

@@ -23,6 +23,7 @@
 let
   protocol = import ../lib/protocol.nix;
   cfg = config.nanokvm.nfsLive;
+  usbRoot = cfg.server == protocol.hostIp;
 
   runRootNfs = pkgs.writeShellScript "nanokvm-run-root-nfs" ''
     set -u
@@ -82,37 +83,92 @@ let
     echo "root-nfs: /nix/store mounted (nfs ro + tmpfs overlay)" > /dev/kmsg
   '';
 
-  # See services.usb-rx-guard below. TX-moving/RX-stuck for two 5 s
-  # windows → UDC rebind. BusyBox-only, runs in initrd and stage 2.
-  rxGuard = pkgs.writeShellScript "nanokvm-usb-rx-guard" ''
+  # See services.usb-rx-guard below. An active host probe failing while RX
+  # is stuck for two short windows triggers a full dwc2 re-probe. Keep
+  # both the script and its only executable in /run: the guard must still
+  # be able to recover the link when the NFS-backed store is unreachable.
+  rxGuardRuntime = "/run/nanokvm-usb-rx-guard";
+  rxGuardBusybox = "/run/nanokvm-usb-rx-guard-busybox";
+  rxGuardStaticBusybox = pkgs.pkgsStatic.busybox;
+  rxGuardSource = pkgs.writeText "nanokvm-usb-rx-guard" ''
     set -u
-    export PATH=${lib.makeBinPath [ pkgs.busybox ]}
+    BB=${rxGuardBusybox}
     G=/sys/kernel/config/usb_gadget/sg2002
     stat=/sys/class/net/usb0/statistics
     stale=0
+    last_udc=""
+    echo "usb-rx-guard: monitoring usb0 from a store-independent /run payload" > /dev/kmsg
     while :; do
-      sleep 5
+      "$BB" sleep 2
       [ -d "$stat" ] || continue
-      rx1=$(cat "$stat/rx_packets" 2>/dev/null || echo 0)
-      tx1=$(cat "$stat/tx_packets" 2>/dev/null || echo 0)
-      sleep 5
-      rx2=$(cat "$stat/rx_packets" 2>/dev/null || echo 0)
-      tx2=$(cat "$stat/tx_packets" 2>/dev/null || echo 0)
-      if [ "$rx1" = "$rx2" ] && [ "$tx1" != "$tx2" ]; then
+      rx1=$("$BB" cat "$stat/rx_packets" 2>/dev/null || echo 0)
+      tx1=$("$BB" cat "$stat/tx_packets" 2>/dev/null || echo 0)
+      # Force one target-to-host packet into each sample window. Never wait
+      # for the probe: when the NCM function wedges, ping itself can block in
+      # the network stack and would prevent the guardian from reaching its
+      # configfs recovery path. The short-lived child is disposable; the
+      # parent only samples local sysfs counters.
+      "$BB" ping -c 1 -W 1 ${lib.escapeShellArg protocol.hostIp} >/dev/null 2>&1 &
+      probe_pid=$!
+      "$BB" sleep 2
+      rx2=$("$BB" cat "$stat/rx_packets" 2>/dev/null || echo 0)
+      tx2=$("$BB" cat "$stat/tx_packets" 2>/dev/null || echo 0)
+      "$BB" kill "$probe_pid" >/dev/null 2>&1 || true
+      if [ "$rx1" = "$rx2" ]; then
         stale=$((stale + 1))
+        echo "usb-rx-guard: probe produced no RX, rx=$rx1->$rx2 tx=$tx1->$tx2 stale=$stale" > /dev/kmsg
       else
         stale=0
       fi
       if [ "$stale" -ge 2 ]; then
         stale=0
-        udc=$(cat "$G/UDC" 2>/dev/null || true)
-        echo "usb-rx-guard: usb0 TX moving but RX stuck; rebinding gadget ($udc)" > /dev/kmsg
+        current_udc=$("$BB" cat "$G/UDC" 2>/dev/null || true)
+        [ -z "$current_udc" ] || last_udc=$current_udc
+        udc=$last_udc
+        driver=/sys/bus/platform/drivers/dwc2
+        echo "usb-rx-guard: usb0 probe and RX stuck; re-probing dwc2 ($udc)" > /dev/kmsg
         [ -n "$udc" ] || continue
         echo "" > "$G/UDC" 2>/dev/null || true
-        sleep 1
-        echo "$udc" > "$G/UDC" 2>/dev/null || true
+        if [ ! -e "$driver/unbind" ] || [ ! -e "$driver/bind" ]; then
+          echo "usb-rx-guard: dwc2 platform driver controls are missing" > /dev/kmsg
+          echo "$udc" > "$G/UDC" 2>/dev/null || true
+          continue
+        fi
+        if ! echo "$udc" > "$driver/unbind" 2>/dev/null; then
+          echo "usb-rx-guard: failed to unbind dwc2 ($udc)" > /dev/kmsg
+          echo "$udc" > "$G/UDC" 2>/dev/null || true
+          continue
+        fi
+        "$BB" sleep 1
+        if ! echo "$udc" > "$driver/bind" 2>/dev/null; then
+          echo "usb-rx-guard: failed to bind dwc2 ($udc)" > /dev/kmsg
+          continue
+        fi
+        # UDC registration is asynchronous after a platform-driver rebind.
+        # Keep this loop store-independent: both the shell and sleep live in
+        # the static BusyBox payload copied to /run before NFS is mounted.
+        ready=0
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+          if [ -e "/sys/class/udc/$udc" ]; then
+            ready=1
+            break
+          fi
+          "$BB" sleep 0.1
+        done
+        if [ "$ready" = 1 ] && echo "$udc" > "$G/UDC" 2>/dev/null; then
+          echo "usb-rx-guard: dwc2 and gadget rebound ($udc)" > /dev/kmsg
+        else
+          echo "usb-rx-guard: dwc2 re-probe failed ($udc)" > /dev/kmsg
+        fi
       fi
     done
+  '';
+
+  rxGuardInstall = pkgs.writeShellScript "nanokvm-install-usb-rx-guard" ''
+    set -eu
+    ${pkgs.busybox}/bin/busybox cp -fL ${rxGuardStaticBusybox}/bin/busybox ${rxGuardBusybox}
+    ${pkgs.busybox}/bin/busybox cp -f ${rxGuardSource} ${rxGuardRuntime}
+    ${pkgs.busybox}/bin/busybox chmod 0755 ${rxGuardBusybox} ${rxGuardRuntime}
   '';
 in
 {
@@ -220,48 +276,115 @@ in
         "usb-debug-acm-status.service"
       ];
       services = {
-        usb-gadget.unitConfig.IgnoreOnIsolate = true;
+        # `isolate initrd-switch-root.target` stops networkd and the RX
+        # guard before stage 2 can adopt them. A plain start is the proven
+        # network-root handoff used by usb-nbd-live: PID 1 switches root
+        # without creating a blind window on the transport carrying the
+        # store. It also avoids spuriously starting the completed NFS mount
+        # service a second time during the isolate transaction.
+        initrd-cleanup = {
+          overrideStrategy = "asDropinIfExists";
+          serviceConfig.ExecStart = lib.mkForce [
+            ""
+            "${pkgs.systemd}/bin/systemctl --no-block start initrd-switch-root.target"
+          ];
+        };
+
+        # The NFS store rides over usb0, so tearing the gadget down during
+        # initrd cleanup removes stage 2's executable files halfway through
+        # switch-root. Leave the configfs gadget and network device in the
+        # kernel; the stage-2 usb-gadget unit below adopts them without
+        # re-enumerating.
+        usb-gadget = {
+          unitConfig = {
+            IgnoreOnIsolate = true;
+            SurviveFinalKillSignal = true;
+          };
+          serviceConfig = {
+            ExecStop = lib.mkForce [ "" ];
+            KillMode = "none";
+            SendSIGKILL = false;
+          };
+        };
         usb-debug-network.unitConfig.IgnoreOnIsolate = true;
         usb-debug-shell.unitConfig.IgnoreOnIsolate = true;
         usb-debug-acm-status.unitConfig.IgnoreOnIsolate = true;
 
-        # dwc2 RX-stall guard. On this unit the gadget's OUT path
+
+        # dwc2 RX-stall guard for the USB-root profile. On this unit the gadget's OUT path
         # (device RX) wedges 30-90 s into boot while the IN path
         # (console, target TX) keeps working — host sees
         # `cdc_* transmit queue 0 timed out`, target usb0 RX counter
-        # freezes. A UDC rebind clears it. Signature we rebind on:
-        # TX moved but RX didn't, two windows in a row. Idle links
-        # (no TX either) are left alone.
-        usb-rx-guard = {
+        # freezes. Only a full dwc2 platform-driver re-probe clears it;
+        # a configfs UDC detach/rebind does not. Signature we recover on:
+        # The target's asynchronous host probe produced no RX for two windows
+        # in a row. The probe is deliberately not awaited: the full NCM wedge
+        # can block its syscall even though the separate ACM IN path lives.
+        usb-rx-guard = lib.mkIf usbRoot {
           description = "Rebind the USB gadget when its RX path stalls";
           wantedBy = [ "initrd.target" ];
           after = [ "usb-gadget.service" "usb-debug-network.service" ];
           wants = [ "usb-gadget.service" "usb-debug-network.service" ];
-          unitConfig.DefaultDependencies = false;
+          unitConfig = {
+            DefaultDependencies = false;
+            IgnoreOnIsolate = true;
+            RefuseManualStop = true;
+            SurviveFinalKillSignal = true;
+          };
           serviceConfig = {
-            ExecStart = rxGuard;
+            ExecStartPre = rxGuardInstall;
+            ExecStart = "${rxGuardBusybox} sh ${rxGuardRuntime}";
             Restart = "always";
-            RestartSec = "5s";
+            RestartSec = "1s";
           };
         };
       };
-      storePaths = [
-        runRootNfs
-        rxGuard
+      storePaths = [ runRootNfs ] ++ lib.optionals usbRoot [
+        rxGuardInstall
+        rxGuardSource
+        rxGuardStaticBusybox
       ];
     };
 
-    # Stage-2 instance of the RX-stall guard (the initrd one dies at
-    # switch-root). Same rebind logic; NFS/TCP ride over the blip.
-    systemd.services.usb-rx-guard = {
+    # The initrd instance created the configfs gadget that carries the live
+    # NFS mount. Mark the corresponding stage-2 unit active without running
+    # the generic setup script: that script intentionally unbinds the UDC and
+    # re-probes dwc2, which would sever the store during switch-root.
+    systemd.services.usb-gadget = {
+      description = "Preserve the initrd USB gadget across switch-root";
+      unitConfig = {
+        DefaultDependencies = false;
+        IgnoreOnIsolate = true;
+        RefuseManualStop = true;
+        SurviveFinalKillSignal = true;
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+        ExecStop = lib.mkForce [ "" ];
+        KillMode = "none";
+        SendSIGKILL = false;
+      };
+    };
+
+    # The initrd guard survives switch-root. If PID 1 ever has to restart it
+    # in stage 2, its /run copy remains available without an NFS store read.
+    systemd.services.usb-rx-guard = lib.mkIf usbRoot {
       description = "Rebind the USB gadget when its RX path stalls";
-      wantedBy = [ "multi-user.target" ];
+      wantedBy = [ "sysinit.target" ];
+      before = [ "sysinit.target" ];
       after = [ "usb-gadget.service" ];
       wants = [ "usb-gadget.service" ];
+      unitConfig = {
+        DefaultDependencies = false;
+        IgnoreOnIsolate = true;
+        SurviveFinalKillSignal = true;
+      };
       serviceConfig = {
-        ExecStart = rxGuard;
+        ExecStart = "${rxGuardBusybox} sh ${rxGuardRuntime}";
         Restart = "always";
-        RestartSec = "5s";
+        RestartSec = "1s";
       };
     };
   };

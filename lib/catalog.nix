@@ -313,6 +313,12 @@ in
   # Booting the nowifi DTB avoids that entirely. The wifi-aic8800
   # mixin returns in a follow-up entry once the base boot is solid.
   (picoclawLive "mainline" "live-picoclaw-mainline" {
+    # Direct USB runners construct the command line themselves rather than
+    # using boot.loader, so carry the getty-generator override explicitly.
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
     modules = [
       ({ pkgs, ... }: {
         sg2002.fdt = pkgs.sg2002-dtb-mainline-nowifi;
