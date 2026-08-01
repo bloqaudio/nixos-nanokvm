@@ -82,6 +82,10 @@ let
       name = "media-i2c-lt6911uxe-add-devicetree-probe-support";
       patch = ./patches/0014-media-i2c-lt6911uxe-add-devicetree-probe-support.patch;
     })
+    (patch {
+      name = "pinctrl-sophgo-initialize-secondary-mux-parent-function";
+      patch = ./patches/0015-pinctrl-sophgo-initialize-secondary-mux-parent-function.patch;
+    })
   ];
 
   meta = {
@@ -246,6 +250,18 @@ let
         Lets the mainline LT6911UXE V4L2 subdev driver bind on NanoKVM-PCIe
         devicetree, tolerate the board's currently undocumented HPD line,
         and accept the LT6911 ID the vendor sensor driver reports.
+      '';
+    };
+    "pinctrl-sophgo-initialize-secondary-mux-parent-function" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Sophgo CV18xx pinctrl initializes mux2.pfunc upstream";
+      notes = ''
+        CV1800_GENERATE_PIN_MUX2 leaves mux2.pfunc zero even though every
+        current generated entry uses primary function 7 to route through
+        the secondary mux. The verifier therefore rejects every useful
+        PINMUX2 setting. PicoClaw needs this path to route SPI1 over the
+        MIPIRX3/4 pads.
       '';
     };
   };

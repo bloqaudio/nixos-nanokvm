@@ -1,7 +1,8 @@
 # Sipeed LicheeRV-Nano + PicoClaw expansion board. Same SG2002 silicon
 # as the other boards; the expansion adds a 240x240 ST7789 SPI LCD,
-# two buttons, LEDs, battery charger, and a speaker interface — none
-# of which we bring up yet (see the PicoClaw wiki page). The main
+# two buttons, LEDs, battery charger, and a speaker interface.  The LCD
+# has a dedicated declarative artifact; the remaining peripherals are not
+# brought up yet (see the PicoClaw wiki page). The main
 # board carries the AIC8800 WiFi chip, so the WiFi-variant DTB and the
 # wifi-aic8800 mixin apply.
 #

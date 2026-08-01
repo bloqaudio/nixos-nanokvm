@@ -254,6 +254,14 @@ with lib.kernel; {
   # ssd1307fb itself stays a stage-2 module (below).
   I2C_GPIO = yes;
 
+  # PicoClaw's onboard ST7789 is connected to SPI1.  Keep the controller
+  # and spidev modular so the proven headless images pay no runtime cost;
+  # modules/picoclaw-lcd.nix loads them only in the dedicated LCD artifact.
+  SPI = yes;
+  SPI_DESIGNWARE = module;
+  SPI_DW_MMIO = module;
+  SPI_SPIDEV = module;
+
   # PWM controller (driver in patches/0008). Built-in so /sys/class/
   # pwm/pwmchip0..3 are present in the USB-recovery initrd without
   # extra module-loading. Each IP instance handles 4 channels.

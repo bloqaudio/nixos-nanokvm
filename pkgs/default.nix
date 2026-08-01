@@ -80,7 +80,7 @@ in
   # -----------------------------------------------------------------
 
   "spacemit-k3-linux" = cross.callPackage ./spacemit-k3/linux {
-    kernelPatches = [];
+    kernelPatches = [ ];
   };
   "linuxPackages_spacemit-k3" = cross.linuxPackagesFor final."spacemit-k3-linux";
   "spacemit-k3-fsbl" = cross.callPackage ./spacemit-k3/fsbl { };
@@ -323,11 +323,14 @@ in
   sg2002-dtbs-mainline = dtbMainline.dtbs;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
+  sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-vendor = dtbVendor.boot;
   sg2002-dtb-vendor-gadget = dtbVendor.gadget;
 
   sg2002-boot-fit = final.callPackage ./sg2002/boot-fit { };
+
+  picoclaw-lcd-test = final.callPackage ./sg2002/picoclaw-lcd-test { };
 
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;

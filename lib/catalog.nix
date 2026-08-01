@@ -351,6 +351,27 @@ in
     ];
   })
 
+  # Dedicated onboard-LCD sibling of the proven headless USB/NFS boot.
+  # It preserves the no-WiFi base and low-memory limits, but swaps in the
+  # PicoClaw SPI1/GPIO DTB and runs a persistent ST7789 visible self-test.
+  (picoclaw "mainline" [ "live" "usb-lcd" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
   # WiFi-booted variant: the dwc2 gadget net function wedges on this
   # unit (see usb-nfs-live.nix and the bring-up note above), so the
   # store mount rides the AIC8800 over the LAN instead. USB stays on

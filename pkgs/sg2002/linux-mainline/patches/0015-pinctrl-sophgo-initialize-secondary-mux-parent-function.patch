@@ -1,0 +1,38 @@
+From 5f4be18df7bf0f449cfbd99ff4c7bda2e8350d71 Mon Sep 17 00:00:00 2001
+From: Local NixOS bring-up <local@example.invalid>
+Date: Sat, 1 Aug 2026 22:15:00 +0200
+Subject: [PATCH] pinctrl: sophgo: initialize secondary mux parent function
+
+CV1800_GENERATE_PIN_MUX2 describes pads whose final function is selected
+through a second mux.  The primary mux's final slot routes the pad to that
+secondary mux, but the macro leaves mux2.pfunc zero-initialized.
+
+cv1800_verify_pinmux_config() consequently rejects every useful PINMUX2()
+setting because it requires the requested primary function to equal
+mux2.pfunc.  All current users describe a seven-function primary mux and a
+seven-function secondary mux, with primary function 7 selecting the second
+mux.  Record that parent function from the primary mux limit.
+
+This lets DT users select, for example, SG2002's MIPIRX4N function 7 and
+then SPI1_SCK function 6.
+
+Signed-off-by: Local NixOS bring-up <local@example.invalid>
+---
+ drivers/pinctrl/sophgo/pinctrl-cv18xx.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/pinctrl/sophgo/pinctrl-cv18xx.h b/drivers/pinctrl/sophgo/pinctrl-cv18xx.h
+index bd3f3ba5001b..3c9e24b4aa6a 100644
+--- a/drivers/pinctrl/sophgo/pinctrl-cv18xx.h
++++ b/drivers/pinctrl/sophgo/pinctrl-cv18xx.h
+@@ -118,6 +118,7 @@ static inline enum cv1800_pin_io_type cv1800_pin_io_type(const struct cv1800_pin
+ 			.area = (_mux2_area),				\
+ 			.offset = (_mux2_offset),			\
+ 			.max = (_mux2_func_max),			\
++			.pfunc = (_mux_func_max),			\
+ 		},							\
+ 		.conf = {						\
+ 			.area = (_conf_area),				\
+-- 
+2.50.1
+

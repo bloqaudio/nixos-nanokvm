@@ -56,6 +56,14 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # PicoClaw: keep the proven no-WiFi USB/NFS base, then add the onboard
+  # ST7789 SPI panel and its three GPIO control lines.
+  dtbPicoClawLcd = buildDtb "sg2002-licheerv-nano-picoclaw-lcd" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+  ];
+
   # NanoKVM-PCIe: bw.dtsi (WiFi/SDIO1 on) + ethernet enable overlay.
   dtbPcie = buildDtb "sg2002-nanokvm-pcie" [
     ./sg2002-licheerv-nano-bw.dtsi
@@ -71,5 +79,6 @@ in
   inherit dtb dtbs;
   oled = dtbOled;
   nowifi = dtbNoWifi;
+  picoclaw-lcd = dtbPicoClawLcd;
   pcie = dtbPcie;
 }
