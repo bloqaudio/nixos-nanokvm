@@ -282,6 +282,15 @@ in
     profile = "usb-nfs-live";
     artifact = "nfs-live";
     tag = "live-pcie-nfs-mainline";
+    # Direct USB runners do not inherit boot.kernelParams. Carry the two
+    # low-memory stage-2 limits proven on the PicoClaw explicitly.
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+      # The PCIe carrier's 128x64 SSD1306 is usable with the default font,
+      # but only as a cramped 16x4 display. Do not rotate this panel.
+      "fbcon=font:MINI4x6"
+    ];
     mixins = [ ../modules/ethernet.nix ];
     modules = [
       ({ ... }: {
@@ -292,10 +301,25 @@ in
           "dwmac-sophgo"
         ];
         sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
+        # The store is already mounted over this DHCP lease when initrd
+        # networkd hands the interface to stage 2. Preserve it until the new
+        # manager has renewed the lease; dropping it deadlocks every uncached
+        # executable on the NFS store. Pin the carrier's fleet MAC before the
+        # first DHCP request as well, so router assigns its reserved .17.
         boot.initrd.systemd.network.networks."20-eth0" = {
           matchConfig.Name = "eth0";
-          networkConfig.DHCP = "yes";
-          linkConfig.RequiredForOnline = "no";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          linkConfig = {
+            MACAddress = "02:4b:56:4d:00:17";
+            RequiredForOnline = "no";
+          };
+        };
+        systemd.network.networks."20-eth0" = {
+          networkConfig.KeepConfiguration = "dynamic";
+          linkConfig.MACAddress = "02:4b:56:4d:00:17";
         };
       })
     ];
