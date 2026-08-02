@@ -264,8 +264,8 @@ in
     artifact = "kernel-test";
     tag = "kernel-test-pcie-mainline-hs";
     modules = [
-      ({ pkgs, ... }: {
-        sg2002.fdt = pkgs.sg2002-dtb-mainline-pcie-high-speed;
+      ({ lib, pkgs, ... }: {
+        sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-high-speed;
         sg2002.usbGadget.network.transport = "ncm";
       })
     ];
