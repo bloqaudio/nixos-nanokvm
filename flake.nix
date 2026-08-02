@@ -336,6 +336,7 @@
           entryRootfsBindIp = entryArtifactArg "rootfsBindIp" null;
           entryRequireRootfsHostOverride = entryArtifactArg "requireRootfsHostOverride" false;
           entryIncludeKexec = entryArtifactArg "includeKexec" true;
+          entryUsbConsole = entryArtifactArg "usbConsole" true;
 
           mkEntryPayload =
             { entry
@@ -369,6 +370,7 @@
               requireRootfsHostOverride = entryRequireRootfsHostOverride entry;
               extraBootargs = entryExtraBootargs entry;
               includeKexec = entryIncludeKexec entry;
+              usbConsole = entryUsbConsole entry;
               rootfs = art.mkLiveRootfs cfg;
               payload = mkEntryPayload {
                 inherit entry cfg;
@@ -394,7 +396,7 @@
                 };
                 inherit rootfs;
                 bootargs = art.mkLiveBootargs {
-                  inherit cfg oled;
+                  inherit cfg oled usbConsole;
                   extra = extraBootargs;
                 };
                 waitForSsh = true;
@@ -506,6 +508,7 @@
                 bootargs = art.mkLiveBootargs {
                   inherit cfg;
                   extra = entryExtraBootargs entry;
+                  usbConsole = entryUsbConsole entry;
                 };
                 nfsServer = cfg.config.nanokvm.nfsLive.server;
                 nfsExport = cfg.config.nanokvm.nfsLive.storeExport;

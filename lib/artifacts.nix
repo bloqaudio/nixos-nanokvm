@@ -61,16 +61,16 @@ let
   mkKexecBootargs =
     { prefix ? [ ]
     , extra ? [ ]
+    , usbConsole ? true
     ,
     }:
     lib.concatStringsSep " " (prefix
+      ++ [ "console=ttyS0,115200" ]
+      # ttyGS0 LAST when enabled: /dev/console is the last console= entry.
+      # Full NFS boots may disable it because closing an unopened gadget
+      # console can block PID 1 in gs_close() during switch-root.
+      ++ lib.optional usbConsole "console=ttyGS0,115200"
       ++ [
-      # ttyGS0 LAST: /dev/console is the last console= entry, and we
-      # want initrd/stage-2 userspace (systemd, shells) on the USB-ACM
-      # we can actually read, not on the SBU UART (ttyS0) that needs a
-      # Type-C breakout. Kernel messages go to all consoles either way.
-      "console=ttyS0,115200"
-      "console=ttyGS0,115200"
       "earlycon=sbi"
       "ignore_loglevel"
       "panic=10"
@@ -837,9 +837,11 @@ let
     { cfg
     , extra ? [ ]
     , oled ? false
+    , usbConsole ? true
     ,
     }:
     mkKexecBootargs {
+      inherit usbConsole;
       extra =
         [ "init=${cfg.config.system.build.toplevel}/init" ]
         ++ extra

@@ -22,7 +22,7 @@
 #                  drives which artifact-builder runs.
 #   artifactArgs — key/value extras forwarded to the artifact builder
 #                  (oled, rootfsBindIp, requireRootfsHostOverride,
-#                  extraBootargs, includeKexec).
+#                  extraBootargs, includeKexec, usbConsole).
 #   liveCfgPath  — `debug` artifacts only: the catalog path that
 #                  supplies the rootfs the debug payload pivots into.
 #
@@ -264,10 +264,30 @@ in
     artifact = "kernel-test";
     tag = "kernel-test-pcie-mainline-hs";
     modules = [
-      ({ lib, pkgs, ... }: {
-        sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-high-speed;
-        sg2002.usbGadget.network.transport = "ncm";
-      })
+      ({ lib, pkgs, ... }:
+        let
+          autoReboot = pkgs.writeShellScript "pcie-hs-auto-reboot" ''
+            ${pkgs.coreutils}/bin/sleep 300
+            ${pkgs.systemd}/bin/systemctl reboot -ff
+          '';
+        in
+        {
+          sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-high-speed;
+          sg2002.usbGadget.network.transport = "ncm";
+
+          # This initrd deliberately keeps the nowayout watchdog alive.  Give
+          # remote tests a bounded escape if USB networking never appears.
+          boot.initrd.systemd.storePaths = [ autoReboot ];
+          boot.initrd.systemd.services.pcie-hs-auto-reboot = {
+            description = "Return from the experimental PCIe USB test";
+            wantedBy = [ "initrd.target" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = autoReboot;
+            };
+          };
+        })
     ];
   })
   # extlinux SD image (mainline U-Boot). Ethernet via stmmac + the
@@ -419,6 +439,7 @@ in
       "systemd.getty_auto=no"
       "udev.children_max=2"
     ];
+    artifactArgs.usbConsole = false;
     mixins = [ ../modules/picoclaw-lcd.nix ];
     modules = [
       ({ pkgs, ... }: {
