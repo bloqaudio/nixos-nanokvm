@@ -216,6 +216,19 @@ in
 [
   # ===== licheerv-nano-w / mainline =====
   (kernelTest "mainline")
+  # Experimental: same initrd and kernel as kernel-test, with only the
+  # full-speed DT cap lifted.  Keep the stable recovery target available.
+  (lichee "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-mainline-hs";
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
   (debug "mainline")
   (live "mainline" "usb" "live-mainline" { })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
@@ -246,6 +259,17 @@ in
   # Initrd-only recovery target for USB/kexec bring-up on the actual PCIe
   # carrier (same DTB as the SD image, but no stage-2 services).
   (pcieKernelTest "mainline")
+  (pcie "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-pcie-mainline-hs";
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-pcie-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
   # extlinux SD image (mainline U-Boot). Ethernet via stmmac + the
   # ethernet-enabled DTB; reachable over the USB-ECM gadget too.
   (pcie "mainline" [ "sd" ] { profile = "sd-image-mainline"; artifact = "sd"; })
@@ -328,6 +352,18 @@ in
   # ===== licheerv-nano-picoclaw / mainline =====
   # Initrd-only recovery target — the first thing to run on new silicon.
   (picoclawKernelTest "mainline")
+  (picoclaw "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-picoclaw-mainline-hs";
+    artifactArgs.extraBootargs = [ "cpuidle.off=1" ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-nowifi-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
   # USB-booted, NFS-rooted live system (replaces the NBD transport).
   #
   # Bring-up note 2026-07-27: with the WiFi DTB (sdhci1 enabled), the
@@ -367,6 +403,27 @@ in
       ({ pkgs, ... }: {
         nanokvm.picoclawLcd.enable = true;
         sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
+  # High-speed sibling of the LCD/NFS system.  This intentionally keeps the
+  # production usb-lcd artifact on its proven full-speed DTB until sustained
+  # NFS workloads are verified on the other SG2002 boards too.
+  (picoclaw "mainline" [ "live" "usb-lcd-hs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline-hs";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd-high-speed;
         sg2002.usbGadget.network.transport = "ncm";
       })
     ];

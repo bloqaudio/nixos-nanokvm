@@ -17,10 +17,9 @@ with a bootable SD card inserted — no UART required. Flow:
   3. Optional diagnostic stop: `--uboot-only` leaves U-Boot in fastboot
      so the host can issue `fastboot oem run:<cmd>` commands.
   4. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
-  5. Host: `fastboot oem run "bootm <addr>"` — U-Boot bootms the staged
-     FIT. If bootm hands off to the kernel, the oem-run reply never
-     comes back and the host-side fastboot call returns a timeout
-     error — that's expected and harmless.
+  5. Host: soft-disconnect U-Boot's DWC2 gadget, then run
+     `bootm <addr>`. The disconnect is explicit because a successful
+     bootm never returns to fastboot's normal gadget teardown.
 
 Requires `fastboot` on PATH (android-tools).
 """
@@ -32,6 +31,12 @@ import time
 
 
 FASTBOOT_BUF_ADDR = 0x82000000
+
+# SG2002 DWC2 device-control register.  A successful `bootm` from inside a
+# fastboot OEM command never returns through U-Boot's normal gadget cleanup,
+# so leave the bus electrically detached until Linux binds its own gadget.
+DWC2_DCTL_ADDR = 0x04340804
+DWC2_DCTL_SFTDISCON = 1 << 1
 
 # U-Boot's built-in fastboot gadget uses Google's reference VID:PID.
 # Same IDs as Android phones in bootloader mode — without a filter,
@@ -121,6 +126,12 @@ def main():
                    help='kernel command line; when set, sent to U-Boot via '
                         '`setenv bootargs "<str>"` before bootm. Overrides '
                         'whatever /chosen/bootargs the FIT fdt carries.')
+    p.add_argument('--no-handoff-soft-disconnect',
+                   dest='handoff_soft_disconnect', action='store_false',
+                   default=True,
+                   help='skip the SG2002 DWC2 soft-disconnect before bootm '
+                        '(diagnostic A/B only; normally this prevents a '
+                        'ghost USB device during Linux startup)')
     p.add_argument('--fastboot-serial',
                    help='fastboot SERIAL or device path to target. If '
                         'omitted, auto-detect from /sys/bus/usb by '
@@ -296,7 +307,14 @@ def main():
     bootargs_cmd = (
         f'setenv bootargs "{a.bootargs}"; ' if a.bootargs else ''
     )
+    handoff_cmd = ''
+    if a.handoff_soft_disconnect:
+        handoff_cmd = (
+            f'mw.l 0x{DWC2_DCTL_ADDR:08x} '
+            f'0x{DWC2_DCTL_SFTDISCON:08x}; sleep 1; '
+        )
     bootm_cmd = (
+        f'{handoff_cmd}'
         f'{bootargs_cmd}'
         f'setenv fdt_high 0xffffffff; '
         f'setenv initrd_high 0xffffffff; '

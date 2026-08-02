@@ -56,6 +56,19 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # Experimental USB handoff A/Bs.  The high-speed override is always
+  # concatenated last, leaving the full-speed production DTBs untouched.
+  dtbHighSpeed = buildDtb "sg2002-licheerv-nano-bw-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
+  dtbNoWifiHighSpeed = buildDtb "sg2002-licheerv-nano-bw-nowifi-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
   # PicoClaw: keep the proven no-WiFi USB/NFS base, then add the onboard
   # ST7789 SPI panel and its three GPIO control lines.
   dtbPicoClawLcd = buildDtb "sg2002-licheerv-nano-picoclaw-lcd" [
@@ -64,10 +77,23 @@ let
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
   ];
 
+  dtbPicoClawLcdHighSpeed = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
   # NanoKVM-PCIe: bw.dtsi (WiFi/SDIO1 on) + ethernet enable overlay.
   dtbPcie = buildDtb "sg2002-nanokvm-pcie" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
+  ];
+
+  dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-usb-high-speed.dtsi
   ];
 
   dtbs = runCommand "sg2002-dtbs" { } ''
@@ -77,8 +103,12 @@ let
 in
 {
   inherit dtb dtbs;
+  high-speed = dtbHighSpeed;
   oled = dtbOled;
   nowifi = dtbNoWifi;
+  nowifi-high-speed = dtbNoWifiHighSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
+  picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
+  pcie-high-speed = dtbPcieHighSpeed;
 }
