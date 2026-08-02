@@ -83,6 +83,10 @@ let
       patch = ./patches/0014-media-i2c-lt6911uxe-add-devicetree-probe-support.patch;
     })
     (patch {
+      name = "media-platform-add-sg2002-csi-capture-bring-up";
+      patch = ./patches/0015-media-platform-add-SG2002-CSI-capture-bring-up.patch;
+    })
+    (patch {
       name = "pinctrl-sophgo-allow-fixed-io-pin-power-source";
       patch = ./patches/0016-pinctrl-sophgo-allow-fixed-io-pin-power-source.patch;
     })
@@ -250,6 +254,20 @@ let
         Lets the mainline LT6911UXE V4L2 subdev driver bind on NanoKVM-PCIe
         devicetree, tolerate the board's currently undocumented HPD line,
         and accept the LT6911 ID the vendor sensor driver reports.
+      '';
+    };
+    "media-platform-add-sg2002-csi-capture-bring-up" = {
+      origin = "local";
+      upstreamStatus = "local-only";
+      dropWhen = ''
+        a complete upstream SG2002 CSI receiver and VI capture pipeline
+        supports NanoKVM's four-lane LT6911UXC route.
+      '';
+      notes = ''
+        Narrow NanoKVM bring-up driver for CSI MAC0 -> CSIBDG0 -> DMA6.
+        It exposes the factory 1920x1080 UYVY path as a V4L2 capture node;
+        the register recipe and physical lane mapping come from the vendor
+        sensor configuration and VI/CIF drivers.
       '';
     };
     "pinctrl-sophgo-allow-fixed-io-pin-power-source" = {

@@ -154,7 +154,28 @@ index bdefdd157e69..2d489b1605ec 100644
  	/* Read interrupt event */
  	cci_read(lt6911uxe->regmap, REG_INT_HDMI, &int_event, &ret);
  	if (ret) {
-@@ -495,7 +580,8 @@ static int lt6911uxe_fwnode_parse(struct lt6911uxe *lt6911uxe,
+@@ -345,6 +430,10 @@ static int lt6911uxe_enable_streams(struct v4l2_subdev *sd,
+ 	struct lt6911uxe *lt6911uxe = to_lt6911uxe(sd);
+ 	int ret;
+ 
++	/* The UXC firmware owns its always-on CSI transmitter configuration. */
++	if (lt6911uxe->is_uxc)
++		return 0;
++
+ 	ret = pm_runtime_resume_and_get(&client->dev);
+ 	if (ret < 0)
+ 		return ret;
+@@ -374,6 +463,9 @@ static int lt6911uxe_disable_streams(struct v4l2_subdev *sd,
+ 	struct i2c_client *client = v4l2_get_subdevdata(&lt6911uxe->sd);
+ 	int ret;
+ 
++	if (lt6911uxe->is_uxc)
++		return 0;
++
+ 	ret = cci_write(lt6911uxe->regmap, REG_MIPI_TX_CTRL, 0x0, NULL);
+ 	if (ret)
+ 		dev_err(&client->dev, "failed to stop stream: %d\n", ret);
+@@ -495,7 +587,8 @@ static int lt6911uxe_fwnode_parse(struct lt6911uxe *lt6911uxe,
  	int ret;
  
  	endpoint = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0,
@@ -267,4 +288,3 @@ index bdefdd157e69..2d489b1605ec 100644
  	.remove = lt6911uxe_remove,
 -- 
 2.54.0
-

@@ -345,11 +345,8 @@ with lib.kernel; {
   INPUT_TOUCHSCREEN = no;
   INPUT_JOYSTICK = no;
   INPUT_TABLET = no;
-  # HDMI bridge probe path. This is intentionally only the media
-  # controller / V4L2 subdev layer plus the Lontium bridge: it can prove
-  # the LT6911-family HDMI-to-MIPI chip is alive on I2C4, but the SG2002
-  # CSI/VI receiver still needs a real mainline driver before frames can
-  # land in /dev/video*.
+  # NanoKVM HDMI capture path: LT6911 HDMI-to-MIPI bridge followed by the
+  # SG2002 CSI MAC0 / VI DMA6 direct packed-YUV capture driver.
   MEDIA_SUPPORT = yes;
   MEDIA_CAMERA_SUPPORT = yes;
   MEDIA_CONTROLLER = yes;
@@ -358,12 +355,15 @@ with lib.kernel; {
   V4L2_FWNODE = yes;
   V4L2_CCI_I2C = yes;
   VIDEO_LT6911UXE = yes;
+  VIDEO_SOPHGO_SG2002_CSI = yes;
+  VIDEOBUF2_DMA_CONTIG = yes;
   MEDIA_SUBDRV_AUTOSELECT = no;
   MEDIA_ANALOG_TV_SUPPORT = no;
   MEDIA_DIGITAL_TV_SUPPORT = no;
   MEDIA_RADIO_SUPPORT = no;
   MEDIA_SDR_SUPPORT = no;
-  MEDIA_PLATFORM_SUPPORT = no;
+  MEDIA_PLATFORM_DRIVERS = yes;
+  V4L_PLATFORM_DRIVERS = yes;
   MEDIA_TEST_SUPPORT = no;
   MEDIA_USB_SUPPORT = no;
   MEDIA_PCI_SUPPORT = no;

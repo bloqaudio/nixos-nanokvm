@@ -168,6 +168,46 @@
 			solomon,prechargep2 = <15>;
 		};
 	};
+
+	/* The factory NanoKVM route is CSI MAC0 -> CSIBDG0 -> DMA6.  Keep
+	 * this single-purpose until the wider SG2002 media pipeline has a
+	 * complete upstream binding and driver split. */
+	csi_capture: video-capture@a0c2000 {
+		compatible = "sophgo,sg2002-csi-capture";
+		reg = <0x0a0c2000 0x2000>,
+		      <0x0a0d0000 0x1000>,
+		      <0x0a000000 0x80000>,
+		      <0x0a0c8000 0x20>;
+		reg-names = "csi-mac0", "csi-wrap", "vi", "vip-sys";
+		interrupt-parent = <&plic>;
+		interrupts = <SOC_PERIPHERAL_IRQ(24) IRQ_TYPE_LEVEL_HIGH>,
+			     <SOC_PERIPHERAL_IRQ(26) IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "vi", "csi";
+		clocks = <&clk CLK_SRC_VIP_SYS_0>,
+			 <&clk CLK_SRC_VIP_SYS_1>,
+			 <&clk CLK_SRC_VIP_SYS_2>,
+			 <&clk CLK_SRC_VIP_SYS_3>,
+			 <&clk CLK_AXI_VIP>,
+			 <&clk CLK_CSI_BE_VIP>,
+			 <&clk CLK_RAW_VIP>,
+			 <&clk CLK_ISP_TOP_VIP>,
+			 <&clk CLK_CSI_MAC0_VIP>,
+			 <&clk CLK_CSI0_RX_VIP>;
+		clock-names = "vip-sys0", "vip-sys1", "vip-sys2", "vip-sys3",
+			      "axi", "csi-be", "raw", "isp-top",
+			      "csi-mac0", "csi0-rx";
+
+		port {
+			sg2002_csi_in: endpoint {
+				remote-endpoint = <&lt6911_out>;
+				bus-type = <4>; /* CSI-2 D-PHY */
+				/* Physical carrier wiring recovered from the
+				 * factory sensor_cfg.ini.LT. */
+				clock-lanes = <2>;
+				data-lanes = <4 3 1 0>;
+			};
+		};
+	};
 };
 
 &sdhci0 {
@@ -218,9 +258,10 @@
 
 		port {
 			lt6911_out: endpoint {
+				remote-endpoint = <&sg2002_csi_in>;
 				bus-type = <4>; /* CSI-2 D-PHY */
-				clock-lanes = <0>;
-				data-lanes = <1 2 3 4>;
+				clock-lanes = <2>;
+				data-lanes = <4 3 1 0>;
 			};
 		};
 	};
