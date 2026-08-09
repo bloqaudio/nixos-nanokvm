@@ -25,6 +25,50 @@ let
   cfg = config.nanokvm.nfsLive;
   usbRoot = cfg.server == protocol.hostIp;
 
+  # The initrd normally executes its own systemd from the cpio image, then
+  # switch-root execs the stage-2 copy from the NFS-mounted store. On the
+  # C906, faulting in that new PID 1 and its five direct ELF dependencies can
+  # make an otherwise-complete handoff look like a 20-second hang. Keep this
+  # A/B deliberately narrow: warm only the files ldd reports for systemd
+  # itself, never the complete systemd/unit closure.
+  stage2SystemdPackage = config.systemd.package;
+  stage2SystemdMajor = lib.versions.major stage2SystemdPackage.version;
+  stage2SystemdPrefetch = pkgs.writeShellScript "nanokvm-prefetch-stage2-systemd" ''
+    set -u
+    bb=${pkgs.busybox}/bin/busybox
+    started="$($bb date +%s 2>/dev/null || echo 0)"
+    total=0
+    failed=0
+
+    read_one() {
+      file="$1"
+      if [ ! -f "$file" ]; then
+        echo "nfs-live-prefetch: missing $file" > /dev/kmsg
+        failed=$((failed + 1))
+        return 0
+      fi
+      bytes="$($bb stat -c %s "$file" 2>/dev/null || echo 0)"
+      if $bb dd if="$file" of=/dev/null bs=1048576 2>/dev/null; then
+        total=$((total + bytes))
+      else
+        echo "nfs-live-prefetch: read failed $file" > /dev/kmsg
+        failed=$((failed + 1))
+      fi
+    }
+
+    read_one ${lib.escapeShellArg "${stage2SystemdPackage}/lib/systemd/systemd"}
+    read_one ${lib.escapeShellArg "${stage2SystemdPackage}/lib/systemd/libsystemd-core-${stage2SystemdMajor}.so"}
+    read_one ${lib.escapeShellArg "${stage2SystemdPackage}/lib/systemd/libsystemd-shared-${stage2SystemdMajor}.so"}
+    read_one ${lib.escapeShellArg "${pkgs.glibc}/lib/libc.so.6"}
+    read_one ${lib.escapeShellArg "${pkgs.glibc}/lib/libm.so.6"}
+    read_one ${lib.escapeShellArg "${pkgs.glibc}/lib/ld-linux-riscv64-lp64d.so.1"}
+
+    finished="$($bb date +%s 2>/dev/null || echo "$started")"
+    duration=$((finished - started))
+    echo "nfs-live-prefetch: stage2 systemd direct ELF files ''${total} bytes in ''${duration}s (failed=''${failed})" > /dev/kmsg
+    exit 0
+  '';
+
   runRootNfs = pkgs.writeShellScript "nanokvm-run-root-nfs" ''
     set -u
     # busybox mount handles -t nfs4/-o fine (kernel-direct mount, no
@@ -192,6 +236,16 @@ in
       default = "/nix-store";
       description = "NFSv4 pseudo-path of the read-only store export.";
     };
+    prefetchStage2Systemd = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Before switch-root, pre-read only stage-2 systemd and its direct
+        glibc/libsystemd ELF dependencies from the mounted NFS store. This
+        is an isolated boot-latency A/B for slow C906 NFS page faults; read
+        failures are non-fatal and reported to the kernel log.
+      '';
+    };
   };
 
   config = {
@@ -262,6 +316,22 @@ in
       services.initrd-find-etc = {
         after = [ "nanokvm-root-nfs.service" ];
         wants = [ "nanokvm-root-nfs.service" ];
+      };
+
+      # This is intentionally ordered on the switch-root target rather than
+      # initrd.target: the NFS mount must exist, and the read should be the
+      # last useful work before the new PID 1 is exec'd.
+      services.nanokvm-prefetch-stage2-systemd = lib.mkIf cfg.prefetchStage2Systemd {
+        description = "Warm stage-2 systemd ELF files from the NFS store";
+        wantedBy = [ "initrd-switch-root.target" ];
+        before = [ "initrd-switch-root.target" ];
+        after = [ "nanokvm-root-nfs.service" ];
+        unitConfig.DefaultDependencies = false;
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = stage2SystemdPrefetch;
+          TimeoutStartSec = "30s";
+        };
       };
 
       # Keep the USB debug network alive when the initrd drops to
@@ -339,11 +409,13 @@ in
           };
         };
       };
-      storePaths = [ runRootNfs ] ++ lib.optionals usbRoot [
-        rxGuardInstall
-        rxGuardSource
-        rxGuardStaticBusybox
-      ];
+      storePaths = [ runRootNfs ]
+        ++ lib.optional cfg.prefetchStage2Systemd stage2SystemdPrefetch
+        ++ lib.optionals usbRoot [
+          rxGuardInstall
+          rxGuardSource
+          rxGuardStaticBusybox
+        ];
     };
 
     # The initrd instance created the configfs gadget that carries the live

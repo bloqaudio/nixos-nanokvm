@@ -121,6 +121,30 @@
 			power-source = <1800>;
 		};
 	};
+
+	/* The PCIe carrier's 6-pin UART header labels GPIOA19/A18 as
+	 * UART1_TX/UART1_RX.  These are the alternate UART1 data pins; the
+	 * upstream board DT only muxes UART0, and the vendor firmware leaves
+	 * these two pads as UART1 RTS/CTS for the optional Bluetooth device. */
+	uart1_pcie_cfg: uart1-pcie-cfg {
+		uart1-pcie-pins {
+			/* GPIOA19 = PIN_JTAG_CPU_TMS, GPIOA18 = PIN_JTAG_CPU_TCK. */
+			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 6)>,
+				 <PINMUX(PIN_JTAG_CPU_TCK, 6)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+	};
+};
+
+/* Keep ttyS0 as the existing system console; ttyS1 is an additional
+ * diagnostic UART for the carrier header.  U-Boot/OpenSBI remain on
+ * serial0 for now, so this deliberately does not add an earlycon. */
+&uart1 {
+	pinctrl-0 = <&uart1_pcie_cfg>;
+	pinctrl-names = "default";
+	status = "okay";
 };
 
 /* Front-panel SSD1306 128x64 OLED at 0x3c on a bit-banged I2C bus
@@ -144,6 +168,11 @@
  * page-offset must be 0 — the driver's legacy default is 1, which
  * would wrap the top 8 pixel rows off the panel. */
 / {
+	ddr_top: syscon@800a000 {
+		compatible = "sophgo,sg2002-ddr-top", "syscon";
+		reg = <0x0800a000 0x1000>;
+	};
+
 	oled_i2c: i2c-oled {
 		compatible = "i2c-gpio";
 		pinctrl-0 = <&oled_i2c_cfg>;
@@ -177,25 +206,38 @@
 		reg = <0x0a0c2000 0x2000>,
 		      <0x0a0d0000 0x1000>,
 		      <0x0a000000 0x80000>,
-		      <0x0a0c8000 0x20>;
+		      <0x0a0c8000 0x2000>;
 		reg-names = "csi-mac0", "csi-wrap", "vi", "vip-sys";
 		interrupt-parent = <&plic>;
-		interrupts = <SOC_PERIPHERAL_IRQ(24) IRQ_TYPE_LEVEL_HIGH>,
-			     <SOC_PERIPHERAL_IRQ(26) IRQ_TYPE_LEVEL_HIGH>;
+		/* Vendor DTS numbers these PLIC sources directly as VI=24 and
+		 * CSI0=26.  Mainline's SOC_PERIPHERAL_IRQ() accounts for the 16
+		 * core-local interrupt IDs, so its peripheral indices are 8/10. */
+		interrupts = <SOC_PERIPHERAL_IRQ(8) IRQ_TYPE_LEVEL_HIGH>,
+			     <SOC_PERIPHERAL_IRQ(10) IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "vi", "csi";
 		clocks = <&clk CLK_SRC_VIP_SYS_0>,
 			 <&clk CLK_SRC_VIP_SYS_1>,
 			 <&clk CLK_SRC_VIP_SYS_2>,
 			 <&clk CLK_SRC_VIP_SYS_3>,
 			 <&clk CLK_AXI_VIP>,
+			 <&clk CLK_CFG_REG_VIP>,
+			 <&clk CLK_VIP_IP0>,
+			 <&clk CLK_VIP_IP1>,
+			 <&clk CLK_VIP_IP2>,
+			 <&clk CLK_VIP_IP3>,
 			 <&clk CLK_CSI_BE_VIP>,
 			 <&clk CLK_RAW_VIP>,
 			 <&clk CLK_ISP_TOP_VIP>,
 			 <&clk CLK_CSI_MAC0_VIP>,
 			 <&clk CLK_CSI0_RX_VIP>;
 		clock-names = "vip-sys0", "vip-sys1", "vip-sys2", "vip-sys3",
-			      "axi", "csi-be", "raw", "isp-top",
+			      "axi", "cfg-reg", "vip-ip0", "vip-ip1", "vip-ip2",
+			      "vip-ip3", "csi-be", "raw", "isp-top",
 			      "csi-mac0", "csi0-rx";
+		/* Vendor RST_CSIPHY0 and RST_CSIPHY0RST_APB. */
+		resets = <&rst 70>, <&rst 71>;
+		reset-names = "csi-phy", "csi-phy-apb";
+		sophgo,ddr-top = <&ddr_top>;
 
 		port {
 			sg2002_csi_in: endpoint {

@@ -15,6 +15,10 @@ buildUBoot {
   filesToInstall = ["u-boot.bin" "u-boot.dtb"];
 
   extraConfig = ''
+    # extlinux lives on the Btrfs root partition.  The generic filesystem
+    # layer used by `sysboot ... any` needs the Btrfs reader compiled in.
+    CONFIG_FS_BTRFS=y
+
     CONFIG_USB=y
     CONFIG_DM_USB=y
     CONFIG_DM_USB_GADGET=y
@@ -40,7 +44,7 @@ buildUBoot {
     CONFIG_CONSOLE_RECORD_IN_SIZE=0x800
     CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
     # SG2002/Sipeed SD images need partition 1 marked active for fip.bin,
-    # while NixOS extlinux lives on the ext4 root partition. U-Boot's distro
+    # while NixOS extlinux lives on the Btrfs root partition. U-Boot's distro
     # scan can stop at the active firmware partition, so try the known NixOS
     # root partition explicitly before falling back to the generic scan and
     # then fastboot.

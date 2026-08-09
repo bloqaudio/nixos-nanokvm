@@ -2,7 +2,7 @@
 #
 # Unlike profiles/sd-image.nix (vendor 5.10 + vendor-FIT), this boots
 # the mainline kernel via mainline U-Boot + extlinux: U-Boot's
-# distro_bootcmd scans the ext4 root partition for
+# distro_bootcmd scans the Btrfs root partition for
 # /boot/extlinux/extlinux.conf and loads
 # kernel + dtb + initrd from there. fip.bin (mainline U-Boot) lives on
 # the FAT firmware partition.

@@ -1,17 +1,17 @@
 # Mainline Linux for the SG2002.
 #
-# This is the *normal* nixpkgs kernel (`linux_latest`, which already
-# carries NixOS's standard structured kernel config) with two things
-# layered on via `.override`:
+# This uses nixpkgs' `linux_latest` source/build machinery with the RISC-V
+# defconfig as its small base.  NixOS's generic common config is deliberately
+# disabled: it enables thousands of unrelated modules on this 256 MiB SoC.
+# Two SG2002-specific pieces are layered on via `.override`:
 #
 #   - kernelPatches  — the SG2002 SoC-support queue (see ./patches.nix).
 #   - structuredExtraConfig — our add/remove deltas (see ./config.nix):
 #     turn ON the SoC drivers + gadget stack + AIC8800 OOT bits, turn
-#     OFF the desktop/server bloat the 256 MB board doesn't want.
+#     OFF anything from defconfig that the 256 MB board doesn't want.
 #
-# Replaces the old `linuxManualConfig` + hand-rendered `make defconfig`
-# approach: NixOS's own kernel requirements now come from the base for
-# free, and config.nix only has to express what's SG2002-specific.
+# This retains nixpkgs' cross-build, patch, config-check, module and output
+# handling without inheriting the workstation/server-oriented common config.
 # buildLinux applies the patches before generating the config, so
 # patch-introduced Kconfig symbols referenced in config.nix resolve
 # correctly (the reason the old path needed make-config.nix).
@@ -30,18 +30,15 @@ in
 # `Image` (kernelFile default) into $out on its own — no compress/install
 # dance needed. We only layer on the SG2002 patch queue + config delta.
 (linux_latest.override {
+  defconfig = "defconfig";
+  enableCommonConfig = false;
+  autoModules = false;
   argsOverride = {
     inherit (source) src version modDirVersion;
     extraMeta.branch = "7.2-rc";
   };
-  # config.nix is the authoritative SG2002 delta, so force every entry
-  # over the generic NixOS base (otherwise our `turn off` of e.g. DRM
-  # collides with common-config's `yes` at equal priority).
-  structuredExtraConfig = lib.mapAttrs (_: lib.mkForce) (
-    import ./config.nix {inherit lib;}
-  );
+  structuredExtraConfig = import ./config.nix {inherit lib;};
   kernelPatches = (import ./patches.nix).patches;
-  # We prune hard against the full NixOS config; let olddefconfig drop
-  # options whose deps we turned off instead of failing the build.
+  # Let olddefconfig drop options whose dependencies are unavailable.
   ignoreConfigErrors = true;
 })

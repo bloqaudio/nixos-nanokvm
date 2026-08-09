@@ -90,6 +90,12 @@ let
     ./sg2002-nanokvm-pcie.dtsi
   ];
 
+  dtbPcieNoWifi = buildDtb "sg2002-nanokvm-pcie-nowifi" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+  ];
+
   dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
@@ -110,5 +116,6 @@ in
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
+  pcie-nowifi = dtbPcieNoWifi;
   pcie-high-speed = dtbPcieHighSpeed;
 }

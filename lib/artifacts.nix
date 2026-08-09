@@ -62,10 +62,11 @@ let
     { prefix ? [ ]
     , extra ? [ ]
     , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     lib.concatStringsSep " " (prefix
-      ++ [ "console=ttyS0,115200" ]
+      ++ lib.optional (uartConsole != null) "console=${uartConsole},115200"
       # ttyGS0 LAST when enabled: /dev/console is the last console= entry.
       # Full NFS boots may disable it because closing an unopened gadget
       # console can block PID 1 in gs_close() during switch-root.
@@ -87,6 +88,8 @@ let
     , rootfsCfg ? cfg
     , oled ? false
     , extraBootargs ? [ ]
+    , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     let
@@ -104,6 +107,7 @@ let
         then sg2002OledOverlayDtbo
         else null;
       cmdline = mkKexecBootargs {
+        inherit uartConsole usbConsole;
         extra = extraBootargs ++ featureBootargs;
       };
     };
@@ -838,10 +842,11 @@ let
     , extra ? [ ]
     , oled ? false
     , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     mkKexecBootargs {
-      inherit usbConsole;
+      inherit uartConsole usbConsole;
       extra =
         [ "init=${cfg.config.system.build.toplevel}/init" ]
         ++ extra

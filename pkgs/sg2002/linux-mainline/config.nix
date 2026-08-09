@@ -1,4 +1,4 @@
-# Structured kernel-config overrides on top of the RISC-V defconfig.
+# Structured kernel-config choices on top of the RISC-V defconfig.
 # Consumed via buildLinux's structuredExtraConfig — each attr becomes a
 # CONFIG_* line (or "# CONFIG_* is not set" for `no`) merged on top of
 # `make defconfig`; the result is reconciled by `make olddefconfig`.
@@ -7,20 +7,15 @@ with lib.kernel; {
   # =====================================================================
   # Early-boot compatibility for the T-Head C906 (SG2002).
   #
-  # The old, *booting* mainline kernel used `make riscv defconfig` as its
-  # base; this one uses the NixOS `linux_latest` common-config. Same 7.0.3
-  # source + same patches — the ONLY difference is the base config, and
-  # with the NixOS base the kernel hangs silently before initrd. Diffing
-  # the resolved riscv defconfig (old, booted) against the NixOS base
-  # (new, hangs) the meaningful early-boot deltas are RANDOMIZE_BASE *and*
-  # RELOCATABLE: the old kernel was non-relocatable, the NixOS one
-  # relocates itself in early boot (head.S, before any console). That
-  # early relocation pass is the most likely silent pre-console hang on
-  # the T-Head C906. Turn both off to match the defconfig base that booted
-  # (EFI/VMAP_STACK/RISCV_ISA_V are y in *both* defconfig and NixOS, and
-  # the DT advertises only rv64imafdc — no vector — so those aren't it).
+  # Keep the known-good non-relocatable, non-KASLR layout on the T-Head C906.
   RANDOMIZE_BASE = no;
   RELOCATABLE = no;
+
+  # buildLinux installs arch/riscv/boot/Image.  RISC-V defconfig otherwise
+  # selects KERNEL_GZIP, which makes nixpkgs look for Image.gz even though our
+  # FIT builder deliberately compresses Image itself.
+  KERNEL_GZIP = no;
+  KERNEL_UNCOMPRESSED = yes;
 
   # THE early-hang cause. The NixOS base enables the RISC-V vector stack
   # including RISCV_ISA_XTHEADVECTOR (mainline support for the C906's
@@ -52,6 +47,11 @@ with lib.kernel; {
   KFENCE = no;
   PAGE_POISONING = no;
 
+  # The RISC-V defconfig creates 256 BSD-style legacy PTYs.  Each one becomes
+  # a separate udev coldplug event, while sshd/getty use Unix98 devpts.  On the
+  # C906 this otherwise keeps initrd udev busy for roughly 35 seconds.
+  LEGACY_PTYS = no;
+
   # =====================================================================
   # Live-boot infrastructure: NBD root (usb0-served erofs) + kexec for
   # the stage2 -> stage2 dev loop.
@@ -60,11 +60,8 @@ with lib.kernel; {
   KEXEC = yes;
   KEXEC_FILE = yes;
 
-  # SD card (sdhci0 / sophgo,cv1800b-dwcmshc): the controller glue is
-  # already =y from the NixOS base; MMC_BLOCK stays a module (forcing it
-  # =y here trips a kconfig "repeated question" loop). The initrds that
-  # need /dev/mmcblk0 (live-writer + SD-boot) pull mmc_block in via
-  # boot.initrd.availableKernelModules instead.
+  # SD card (sdhci0 / sophgo,cv1800b-dwcmshc) and MMC_BLOCK are selected
+  # by RISC-V defconfig; autoModules is disabled, so they stay built in.
 
   # =====================================================================
   # Enables — SoC + gadget + aic8800 OOT driver
@@ -306,39 +303,66 @@ with lib.kernel; {
   # Disables — prune defconfig bloat we can't use on SG2002
   # =====================================================================
 
+  # The SG2002 boots from a device-tree-described SoC through vendor FSBL /
+  # U-Boot. It has no ACPI firmware table, EFI runtime, or PC-style DMI
+  # inventory; ACPI and DMI are broad RISC-V defconfig defaults and pull in
+  # a surprising amount of laptop/server plumbing. The RISC-V Kconfig keeps
+  # its EFI symbol default-y even when structuredExtraConfig says `no`, so we
+  # do not pretend an ineffective EFI blacklist is a real size reduction.
+  ACPI = no;
+  DMI = no;
+
+  # No suspend/resume or frequency/idle policy is exposed by the SG2002 DT
+  # used here. Keep the always-on PM core (clock/reset/regulator drivers
+  # still need it), but drop the generic policy subsystems and unused
+  # governors.
+  SUSPEND = no;
+  CPU_FREQ = no;
+  CPU_IDLE = no;
+
+  # RISC-V defconfig enables these observability/large-memory
+  # facilities even on this 256 MiB appliance. No board service uses eBPF,
+  # perf, or hugetlbfs; disabling their user-facing gates lets Kconfig remove
+  # dependent leaves transitively instead of maintaining a long blacklist.
+  BPF_SYSCALL = no;
+  CGROUP_BPF = no;
+  PERF_EVENTS = no;
+  HUGETLBFS = no;
+
+  # No remote processor, mailbox endpoint, or RPMsg device exists in the
+  # SG2002 DT. These are generic communication frameworks left on by the
+  # RISC-V defconfig, not requirements of USB, Ethernet, or NFS.
+  MAILBOX = no;
+  RPMSG = no;
+  # These four options select the RPMsg core back on in the generic
+  # defconfig; keep the broad gate above and close those selector paths.
+  RPMSG_CHAR = no;
+  RPMSG_CTRL = no;
+  RPMSG_NS = no;
+  RPMSG_VIRTIO = no;
+
   # No PCIe, no discrete GPU — kill the DRM stack. Nouveau alone is
   # ~30 .ko files of dead weight. The legacy FB subsystem stays on for
   # ssd1307fb (above); it's independent of DRM.
   DRM = no;
-  DRM_NOUVEAU = no;
-  DRM_RADEON = no;
-  DRM_VIRTIO_GPU = no;
-  DRM_AMDGPU = no;
-  DRM_I915 = no;
 
   # No virt here.
   KVM = no;
-  VIRTIO = no;
-  VIRTIO_PCI = no;
+  # VIRTIO itself is a hidden library symbol. RISC-V defconfig selects these
+  # leaves independently, so guard the actual drivers instead.
   VIRTIO_BALLOON = no;
   VIRTIO_BLK = no;
   VIRTIO_NET = no;
-  XEN = no;
-  HYPERV = no;
 
   # No PCIe on SG2002 — kills NVMe, SCSI, ATA, most of the net vendor
   # spam below.
   PCI = no;
-  NVME_CORE = no;
   SCSI = no;
   ATA = no;
   MTD = no; # no raw flash, only SD + USB
-  # NO FC/IB/RDMA on defconfig — leaving these as safety belt if a
-  # future defconfig ever flips them.
   INFINIBAND = no;
-  RDMA = no;
-  FUSION = no;
-  # No USB host keyboard / mice / touchscreen — gadgets only.
+  # INPUT itself is default-y and not user-visible without CONFIG_EXPERT, so
+  # close its hardware menus explicitly. HID injection is a gadget function.
   HID = no;
   INPUT_KEYBOARD = no;
   INPUT_MOUSE = no;
@@ -357,6 +381,23 @@ with lib.kernel; {
   VIDEO_LT6911UXE = yes;
   VIDEO_SOPHGO_SG2002_CSI = yes;
   VIDEOBUF2_DMA_CONTIG = yes;
+  # The generic Cadence receiver is a separate IP block. SG2002 capture uses
+  # the SoC-specific MAC0/VI driver above and never instantiates this module.
+  VIDEO_CADENCE_CSI2RX = no;
+
+  # One 1080p UYVY frame is 4,147,200 bytes.  Two explicitly requested vb2
+  # buffers plus the driver-owned scratch buffer need about 12 MiB.  VI DMA6
+  # has no scatter/gather table, and a 16 MiB CMA pool fragmented into ranges
+  # smaller than one frame during NFS userspace startup.  Keep 24 MiB so the
+  # allocator has migration headroom without returning to the 32 MiB boot
+  # pressure observed with four default vb2 buffers.
+  CMA = yes;
+  DMA_CMA = yes;
+  CMA_SIZE_MBYTES = freeform "24";
+  CMA_SIZE_SEL_MBYTES = yes;
+  CMA_SIZE_SEL_PERCENTAGE = no;
+  CMA_SYSFS = yes;
+
   MEDIA_SUBDRV_AUTOSELECT = no;
   MEDIA_ANALOG_TV_SUPPORT = no;
   MEDIA_DIGITAL_TV_SUPPORT = no;
@@ -366,8 +407,6 @@ with lib.kernel; {
   V4L_PLATFORM_DRIVERS = yes;
   MEDIA_TEST_SUPPORT = no;
   MEDIA_USB_SUPPORT = no;
-  MEDIA_PCI_SUPPORT = no;
-  DVB_CORE = no;
   # NFC, WWAN, IrDA, legacy PPS. (IIO is wanted on this SoC for the
   # SAR-ADC driver — see SOPHGO_CV1800B_ADC above.)
   NFC = no;
@@ -376,70 +415,6 @@ with lib.kernel; {
   # mainline Bluetooth stack — aic8800 uses aic8800_btlpm, not BT.
   BT = no;
 
-  # Kill the NET_VENDOR_* menu spam. SG2002 has *no* built-in Ethernet;
-  # the only NIC that exists is the aic8800 SDIO WiFi handled via an
-  # out-of-tree module. Every one of these just expands a Kconfig
-  # recursion into driver code we'll never link.
-  NET_VENDOR_3COM = no;
-  NET_VENDOR_ADAPTEC = no;
-  NET_VENDOR_AGERE = no;
-  NET_VENDOR_ALACRITECH = no;
-  NET_VENDOR_ALLWINNER = no;
-  NET_VENDOR_ALTEON = no;
-  NET_VENDOR_AMAZON = no;
-  NET_VENDOR_AMD = no;
-  NET_VENDOR_AQUANTIA = no;
-  NET_VENDOR_ARC = no;
-  NET_VENDOR_ASIX = no;
-  NET_VENDOR_ATHEROS = no;
-  NET_VENDOR_BROADCOM = no;
-  NET_VENDOR_CADENCE = no;
-  NET_VENDOR_CAVIUM = no;
-  NET_VENDOR_CHELSIO = no;
-  NET_VENDOR_CISCO = no;
-  NET_VENDOR_CORTINA = no;
-  NET_VENDOR_DAVICOM = no;
-  NET_VENDOR_DEC = no;
-  NET_VENDOR_DLINK = no;
-  NET_VENDOR_EMULEX = no;
-  NET_VENDOR_ENGLEDER = no;
-  NET_VENDOR_EZCHIP = no;
-  NET_VENDOR_FUNGIBLE = no;
-  NET_VENDOR_GOOGLE = no;
-  NET_VENDOR_HUAWEI = no;
-  NET_VENDOR_I825XX = no;
-  NET_VENDOR_INTEL = no;
-  NET_VENDOR_WANGXUN = no;
-  NET_VENDOR_ADI = no;
-  NET_VENDOR_LITEX = no;
-  NET_VENDOR_MARVELL = no;
-  NET_VENDOR_MELLANOX = no;
-  NET_VENDOR_MICREL = no;
-  NET_VENDOR_MICROCHIP = no;
-  NET_VENDOR_MICROSEMI = no;
-  NET_VENDOR_MICROSOFT = no;
-  NET_VENDOR_MYRI = no;
-  NET_VENDOR_NATSEMI = no;
-  NET_VENDOR_NETERION = no;
-  NET_VENDOR_NETRONOME = no;
-  NET_VENDOR_NI = no;
-  NET_VENDOR_NVIDIA = no;
-  NET_VENDOR_OKI = no;
-  NET_VENDOR_PACKET_ENGINES = no;
-  NET_VENDOR_PENSANDO = no;
-  NET_VENDOR_QLOGIC = no;
-  NET_VENDOR_QUALCOMM = no;
-  NET_VENDOR_RDC = no;
-  NET_VENDOR_REALTEK = no;
-  NET_VENDOR_RENESAS = no;
-  NET_VENDOR_ROCKER = no;
-  NET_VENDOR_SAMSUNG = no;
-  NET_VENDOR_SEEQ = no;
-  NET_VENDOR_SILAN = no;
-  NET_VENDOR_SIS = no;
-  NET_VENDOR_SOLARFLARE = no;
-  NET_VENDOR_SMSC = no;
-  NET_VENDOR_SOCIONEXT = no;
   # SG2002 *does* have an on-die GMAC (sophgo,cv1800b-dwmac /
   # snps,dwmac-3.70a) at 0x4070000; the LicheeRV-Nano dev board leaves it
   # unwired, but the NanoKVM-PCIe carrier routes it to the RJ45. Mainline
@@ -447,27 +422,23 @@ with lib.kernel; {
   # cv1800b internal EPHY, so patch 0013 adds a "sophgo,cv1800b-dwmac"
   # binding that mirrors the vendor U-Boot EPHY power-up.
   #
-  # Keep dwmac-sophgo modular, but build the internal EPHY's MMIO MDIO mux
-  # into the kernel. Otherwise networkd can open eth0 after dwmac-sophgo
-  # loaded but before mdio-mux-mmioreg has created the child bus, and stmmac
-  # fails its first PHY attach with -ENODEV.
+  # Keep dwmac-sophgo and the internal EPHY's MMIO MDIO mux built in. This
+  # prevents networkd from opening eth0 before the child MDIO bus exists.
   NET_VENDOR_STMICRO = yes;
-  STMMAC_ETH = module;
-  STMMAC_PLATFORM = module;
-  DWMAC_SOPHGO = module;
+  STMMAC_ETH = yes;
+  STMMAC_PLATFORM = yes;
+  DWMAC_SOPHGO = yes;
+  DWMAC_GENERIC = no;
+  DWMAC_THEAD = no;
   PHYLIB = yes;
   MDIO_BUS = yes;
   MDIO_DEVICE = yes;
   MDIO_BUS_MUX = yes;
   MDIO_BUS_MUX_MMIOREG = yes;
-  NET_VENDOR_SUN = no;
-  NET_VENDOR_SYNOPSYS = no;
-  NET_VENDOR_TEHUTI = no;
-  NET_VENDOR_TI = no;
-  NET_VENDOR_VERTEXCOM = no;
-  NET_VENDOR_VIA = no;
-  NET_VENDOR_WIZNET = no;
-  NET_VENDOR_XILINX = no;
+  # Generic RISC-V defconfig makes this Cadence Ethernet driver built-in even
+  # after its foreign SoC users are disabled. Guard the driver itself; the
+  # other default-y NET_VENDOR_* values are empty Kconfig menus, not objects.
+  MACB = no;
 
   # Foreign RISC-V SoC support. RISC-V defconfig targets everything
   # with a single image — StarFive JH7110, Spacemit K1, SiFive HiFive,
@@ -476,6 +447,7 @@ with lib.kernel; {
   # Sophgo SG2002. Turning the ARCH_ gates off cascades through
   # olddefconfig and disables all of those.
   ARCH_STARFIVE = no;
+  # These default-y children otherwise select ARCH_STARFIVE back on.
   SOC_STARFIVE = no;
   ARCH_SPACEMIT = no;
   ARCH_SIFIVE = no;
@@ -486,20 +458,30 @@ with lib.kernel; {
   ARCH_MICROCHIP_POLARFIRE = no;
   ARCH_RENESAS = no;
   ARCH_CANAAN = no;
+  ARCH_ANDES = no;
+  ARCH_ANLOGIC = no;
+  ARCH_ESWIN = no;
+  ARCH_TENSTORRENT = no;
+  ARCH_ULTRARISC = no;
+  ARCH_VIRT = no;
 
   # Other USB host controllers — SG2002's only USB is DWC2 OTG; XHCI/
   # EHCI/OHCI only exist for discrete host controllers we don't have.
-  # DWC2 dual-role covers both device (our gadget) and host modes.
+  # DWC2 dual-role covers both device (our gadget) and host modes.  Its DT
+  # binding still consumes the generic nop transceiver, so keep that tiny PHY
+  # driver: without it DWC2 never registers, NFS root cannot appear, and the
+  # initrd watchdog resets the board.
   USB_XHCI_HCD = no;
   USB_EHCI_HCD = no;
   USB_OHCI_HCD = no;
   USB_CDNS_SUPPORT = no;
-  USB_CDNS3 = no;
   USB_MUSB_HDRC = no;
+  NOP_USB_XCEIV = module;
 
   # Not using any of these on this board.
   NFSD = no;
-  IP_VS = no;
+  # Both are default-y in RISC-V defconfig rather than children of a shared
+  # security-suite gate, so retain these two explicit policy choices.
   SECURITY_APPARMOR = no;
   SECURITY_SELINUX = no;
 
@@ -514,47 +496,39 @@ with lib.kernel; {
   NFS_V4 = yes;
   NFS_V4_1 = yes;
   NFS_V4_2 = yes;
-  AFS_FS = no;
-  CEPH_FS = no;
-  CIFS = no;
-  CODA_FS = no;
-  NCP_FS = no;
+  # 9P defaults on alongside generic Virtio support; NFS is our only network
+  # filesystem and this guard prevents its transport helpers returning.
   "9P_FS" = no;
+  NET_9P = no;
 
-  # Kill WLAN_VENDOR_* — aic8800 is OOT, upstream stubs are compile
-  # weight with no runtime value.
-  WLAN_VENDOR_ADMTEK = no;
-  WLAN_VENDOR_ATH = no;
-  WLAN_VENDOR_ATMEL = no;
-  WLAN_VENDOR_BROADCOM = no;
-  WLAN_VENDOR_CISCO = no;
-  WLAN_VENDOR_INTEL = no;
-  WLAN_VENDOR_INTERSIL = no;
-  WLAN_VENDOR_MARVELL = no;
-  WLAN_VENDOR_MEDIATEK = no;
-  WLAN_VENDOR_MICROCHIP = no;
-  WLAN_VENDOR_PURELIFI = no;
-  WLAN_VENDOR_RALINK = no;
-  WLAN_VENDOR_REALTEK = no;
-  WLAN_VENDOR_RSI = no;
-  WLAN_VENDOR_SILABS = no;
-  WLAN_VENDOR_ST = no;
-  WLAN_VENDOR_TI = no;
-  WLAN_VENDOR_ZYDAS = no;
-  WLAN_VENDOR_QUANTENNA = no;
+  # aic8800 is out-of-tree and only needs cfg80211/WEXT. Disable the single
+  # upstream WLAN driver menu instead of blacklisting every vendor beneath it.
+  WLAN = no;
 
   # =====================================================================
-  # Hard prune — the normal NixOS base builds ~3800 modules; the 256 MB
-  # NanoKVM (erofs-over-NBD rootfs) has none of this hardware and needs
-  # none of these subsystems. Disable the top-level menus to drop the
-  # bulk of that module tree. Anything genuinely needed is turned back
-  # on explicitly above.
+  # Broad subsystem gates — RISC-V defconfig supports many machines, while
+  # this 256 MiB NanoKVM has a fixed, small hardware inventory. Keep this to
+  # top-level facilities; proven Kconfig selector exceptions live beside
+  # their parent gates above.
   # =====================================================================
 
   # No SCSI / ATA / NVMe / RAID / device-mapper / multipath — the only
   # storage is the SD/eMMC controller (cv-sd, kept above).
   MD = no;
   TARGET_CORE = no;
+  # SD initrds include this module through supportedFilesystems. Keeping it
+  # modular avoids adding an otherwise unused ~2 MiB filesystem to every
+  # USB/NFS live kernel built from this shared configuration.
+  BTRFS_FS = module;
+  BTRFS_FS_POSIX_ACL = yes;
+  LIBNVDIMM = no;
+  DAX = no;
+  EFIVAR_FS = no;
+
+  # No Cadence SDHCI/QSPI instances exist in the SG2002 DT. Storage uses the
+  # Synopsys DWC MSHC and the optional display path uses DesignWare SPI.
+  MMC_SDHCI_CADENCE = no;
+  SPI_CADENCE_QUADSPI = no;
 
   # Gadget-only USB: keep dwc2 + the configfs functions (above); drop
   # host-class drivers, serial converters, USB-net, USB mass-storage
@@ -562,41 +536,39 @@ with lib.kernel; {
   USB_SERIAL = no;
   USB_NET_DRIVERS = no;
   USB_STORAGE = no;
-  USB_HID = no;
-  USB_PRINTER = no;
-  USB_MDC800 = no;
-  USB_MICROTEK = no;
 
   # No external PMICs / regulators / MFDs / battery / charger / power.
   REGULATOR = no;
+  POWER_SUPPLY = no;
+  MFD_AXP20X_I2C = no;
 
-  # Industrial-IO / 1-wire / IR / comedi / typec / hwtracing / firewire
-  # / thunderbolt / infiniband / GPU-DRM / V4L-DVB media — no hardware.
-
-  # Networking: no firewall (firewall.enable = false), no exotic L4
-  # protocols, no traffic shaping, no tunnels/wireguard-in-kernel.
+  # Networking: no firewall, traffic shaping, software bridge, or VLANs.
   NETFILTER = no;
-  IP_SCTP = no;
-  IP_DCCP = no;
-  RDS = no;
-  TIPC = no;
-  L2TP = no;
   NET_SCHED = no;
   BRIDGE = no;
   VLAN_8021Q = no;
-  WIREGUARD = no;
+  XFRM = no;
+  XFRM_ALGO = no;
+  XFRM_USER = no;
+  XFRM_ESP = no;
+  INET_ESP = no;
+  IPV6 = no;
+  DUMMY = no;
+  MACVLAN = no;
+  IPVLAN = no;
+  VETH = no;
+  VXLAN = no;
+
+  # No AF_ALG consumers or virtual crypto device. Keep only the algorithms
+  # selected by zram/Zstd and the NFS client.
+  CRYPTO_USER_API = no;
+  CRYPTO_USER_API_HASH = no;
+  CRYPTO_USER_API_ENABLE_OBSOLETE = no;
+  CRYPTO_DEV_VIRTIO = no;
 
   # No other remote/exotic filesystems beyond the NFS client (enabled
-  # above for the netboot profile) — keep ext4/vfat/erofs/overlay/tmpfs
+  # above for the netboot profile) — keep btrfs/vfat/erofs/overlay/tmpfs
   # /configfs/autofs (those stay on via the base / above).
-
-  # Audio: keep the SoC I2S codec (cv1800b-sound, pulled in by the
-  # board); drop USB / PCI / FireWire / other-SoC sound.
-  SND_USB = no;
-  SND_PCI = no;
-  SND_PCMCIA = no;
-  SND_FIREWIRE = no;
-  SND_SPI = no;
 
   # =====================================================================
   # Size/RAM trim — 256 MB boards, cross-compiled, no debug sessions
@@ -605,10 +577,5 @@ with lib.kernel; {
   # nothing and costs reclaim churn.
   # =====================================================================
   DEBUG_INFO = no;
-  # The generic NixOS config enables BTF independently of DEBUG_INFO. It
-  # leaves a ~4.5 MiB allocatable .BTF section resident on this 256 MiB
-  # target even though no BPF tooling consumes it.
-  DEBUG_INFO_BTF = no;
-  DEBUG_INFO_BTF_MODULES = no;
   TRANSPARENT_HUGEPAGE = no;
 }

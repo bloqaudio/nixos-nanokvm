@@ -63,7 +63,7 @@
       done
 
       ${imageBuilderPkgs.dosfstools}/bin/mkfs.vfat -F 32 -n ${firmwareLabel} "${firmwarePart}"
-      ${imageBuilderPkgs.e2fsprogs}/bin/mkfs.ext4 -F -L ${rootLabel} "${rootPart}"
+      ${imageBuilderPkgs.btrfs-progs}/bin/mkfs.btrfs -f -L ${rootLabel} "${rootPart}"
 
       ${imageBuilderPkgs.systemdMinimal}/bin/udevadm trigger --subsystem-match=block || true
       ${imageBuilderPkgs.systemdMinimal}/bin/udevadm settle --timeout=120 || true
@@ -113,21 +113,29 @@ in {
   config = {
     # The SG2002 does not need nixpkgs' generic SD-card initrd module set.
     sg2002.initrd.pruneKernelModules = true;
+    # The board-support module force-prunes the generic initrd module set, so
+    # supportedFilesystems alone cannot retain a modular Btrfs driver.
+    sg2002.initrd.availableKernelModules = ["btrfs"];
+
+    # These deployed SD images are not self-reconfiguring systems. Besides
+    # shrinking the target, disabling the installer tools avoids pulling
+    # cross-built helper payloads (notably bcachefs-tools) into the closure.
+    system.disableInstallerTools = true;
 
     boot = {
       growPartition = lib.mkDefault true;
       supportedFilesystems = lib.mkDefault [
-        "ext4"
+        "btrfs"
         "vfat"
       ];
       initrd.supportedFilesystems = lib.mkDefault [
-        "ext4"
+        "btrfs"
       ];
       kernelParams = [
         "root=/dev/disk/by-label/${rootLabel}"
         "rootwait"
         "rw"
-        "rootfstype=ext4"
+        "rootfstype=btrfs"
         "console=ttyS0,115200"
         "earlycon=sbi"
         "ignore_loglevel"
@@ -170,7 +178,7 @@ in {
             {
               name = "root";
               part-type = "primary";
-              fs-type = "ext4";
+              fs-type = "btrfs";
               start = "49152s";
               end = "100%";
             }
@@ -180,7 +188,7 @@ in {
 
       devices.nodev = {
         "/" = {
-          fsType = "ext4";
+          fsType = "btrfs";
           device = "/dev/disk/by-label/${rootLabel}";
           mountOptions = [
             "noatime"
@@ -199,7 +207,7 @@ in {
     fileSystems = {
       "/" = {
         device = "/dev/disk/by-label/${rootLabel}";
-        fsType = "ext4";
+        fsType = "btrfs";
         options = [
           "noatime"
         ];

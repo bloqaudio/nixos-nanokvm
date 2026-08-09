@@ -66,6 +66,12 @@ in {
       description = "Which U-Boot/FIP to install on the firmware partition.";
     };
 
+    uart1Rescue.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Whether this carrier exposes UART1 as a physical rescue console.";
+    };
+
     fdt = mkOption {
       type = types.path;
       description = ''
@@ -212,9 +218,9 @@ in {
     })
 
     (lib.mkIf cfg.tuning.enable {
-      # noatime kills per-read timestamp writes; commit=600 extends
-      # ext4 journal commits from 5 s → 10 min. Trade-off: 10-min-
-      # window data loss on hard reset, acceptable on a dev board.
+      # noatime kills per-read timestamp writes; commit=600 extends Btrfs
+      # transaction commits to 10 min. Trade-off: a longer window of recent
+      # data loss on hard reset, acceptable on a development SD card.
       fileSystems."/".options = ["noatime" "commit=600"];
       boot.tmp.useTmpfs = true;
 

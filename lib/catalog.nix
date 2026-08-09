@@ -22,7 +22,7 @@
 #                  drives which artifact-builder runs.
 #   artifactArgs — key/value extras forwarded to the artifact builder
 #                  (oled, rootfsBindIp, requireRootfsHostOverride,
-#                  extraBootargs, includeKexec, usbConsole).
+#                  extraBootargs, includeKexec, uartConsole, usbConsole).
 #   liveCfgPath  — `debug` artifacts only: the catalog path that
 #                  supplies the rootfs the debug payload pivots into.
 #
@@ -137,12 +137,19 @@ let
   # the `lichee` helpers above so PCIe entries stay one-liners too.
   pcie =
     kernel: pathTail: attrs:
-    {
-      path = [ "pcie" kernel ] ++ pathTail;
-      boardName = "nanokvm-pcie";
-      inherit kernel;
-    }
-    // attrs;
+    lib.recursiveUpdate
+      {
+        path = [ "pcie" kernel ] ++ pathTail;
+        boardName = "nanokvm-pcie";
+        inherit kernel;
+        # Mainline enables the carrier's exposed UART1 as a physical rescue
+        # console. Direct FIT/kexec artifacts do not inherit boot.kernelParams,
+        # so carry the choice in every PCIe artifact rather than one profile.
+        artifactArgs = lib.optionalAttrs (kernel == "mainline") {
+          uartConsole = "ttyS1";
+        };
+      }
+      attrs;
 
   pcieLive =
     kernel: tag: attrs:
@@ -327,7 +334,7 @@ in
     artifact = "nfs-live";
     tag = "live-pcie-nfs-mainline";
     # Direct USB runners do not inherit boot.kernelParams. Carry the two
-    # low-memory stage-2 limits proven on the PicoClaw explicitly.
+    # low-memory stage-2 limits explicitly.
     artifactArgs.extraBootargs = [
       "systemd.getty_auto=no"
       "udev.children_max=2"
@@ -337,8 +344,43 @@ in
     ];
     mixins = [ ../modules/ethernet.nix ];
     modules = [
-      ({ ... }: {
+      ({ lib, pkgs, ... }: {
         nanokvm.nfsLive.server = "192.168.23.8";
+        # Ethernet is the root transport for this capture image. Avoid the
+        # absent AIC8800 SDIO probe and its repeated mmc1 command timeouts.
+        sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-nowifi;
+        sg2002.wifi.enable = lib.mkForce false;
+        # A/B the stage-2 PID1 handoff: warm only systemd's direct ELF
+        # dependencies from the mounted NFS store before switch-root.
+        nanokvm.nfsLive.prefetchStage2Systemd = true;
+        # This Ethernet-rooted image is the capture bring-up environment.
+        # Avoid a permanent `top` process and bound volatile logging so CMA
+        # migration does not force the tiny system into boot-time OOM.
+        nanokvm.oled.enable = lib.mkForce false;
+        services.journald.extraConfig = ''
+          Storage=volatile
+          RuntimeMaxUse=4M
+        '';
+        systemd.services.sshd.serviceConfig.ExecStartPre = [
+          "${pkgs.coreutils}/bin/install -d -m 0555 -o root -g root /var/empty"
+        ];
+        security.wrappers = {
+          mount.enable = lib.mkForce false;
+          newgidmap.enable = lib.mkForce false;
+          newgrp.enable = lib.mkForce false;
+          newuidmap.enable = lib.mkForce false;
+          sg.enable = lib.mkForce false;
+          sudo.enable = lib.mkForce false;
+          sudoedit.enable = lib.mkForce false;
+          umount.enable = lib.mkForce false;
+        };
+        systemd.services.lastlog2-import.enable = lib.mkForce false;
+        systemd.suppressedSystemUnits = [
+          "systemd-journal-catalog-update.service"
+          "systemd-update-done.service"
+        ];
+        boot.initrd.systemd.services.usb-debug-acm-status.enable =
+          lib.mkForce false;
         sg2002.initrd.availableKernelModules = [
           "stmmac"
           "stmmac_platform"

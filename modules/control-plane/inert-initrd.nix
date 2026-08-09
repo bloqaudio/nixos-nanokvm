@@ -39,14 +39,23 @@ in {
     fileSystems = lib.mkForce {};
     hardware.deviceTree.enable = lib.mkForce false;
 
-    boot.kernelParams = lib.mkForce [
-      "console=ttyS0,115200"
-      "console=ttyGS0,115200"
-      "earlycon=sbi"
-      "ignore_loglevel"
-      "panic=10"
-      "oops=panic"
-    ];
+    boot.kernelParams = lib.mkForce (
+      [
+        "console=${
+          if config.sg2002.kernel == "mainline"
+            && config.sg2002.uart1Rescue.enable
+          then "ttyS1"
+          else "ttyS0"
+        },115200"
+        "console=ttyGS0,115200"
+      ]
+      ++ [
+        "earlycon=sbi"
+        "ignore_loglevel"
+        "panic=10"
+        "oops=panic"
+      ]
+    );
 
     boot.initrd.systemd.root = null;
 

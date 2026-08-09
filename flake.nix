@@ -337,6 +337,7 @@
           entryRequireRootfsHostOverride = entryArtifactArg "requireRootfsHostOverride" false;
           entryIncludeKexec = entryArtifactArg "includeKexec" true;
           entryUsbConsole = entryArtifactArg "usbConsole" true;
+          entryUartConsole = entryArtifactArg "uartConsole" "ttyS0";
 
           mkEntryPayload =
             { entry
@@ -348,6 +349,8 @@
               name = "nanokvm-kexec-${entry.tag}.erofs";
               inherit cfg extraBootargs;
               oled = entryOled entry;
+              usbConsole = entryUsbConsole entry;
+              uartConsole = entryUartConsole entry;
             };
 
           mkEntryBootFit =
@@ -398,6 +401,7 @@
                 bootargs = art.mkLiveBootargs {
                   inherit cfg oled usbConsole;
                   extra = extraBootargs;
+                  uartConsole = entryUartConsole entry;
                 };
                 waitForSsh = true;
               } // lib.optionalAttrs includeKexec {
@@ -430,7 +434,11 @@
                   profile = "kernel-test";
                   description = "NanoKVM SG2002 USB kernel test (${entry.tag})";
                 };
-                bootargs = art.mkKexecBootargs { extra = entryExtraBootargs entry; };
+                bootargs = art.mkKexecBootargs {
+                  extra = entryExtraBootargs entry;
+                  usbConsole = entryUsbConsole entry;
+                  uartConsole = entryUartConsole entry;
+                };
                 attachPicocom = true;
               };
             in
@@ -508,6 +516,7 @@
                 bootargs = art.mkLiveBootargs {
                   inherit cfg;
                   extra = entryExtraBootargs entry;
+                  uartConsole = entryUartConsole entry;
                   usbConsole = entryUsbConsole entry;
                 };
                 nfsServer = cfg.config.nanokvm.nfsLive.server;

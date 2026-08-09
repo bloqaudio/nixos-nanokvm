@@ -30,6 +30,8 @@
   sg2002.usbGadget.product = lib.mkDefault "Sipeed NanoKVM-PCIe (NixOS)";
   sg2002.usbGadget.serial = lib.mkDefault "nanokvm-pcie-0001";
 
+  sg2002.uart1Rescue.enable = true;
+
   services.nanokvm.hardwareVersion = lib.mkDefault "pcie";
   services.nanokvm.hdmiVersion = lib.mkDefault "ux";
 
@@ -42,6 +44,19 @@
   # missing /dev/fb0. mkDefault so targets can opt out.
   nanokvm.oled.enable = lib.mkDefault (config.sg2002.kernel == "mainline");
   nanokvm.oled.useOledFdt = false;
+
+  # The PCIe carrier exposes UART1 on its A19/A18 header pins. USB ttyGS0
+  # remains the primary remote console; ttyS1 is the physical fallback.
+  # OpenSBI still uses UART0, so there is intentionally no UART1 earlycon.
+  boot.kernelParams = lib.mkIf (config.sg2002.kernel == "mainline") [
+    "console=ttyS1,115200"
+  ];
+  systemd.services."serial-getty@ttyS1" = lib.mkIf (
+    config.sg2002.kernel == "mainline"
+  ) {
+    enable = true;
+    wantedBy = ["multi-user.target"];
+  };
 
   # SD card slot (sdhci0). The controller is built-in but MMC_BLOCK is a
   # module — make it available + loaded in stage-1 so /dev/mmcblk0 shows
