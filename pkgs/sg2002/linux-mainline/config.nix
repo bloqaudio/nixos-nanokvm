@@ -526,6 +526,10 @@ with lib.kernel; {
   # USB/NFS live kernel built from this shared configuration.
   BTRFS_FS = module;
   BTRFS_FS_POSIX_ACL = yes;
+  # SG2002 has only generic integer RAID6 implementations. Benchmarking all
+  # four at Btrfs module load costs roughly 37 seconds on the C906 and cannot
+  # improve a single-device SD root; select the last implementation directly.
+  RAID6_PQ_BENCHMARK = no;
   LIBNVDIMM = no;
   DAX = no;
   EFIVAR_FS = no;
