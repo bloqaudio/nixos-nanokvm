@@ -73,6 +73,17 @@
 
   users.users.root.initialPassword = "nixos";
 
+  # Keep the native recovery/debug image self-contained.  These are the
+  # small interactive tools needed to inspect system pressure and exercise
+  # the mainline media graph without borrowing executables over NFS.
+  environment.systemPackages = with pkgs; [
+    btop
+    (v4l-utils.override {
+      withGUI = false;
+      withBPF = false;
+    })
+  ];
+
   services.nanokvm = {
     enable = false;
     openFirewall = false;
