@@ -2,16 +2,17 @@
 # store is a read-only NFSv4 export from the dev host's kernel nfsd
 # (trex exports /export/nix-store — a bind of /nix/store — to the LAN
 # and to the USB-link CIDR; see the netboot-server profile in
-# ../nixos-config), with a tmpfs overlay for writes. Completely
-# stateless: / is tmpfs, nothing writable is exported, and every boot
-# starts from the same pristine image (fresh ssh host keys included —
+# ../nixos-config). The export is mounted directly and read-only at
+# /nix/store. It is completely stateless: / is tmpfs, nothing writable
+# is exported, and every boot starts from the same pristine image
+# (fresh ssh host keys included —
 # use StrictHostKeyChecking=accept-new).
 #
 # The mount is performed by an initrd service, not fstab, because the
 # client address is not always knowable at build time: on USB-boots it
 # is the static usb0 address, on WiFi boots it is whatever DHCP hands
 # wlan0. The service waits for a route to the server, derives
-# clientaddr from it, and mounts ro-store + tmpfs upper + overlay.
+# clientaddr from it, and mounts the read-only store directly.
 #
 # Pairs with ./usb-control.nix (kexec control socket, debug shell,
 # networkd config) exactly like the NBD live module does.
@@ -107,10 +108,10 @@ let
     fi
 
     echo "root-nfs: mounting $server:$export_path (clientaddr $myip)" > /dev/kmsg
-    mkdir -p /sysroot/nix/.ro-store /sysroot/nix/.rw-store /sysroot/nix/store
+    mkdir -p /sysroot/nix/store
     opts="vers=4.2,addr=$server,clientaddr=$myip,hard,ro,nocto,actimeo=600"
     n=0
-    until mount -t nfs4 -o "$opts" "$server:$export_path" /sysroot/nix/.ro-store; do
+    until mount -t nfs4 -o "$opts" "$server:$export_path" /sysroot/nix/store; do
       n=$((n + 1))
       if [ "$n" -ge 90 ]; then
         echo "root-nfs: mount of $server:$export_path failed after 90 tries" > /dev/kmsg
@@ -119,12 +120,7 @@ let
       sleep 1
     done
 
-    mount -t tmpfs -o mode=0755 tmpfs /sysroot/nix/.rw-store
-    mkdir -p /sysroot/nix/.rw-store/store /sysroot/nix/.rw-store/work
-    mount -t overlay \
-      -o lowerdir=/sysroot/nix/.ro-store,upperdir=/sysroot/nix/.rw-store/store,workdir=/sysroot/nix/.rw-store/work \
-      overlay /sysroot/nix/store
-    echo "root-nfs: /nix/store mounted (nfs ro + tmpfs overlay)" > /dev/kmsg
+    echo "root-nfs: /nix/store mounted read-only from NFS" > /dev/kmsg
   '';
 
   # See services.usb-rx-guard below. An active host probe failing while RX
@@ -270,21 +266,20 @@ in
       };
     };
 
-    # NFS and overlay are built into this kernel, and runRootNfs intentionally
-    # invokes BusyBox mount. Advertising NFS through the generic NixOS helper
+    # NFS is built into this kernel, and runRootNfs intentionally invokes
+    # BusyBox mount. Advertising NFS through the generic NixOS helper
     # lists pulls target nfs-utils (and BIND/Kerberos/SASL) into this tiny live
     # closure without participating in the mount at all.
     boot.supportedFilesystems = lib.mkForce [ ];
     boot.initrd.supportedFilesystems = lib.mkForce [ ];
 
-    # No NFS/overlay modules are required — but erofs/loop stay for the kexec
-    # payload transport.
+    # No NFS modules are required — but erofs/loop stay for the kexec payload
+    # transport.
     sg2002.initrd.pruneKernelModules = true;
     sg2002.initrd.availableKernelModules = [
       "af_packet"
       "erofs"
       "loop"
-      "overlay"
     ];
 
     boot.initrd.network.flushBeforeStage2 = lib.mkForce false;
