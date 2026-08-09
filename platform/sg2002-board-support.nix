@@ -185,11 +185,13 @@ in {
       system.build.fip = fipPkg;
 
       boot.extraModulePackages = lib.optional (aic8800Pkg != null) aic8800Pkg;
-      boot.kernelModules = lib.optionals (aic8800Pkg != null) [
-        "aic8800_bsp"
-        "aic8800_fdrv"
-        "aic8800_btlpm"
-      ];
+      boot.kernelModules =
+        lib.optional (cfg.kernel == "mainline" && cfg.wifi.enable) "rfkill"
+        ++ lib.optionals (aic8800Pkg != null) [
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
 
       # The aicbsp driver opens /lib/firmware/... directly via
