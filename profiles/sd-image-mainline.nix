@@ -32,7 +32,12 @@
   sg2002.usbGadget.initrd.network.enable = true;
   sg2002.usbGadget.stage2.enable = true;
   sg2002.usbGadget.stage2.preserveInitrd = true;
-  sg2002.usbGadget.stage2.rxGuard.enable = true;
+  # A full DWC2 re-probe tears down the active ACM kernel console. On SG2002
+  # that teardown can wedge the kernel deeply enough for the independent
+  # watchdog keeper to stop making progress. Wired Ethernet is the production
+  # management path, so leave a wedged ECM RX path wedged instead of risking
+  # the whole machine.
+  sg2002.usbGadget.stage2.rxGuard.enable = false;
 
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;

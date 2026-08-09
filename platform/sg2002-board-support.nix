@@ -73,7 +73,7 @@ in {
     };
 
     consoleDevice = mkOption {
-      type = types.enum ["ttyS0" "ttyS1" "ttyGS0"];
+      type = types.enum ["ttyS0" "ttyS1" "ttyGS0" "tty0"];
       default = "ttyS0";
       description = "Final kernel console device used as /dev/console.";
     };

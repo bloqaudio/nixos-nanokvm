@@ -32,9 +32,10 @@
   sg2002.usbGadget.serial = lib.mkDefault "nanokvm-pcie-0001";
 
   # UART1 on the carrier header has never produced usable output on the
-  # physical PCIe unit. Keep the reliable USB ACM gadget as /dev/console;
-  # UART1 remains an explicitly opt-in diagnostic experiment.
-  sg2002.consoleDevice = "ttyGS0";
+  # physical PCIe unit. Mirror kernel logs to USB ACM from the SD profile, but
+  # keep PID 1's /dev/console on the OLED-backed virtual console. A gadget TTY
+  # must not become a lifetime dependency for the machine.
+  sg2002.consoleDevice = "tty0";
 
   services.nanokvm.hardwareVersion = lib.mkDefault "pcie";
   services.nanokvm.hdmiVersion = lib.mkDefault "ux";

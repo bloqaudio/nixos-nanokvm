@@ -164,7 +164,10 @@ in {
         "rootwait"
         "rw"
         "rootfstype=btrfs"
-        "console=${config.sg2002.consoleDevice},115200"
+        (if config.sg2002.consoleDevice == "tty0" then
+          "console=tty0"
+        else
+          "console=${config.sg2002.consoleDevice},115200")
         "earlycon=sbi"
         "ignore_loglevel"
       ];
