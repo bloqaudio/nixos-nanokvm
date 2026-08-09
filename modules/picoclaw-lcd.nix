@@ -4,23 +4,6 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.nanokvm.picoclawLcd;
-  watchdogKeeper = pkgs.pkgsStatic.busybox;
-  watchdogKeeperService = {
-    description = "Keep the PicoClaw hardware watchdog alive across switch-root";
-    after = [ "systemd-udevd.service" ];
-    unitConfig = {
-      DefaultDependencies = false;
-      IgnoreOnIsolate = true;
-      RefuseManualStop = true;
-      SurviveFinalKillSignal = true;
-    };
-    serviceConfig = {
-      Type = "simple";
-      ExecStart = "${watchdogKeeper}/bin/busybox watchdog -F -t 5 -T 85 /dev/watchdog0";
-      Restart = "always";
-      RestartSec = "250ms";
-    };
-  };
   waitForSpi = pkgs.writeShellScript "picoclaw-lcd-wait-for-spi" ''
     for _ in $(${pkgs.coreutils}/bin/seq 1 100); do
       if [ -c ${lib.escapeShellArg cfg.spiDevice} ]; then
@@ -75,24 +58,6 @@ in
       "spidev"
     ];
     boot.kernelModules = [ "spi-dw-mmio" "spidev" ];
-
-    # PID 1 can spend longer than the DesignWare watchdog's 85.9-second
-    # hardware maximum blocked on USB/NFS page faults during switch-root.
-    # Do not make the blocked process its own watchdog client.  A static
-    # BusyBox process started in the initrd owns and pets the device instead;
-    # it stays runnable without the remote store and survives switch-root.
-    boot.initrd.systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "off";
-    systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "off";
-
-    boot.initrd.systemd.storePaths = [ watchdogKeeper ];
-    boot.initrd.systemd.services.picoclaw-watchdog-keeper = watchdogKeeperService // {
-      wantedBy = [ "initrd.target" ];
-    };
-    # Keep the same unit definition available after the manager switches
-    # root, so systemd can carry its cgroup and main process forward.
-    systemd.services.picoclaw-watchdog-keeper = watchdogKeeperService // {
-      wantedBy = [ "multi-user.target" ];
-    };
 
     systemd.services.picoclaw-lcd-test = {
       description = "PicoClaw ST7789 visible LCD self-test";

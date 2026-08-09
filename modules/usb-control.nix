@@ -117,6 +117,7 @@ let
 in
 {
   imports = [
+    ./sg2002-watchdog-keeper.nix
     ./control-plane/inert-initrd.nix
     ./control-plane/kexec.nix
   ];
@@ -210,7 +211,6 @@ in
         };
 
         settings.Manager = {
-          RuntimeWatchdogSec = "30s";
           RebootWatchdogSec = "off";
           KExecWatchdogSec = "off";
           DefaultTimeoutStartSec = "infinity";
@@ -295,12 +295,8 @@ in
     })
 
     (lib.mkIf cfg.stage2.enable {
-      # The initrd arms a nowayout DesignWare watchdog. Keep feeding the same
-      # device after switch-root: omitting this from the stage-2 manager makes
-      # systemd drop watchdog ownership during reexec, but the kernel cannot
-      # disarm it and resets the board roughly one hardware timeout later.
+      # The independent keeper owns the nowayout watchdog across switch-root.
       systemd.settings.Manager = {
-        RuntimeWatchdogSec = lib.mkDefault "30s";
         RebootWatchdogSec = lib.mkDefault "off";
         KExecWatchdogSec = lib.mkDefault "off";
       };
@@ -330,6 +326,14 @@ in
           RestartSec = "1s";
         };
       };
+    })
+
+    # Initrd-only test targets do not execute a remote stage-2 PID 1 and keep
+    # systemd's normal watchdog ownership. The independent static keeper is
+    # for the slow stage1-to-stage2 handoff where PID 1 can block on storage.
+    (lib.mkIf (cfg.initrd.enable && cfg.stage2.enable) {
+      sg2002.watchdogKeeper.initrd.enable = true;
+      sg2002.watchdogKeeper.stage2.enable = true;
     })
   ];
 }
