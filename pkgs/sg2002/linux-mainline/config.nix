@@ -128,13 +128,13 @@ with lib.kernel; {
   GENERIC_PHY = yes;
   MFD_SYSCON = yes;
 
-  # Wireless stack — needed for out-of-tree aic8800 driver
-  # (exposes `struct net_device.ieee80211_ptr` etc.). cfg80211 is a
-  # module: the full NixOS base builds RFKILL as a module and a built-in
-  # can't depend on a module. The OOT aic8800 module loads against
-  # cfg80211.ko all the same.
+  # Wireless stack — needed for the out-of-tree aic8800 driver and the
+  # hardened NixOS wpa_supplicant unit. Keep both cfg80211 and rfkill as
+  # modules: the driver loads against cfg80211.ko, while /dev/rfkill must
+  # exist before wpa_supplicant can construct its private mount namespace.
   WIRELESS = yes;
   CFG80211 = module;
+  RFKILL = module;
   CFG80211_WEXT = yes;
   WEXT_CORE = yes;
   WEXT_PROC = yes;
