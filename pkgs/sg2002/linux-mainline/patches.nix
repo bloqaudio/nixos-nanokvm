@@ -150,6 +150,26 @@ let
       name = "media-sophgo-tighten-sg2002-csi-interrupt-handling";
       patch = ./patches/0031-media-sophgo-tighten-SG2002-CSI-interrupt-handling.patch;
     })
+    (patch {
+      name = "media-i2c-refresh-lt6911uxc-state-on-timing-queries";
+      patch = ./patches/0032-media-i2c-refresh-LT6911UXC-state-on-timing-queries.patch;
+    })
+    (patch {
+      name = "media-sophgo-validate-sg2002-capture-source-format";
+      patch = ./patches/0033-media-sophgo-validate-SG2002-capture-source-format.patch;
+    })
+    (patch {
+      name = "media-sophgo-remove-sg2002-capture-bring-up-controls";
+      patch = ./patches/0034-media-sophgo-remove-SG2002-capture-bring-up-controls.patch;
+    })
+    (patch {
+      name = "dt-bindings-reset-add-sg2002-csi-phy-resets";
+      patch = ./patches/0035-dt-bindings-reset-add-SG2002-CSI-PHY-resets.patch;
+    })
+    (patch {
+      name = "dt-bindings-media-document-sg2002-csi-capture";
+      patch = ./patches/0036-dt-bindings-media-document-SG2002-CSI-capture.patch;
+    })
   ];
 
   meta = {
@@ -434,6 +454,54 @@ let
         Enables only the VI completion interrupt consumed by the driver,
         exposes the five documented CSI MAC error causes, clears sticky CSI
         bridge status between streams, and names the direct-YUV route bits.
+      '';
+    };
+    "media-i2c-refresh-lt6911uxc-state-on-timing-queries" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the LT6911UXC support series before submission";
+      notes = ''
+        Polls the non-interrupt-driven LT6911UXC timing state when userspace
+        queries it, updates the active media-bus format and pixel rate, and
+        emits source-change events without holding the register/state mutex.
+      '';
+    };
+    "media-sophgo-validate-sg2002-capture-source-format" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Validates the fixed 1080p UYVY source link before starting DMA and
+        forwards source-change events to capture userspace, failing an active
+        queue when the HDMI bridge changes mode underneath it.
+      '';
+    };
+    "media-sophgo-remove-sg2002-capture-bring-up-controls" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Removes diagnostic partial-stage module parameters and the one-shot
+        MMIO dump now that the full CSI-to-DMA6 path is hardware-tested.
+      '';
+    };
+    "dt-bindings-media-document-sg2002-csi-capture" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 CSI capture binding is accepted upstream";
+      notes = ''
+        Documents the current monolithic CSI MAC, wrapper, VI and VIP system
+        resource contract, including the NanoKVM four-lane D-PHY endpoint and
+        named CSI PHY reset lines.
+      '';
+    };
+    "dt-bindings-reset-add-sg2002-csi-phy-resets" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The named SG2002 CSI PHY resets are accepted upstream";
+      notes = ''
+        Names the existing reset-controller ABI IDs used by CSI PHY0 and its
+        APB interface, kept separate from the media binding for submission.
       '';
     };
   };

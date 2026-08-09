@@ -11,6 +11,17 @@
  * WiFi and the front-panel OLED for the PCIe board.
  */
 
+/*
+ * The standalone DTB builder uses an unpatched Linux source tarball. Keep
+ * these fallbacks until its cv18xx-reset.h contains the named CSI PHY IDs.
+ */
+#ifndef RST_CSI_PHY0
+#define RST_CSI_PHY0 70
+#endif
+#ifndef RST_CSI_PHY0_APB
+#define RST_CSI_PHY0_APB 71
+#endif
+
 &mdio {
 	status = "okay";
 };
@@ -260,8 +271,7 @@
 			      "axi", "cfg-reg", "vip-ip0", "vip-ip1", "vip-ip2",
 			      "vip-ip3", "csi-be", "raw", "isp-top",
 			      "csi-mac0", "csi0-rx";
-		/* Vendor RST_CSIPHY0 and RST_CSIPHY0RST_APB. */
-		resets = <&rst 70>, <&rst 71>;
+		resets = <&rst RST_CSI_PHY0>, <&rst RST_CSI_PHY0_APB>;
 		reset-names = "csi-phy", "csi-phy-apb";
 		sophgo,ddr-top = <&ddr_top>;
 
