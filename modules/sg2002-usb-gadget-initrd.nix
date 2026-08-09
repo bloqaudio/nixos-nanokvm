@@ -40,7 +40,7 @@
     gnugrep
   ];
 
-  mkSetup = setupNetwork: controlFile:
+  mkSetup = setupNetwork: controlFile: resetController:
     let
       canSetupNetwork = setupNetwork || controlFile != null;
       initialWantNetwork =
@@ -66,7 +66,10 @@
       printf '\n' > "$udc" 2>/dev/null || true
     done
 
-    # Force a full dwc2 re-probe before claiming the UDC. The kernel
+    # Configfs detachment above is enough for normal function changes. Only
+    # the initrd needs the heavier controller reset below.
+    ${lib.optionalString resetController ''
+    # Force a full dwc2 re-probe before the initrd claims the UDC. The kernel
     # inherits the USB controller from U-Boot's fastboot gadget, and on
     # SG2002 that handoff intermittently leaves the net function's data
     # path dead: enumeration and the ACM console keep working, but the
@@ -82,6 +85,7 @@
         echo "$n0" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null || true
       done
     fi
+    ''}
 
     mkdir -p "$G"
 
@@ -180,9 +184,13 @@
     echo "$udc" > "$G/UDC"
   '';
 
-  setupInitrd = mkSetup initrdNetworkEnable null;
+  setupInitrd = mkSetup initrdNetworkEnable null true;
   teardownInitrd = mkTeardown initrdNetworkEnable;
-  setupStage2 = mkSetup networkEnable stage2NetworkControlFile;
+  # The initrd has already reset the controller. A second driver-level
+  # unbind while ttyGS0 is the active console can wedge stage-2 sysinit and,
+  # because this unit orders networkd, prevent both USB and Ethernet access.
+  # A configfs UDC detach above is sufficient for changing the function set.
+  setupStage2 = mkSetup networkEnable stage2NetworkControlFile false;
   teardownStage2 = mkTeardown stage2NetworkMayExist;
 
   otgFlip = pkgs.writeShellScript "usb-gadget-otg-flip" ''
