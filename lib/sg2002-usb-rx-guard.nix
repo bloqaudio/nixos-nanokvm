@@ -38,7 +38,6 @@
     rx2=$("$BB" cat "$stat/rx_packets" 2>/dev/null || echo 0)
     tx2=$("$BB" cat "$stat/tx_packets" 2>/dev/null || echo 0)
     "$BB" kill "$probe_pid" >/dev/null 2>&1 || true
-    wait "$probe_pid" 2>/dev/null || true
 
     # A transmitted probe with no receive progress is the observed SG2002
     # DWC2 bulk-OUT failure signature. Require it twice to ignore packet loss.
