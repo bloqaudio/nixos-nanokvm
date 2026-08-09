@@ -40,7 +40,10 @@ buildUBoot {
     # Console ring buffer readable via `fastboot oem console`; captures
     # the pre-fastboot FSBL/OpenSBI/U-Boot output for post-mortem.
     CONFIG_CONSOLE_RECORD=y
-    CONFIG_CONSOLE_RECORD_OUT_SIZE=0x2000
+    # MMC tracing and a complete extlinux attempt easily exceed 8 KiB. Keep
+    # enough history for `fastboot oem console` to remain useful after a
+    # failed kernel, initrd and FDT load sequence.
+    CONFIG_CONSOLE_RECORD_OUT_SIZE=0x40000
     CONFIG_CONSOLE_RECORD_IN_SIZE=0x800
     CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
     # SG2002/Sipeed SD images need partition 1 marked active for fip.bin,
