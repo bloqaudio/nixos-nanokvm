@@ -48,7 +48,9 @@
   # OpenSBI firmware region reserved, matching the USB FIT boot path.
   # (sg2002-sd-image.nix already adds console=ttyS0; kernelParams is
   # a merged list.)
-  boot.kernelParams = [
+  # mkAfter keeps ttyGS0 last even when a board adds a physical rescue UART;
+  # the final console= entry is the device backing /dev/console.
+  boot.kernelParams = lib.mkAfter [
     "console=ttyGS0,115200"
     "riscv.fwsz=0x80000"
   ];
