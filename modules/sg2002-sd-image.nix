@@ -41,8 +41,7 @@
   };
   # The generic builder's plain `cp` may use Btrfs copy_file_range and retain
   # a Nix-store file's shared, fragmented extent map. U-Boot's Btrfs reader is
-  # much less exercised than Linux's; make boot payloads independent copies so
-  # the root mount's compression policy can lay them out compactly.
+  # much less exercised than Linux's; make boot payloads independent copies.
   targetExtlinuxBuilder = pkgs.runCommand "sg2002-extlinux-conf-builder" {} ''
     cp ${upstreamExtlinuxBuilder} "$out"
     substituteInPlace "$out" \
@@ -104,7 +103,11 @@
   installBootLoader = pkgs.writeShellScript "install-sg2002-extlinux-boot" ''
     set -euo pipefail
 
-    ${pkgs.coreutils}/bin/mkdir -p /boot
+    ${pkgs.coreutils}/bin/mkdir -p /boot/nixos
+    # Keep the rest of the small root compressed, but give U-Boot plain,
+    # compact extents. This directory property is inherited by new payloads;
+    # --reflink=never above ensures each installed generation is newly laid out.
+    ${pkgs.btrfs-progs}/bin/btrfs property set /boot/nixos compression none
     ${targetExtlinuxBuilder} ${targetExtlinuxBuilderArgs} -c "$@" -d /boot
 
     if [ -d /firmware ]; then
