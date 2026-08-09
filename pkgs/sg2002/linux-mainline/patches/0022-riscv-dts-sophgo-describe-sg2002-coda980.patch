@@ -1,0 +1,69 @@
+From 63662d1614d64ce0af4b944359363909dd10aae6 Mon Sep 17 00:00:00 2001
+From: Codex SG2002 port <codex@localhost>
+Date: Sun, 9 Aug 2026 14:59:14 +0200
+Subject: [PATCH] riscv: dts: sophgo: describe SG2002 Coda980
+
+Describe the Coda980 control and H.264 windows, the H.264 interrupt, five functional clocks, and the proven H.264 reset line. Leave the SoC node disabled so a board DT must opt in after providing the firmware.
+
+Signed-off-by: Codex SG2002 port <codex@localhost>
+---
+ .../devicetree/bindings/media/coda.yaml        |  4 ++++
+ arch/riscv/boot/dts/sophgo/sg2002.dtsi         | 18 ++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/media/coda.yaml b/Documentation/devicetree/bindings/media/coda.yaml
+index 106d300b7..8d787206e 100644
+--- a/Documentation/devicetree/bindings/media/coda.yaml
++++ b/Documentation/devicetree/bindings/media/coda.yaml
+@@ -123,9 +123,12 @@ allOf:
+         interrupt-names:
+           items:
+             - const: h264
++        resets:
++          maxItems: 1
+       required:
+         - reg-names
+         - firmware-name
++        - resets
+     else:
+       properties:
+         reg:
+@@ -179,5 +182,6 @@ examples:
+                  <&clk CLK_APB_H264C>;
+         clock-names = "axi-video-codec", "cfg-reg-vc", "vc-src0",
+                       "h264c", "apb-h264c";
++        resets = <&rst RST_H264C>;
+         firmware-name = "sophgo/sg2002/coda980.bin";
+     };
+diff --git a/arch/riscv/boot/dts/sophgo/sg2002.dtsi b/arch/riscv/boot/dts/sophgo/sg2002.dtsi
+index 98001cce2..2b7b6de07 100644
+--- a/arch/riscv/boot/dts/sophgo/sg2002.dtsi
++++ b/arch/riscv/boot/dts/sophgo/sg2002.dtsi
+@@ -37,6 +37,24 @@ clk: clock-controller@3002000 {
+ 			#clock-cells = <1>;
+ 		};
+ 
++		vcodec: video-codec@b030000 {
++			compatible = "sophgo,sg2002-coda980";
++			reg = <0x0b030000 0x100>, <0x0b010000 0x10000>;
++			reg-names = "vc-ctrl", "h264";
++			interrupts = <SOC_PERIPHERAL_IRQ(5) IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "h264";
++			clocks = <&clk CLK_AXI_VIDEO_CODEC>,
++				 <&clk CLK_CFG_REG_VC>,
++				 <&clk CLK_VC_SRC0>,
++				 <&clk CLK_H264C>,
++				 <&clk CLK_APB_H264C>;
++			clock-names = "axi-video-codec", "cfg-reg-vc", "vc-src0",
++				      "h264c", "apb-h264c";
++			resets = <&rst RST_H264C>;
++			firmware-name = "sophgo/sg2002/coda980.bin";
++			status = "disabled";
++		};
++
+ 		plic: interrupt-controller@70000000 {
+ 			compatible = "sophgo,sg2002-plic", "thead,c900-plic";
+ 			reg = <0x70000000 0x4000000>;
+-- 
+2.54.0
+

@@ -124,6 +124,7 @@
       allowUnfreePredicate = pkg:
         builtins.elem (lib.getName pkg) [
           "nanokvm-factory-runtime"
+          "sg2002-coda980-firmware"
           "sophgo-host-tools"
         ];
 

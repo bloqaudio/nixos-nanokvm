@@ -58,6 +58,12 @@ stdenvNoCC.mkDerivation {
 
     debugfs -R "rdump /mnt/system/ko $out" "$rootfs"
 
+    # Firmware consumed by the SG2002 Coda/Wave video-codec cores. Keep it
+    # next to the factory modules extracted from the same release image so
+    # mainline codec bring-up exercises the exact board firmware.
+    mkdir -p "$out/share"
+    debugfs -R "rdump /usr/share/fw_vcodec $out/share" "$rootfs"
+
     # kvm_system — the separate C++ side-binary (LT6911 HDMI-bridge
     # config over /dev/i2c-4, OLED status UI, ATX buttons/LEDs). The
     # NanoKVM repo only ships its *source* (MaixCDK build system, a

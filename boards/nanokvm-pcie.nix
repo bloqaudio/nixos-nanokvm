@@ -9,6 +9,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }: {
   imports = [
@@ -64,4 +65,18 @@
   # from it (SD-image boot).
   sg2002.initrd.availableKernelModules = [ "mmc_block" ];
   sg2002.initrd.kernelModules = [ "mmc_block" ];
+
+  # The Coda980 node is enabled only by the PCIe mainline DTB. Keep its
+  # firmware separate from the broader factory runtime and preserve the
+  # literal name consumed by request_firmware(). The module is stage-2 only:
+  # the NFS-live initrd has no encoder users and should not pay for it.
+  hardware.firmware = lib.optionals (config.sg2002.kernel == "mainline") [
+    pkgs.sg2002-coda980-firmware
+  ];
+  boot.kernelModules = lib.optionals (config.sg2002.kernel == "mainline") [
+    "coda-vpu"
+  ];
+  systemd.tmpfiles.rules = lib.optionals (config.sg2002.kernel == "mainline") [
+    "L+ /lib/firmware - - - - /run/current-system/firmware"
+  ];
 }

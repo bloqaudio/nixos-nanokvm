@@ -106,6 +106,7 @@ in
     nanokvm-patched-src = final.nanokvm-patched-src;
   };
   nanokvm-factory-runtime = final.callPackage ./nanokvm-factory-runtime { };
+  sg2002-coda980-firmware = final.callPackage ./sg2002/coda980-firmware { };
   nanokvm-server = final.callPackage ./nanokvm-server { };
 
   # Build with -tags nocamera so libkvm.so isn't linked in at all —

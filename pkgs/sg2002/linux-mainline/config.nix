@@ -381,19 +381,24 @@ with lib.kernel; {
   VIDEO_LT6911UXE = yes;
   VIDEO_SOPHGO_SG2002_CSI = yes;
   VIDEOBUF2_DMA_CONTIG = yes;
+  # Coda980 is a stateful mem2mem H.264 encoder.  Its SG2002 path accepts
+  # direct NV12 DMA-BUF input and uses DMA-BUF CPU access only for NV21
+  # chroma-order conversion.
+  DMA_SHARED_BUFFER = yes;
+  V4L_MEM2MEM_DRIVERS = yes;
+  VIDEO_CODA = module;
   # The generic Cadence receiver is a separate IP block. SG2002 capture uses
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;
 
-  # One 1080p UYVY frame is 4,147,200 bytes.  Two explicitly requested vb2
-  # buffers plus the driver-owned scratch buffer need about 12 MiB.  VI DMA6
-  # has no scatter/gather table, and a 16 MiB CMA pool fragmented into ranges
-  # smaller than one frame during NFS userspace startup.  Keep 24 MiB so the
-  # allocator has migration headroom without returning to the 32 MiB boot
-  # pressure observed with four default vb2 buffers.
+  # CSI capture owns about 12 MiB for two 1080p UYVY buffers and its scratch
+  # frame.  A concurrent 1080p Coda encode needs another roughly 33 MiB for
+  # its common/work/slice/reconstruction/staging and vb2 buffers.  Reserve
+  # 48 MiB so both pipelines can run without depending on a pristine CMA
+  # layout after boot.
   CMA = yes;
   DMA_CMA = yes;
-  CMA_SIZE_MBYTES = freeform "24";
+  CMA_SIZE_MBYTES = freeform "48";
   CMA_SIZE_SEL_MBYTES = yes;
   CMA_SIZE_SEL_PERCENTAGE = no;
   CMA_SYSFS = yes;

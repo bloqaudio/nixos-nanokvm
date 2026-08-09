@@ -90,6 +90,62 @@ let
       name = "pinctrl-sophgo-allow-fixed-io-pin-power-source";
       patch = ./patches/0016-pinctrl-sophgo-allow-fixed-io-pin-power-source.patch;
     })
+    (patch {
+      name = "dt-bindings-media-coda-add-sg2002-coda980";
+      patch = ./patches/0017-dt-bindings-media-coda-add-sg2002-coda980.patch;
+    })
+    (patch {
+      name = "media-coda-add-sg2002-coda980-h264";
+      patch = ./patches/0018-media-coda-add-sg2002-coda980-h264.patch;
+    })
+    (patch {
+      name = "media-coda-keep-coda980-firmware-id-out-of-abi-enum";
+      patch = ./patches/0019-media-coda-keep-coda980-firmware-id-out-of-abi-enum.patch;
+    })
+    (patch {
+      name = "media-coda-constrain-sg2002-staging-and-contexts";
+      patch = ./patches/0020-media-coda-constrain-sg2002-staging-and-contexts.patch;
+    })
+    (patch {
+      name = "media-coda-boot-sg2002-firmware-from-common-arena";
+      patch = ./patches/0021-media-coda-boot-sg2002-firmware-from-common-arena.patch;
+    })
+    (patch {
+      name = "riscv-dts-sophgo-describe-sg2002-coda980";
+      patch = ./patches/0022-riscv-dts-sophgo-describe-sg2002-coda980.patch;
+    })
+    (patch {
+      name = "media-coda-support-sg2002-nv12-and-dma-buf-input";
+      patch = ./patches/0023-media-coda-support-sg2002-nv12-and-dma-buf-input.patch;
+    })
+    (patch {
+      name = "media-coda-handle-sg2002-h264-reset";
+      patch = ./patches/0024-media-coda-handle-SG2002-H264-reset.patch;
+    })
+    (patch {
+      name = "media-coda-download-sg2002-firmware-into-bit-sram";
+      patch = ./patches/0025-media-coda-download-SG2002-firmware-into-BIT-SRAM.patch;
+    })
+    (patch {
+      name = "media-coda-read-sg2002-product-code-from-gdi";
+      patch = ./patches/0026-media-coda-read-SG2002-product-code-from-GDI.patch;
+    })
+    (patch {
+      name = "media-coda-configure-sg2002-h264-headers";
+      patch = ./patches/0027-media-coda-configure-SG2002-H264-headers.patch;
+    })
+    (patch {
+      name = "media-coda-configure-sg2002-coda980-encoder-abi";
+      patch = ./patches/0028-media-coda-configure-SG2002-Coda980-encoder-ABI.patch;
+    })
+    (patch {
+      name = "media-coda-restore-coda980-frame-memory-default";
+      patch = ./patches/0029-media-coda-restore-Coda980-frame-memory-default.patch;
+    })
+    (patch {
+      name = "media-coda-preserve-coda980-sps-setup-with-crop";
+      patch = ./patches/0030-media-coda-preserve-Coda980-SPS-setup-with-crop.patch;
+    })
   ];
 
   meta = {
@@ -281,6 +337,90 @@ let
         Ethernet pads, so accept a power-source-only group without touching a
         nonexistent configuration register.
       '';
+    };
+    "dt-bindings-media-coda-add-sg2002-coda980" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Binding for the SG2002 Coda980 H.264 core.";
+    };
+    "media-coda-add-sg2002-coda980-h264" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Coda980 platform resources, firmware bring-up, and H.264 encoder path.";
+    };
+    "media-coda-keep-coda980-firmware-id-out-of-abi-enum" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps Coda9 command dispatch tied to the existing Coda960 ABI enum.";
+    };
+    "media-coda-constrain-sg2002-staging-and-contexts" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Limits the SG2002 encoder to one context and keeps its common-arena aliases out of per-context frees.";
+    };
+    "media-coda-boot-sg2002-firmware-from-common-arena" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Uses the SG2002 common-arena CODE/TEMP/PARA layout instead of the legacy code-download path.";
+    };
+    "riscv-dts-sophgo-describe-sg2002-coda980" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Adds the disabled SoC Coda980 node; board overlays enable it only where tested.";
+    };
+    "media-coda-support-sg2002-nv12-and-dma-buf-input" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Accepts direct NV12 DMA-BUF input and safely CPU-maps NV21 imports for staging.";
+    };
+    "media-coda-handle-sg2002-h264-reset" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Uses level assert/deassert with SG2002's simple-reset provider, which has no pulse duration.";
+    };
+    "media-coda-download-sg2002-firmware-into-bit-sram" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Retains the Coda9 BIT SRAM download in addition to SG2002's common-arena firmware copy.";
+    };
+    "media-coda-read-sg2002-product-code-from-gdi" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Reads Coda980's hardware product code separately from its customer-coded firmware version word.";
+    };
+    "media-coda-configure-sg2002-h264-headers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Initializes the extended Coda9 SPS/PPS registers used by Coda980 firmware.";
+    };
+    "media-coda-configure-sg2002-coda980-encoder-abi" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Programs the Coda980 sequence, Maverick-II cache, and per-picture H.264 ABI without applying Coda960-only semantics.";
+    };
+    "media-coda-restore-coda980-frame-memory-default" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps Coda980's interleaved-chroma, 128-bit little-endian frame-memory default across command-time rewrites.";
+    };
+    "media-coda-preserve-coda980-sps-setup-with-crop" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps 1080p frame-crop flags from bypassing the Coda980 extended SPS register setup.";
     };
   };
 in

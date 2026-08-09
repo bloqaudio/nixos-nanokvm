@@ -1,0 +1,92 @@
+From c5de0191b1b8eb48523a4fd0e74c211f510e6b75 Mon Sep 17 00:00:00 2001
+From: Codex SG2002 port <codex@localhost>
+Date: Sun, 9 Aug 2026 16:17:26 +0200
+Subject: [PATCH] media: coda: restore Coda980 frame memory default
+
+Signed-off-by: Codex SG2002 port <codex@localhost>
+---
+ .../platform/chips-media/coda/coda-common.c   | 43 ++++++++++++-------
+ .../platform/chips-media/coda/coda_regs.h     |  3 ++
+ 2 files changed, 31 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 1a4eab98c..6f4f49dd0 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -2751,23 +2751,33 @@ static int coda_open(struct file *file)
+ 
+ 	coda_dbg(1, ctx, "open instance (%p)\n", ctx);
+ 
+-	switch (dev->devtype->product) {
+-	case CODA_960:
++	if (dev->devtype->has_coda980_h264_abi) {
+ 		/*
+-		 * Enabling the BWB when decoding can hang the firmware with
+-		 * certain streams. The issue was tracked as ENGR00293425 by
+-		 * Freescale. As a workaround, disable BWB for all decoders.
+-		 * The enable_bwb module parameter allows to override this.
++		 * Coda980 uses 128-bit little-endian frame accesses.  Keep the
++		 * context state in sync with the firmware default: it is restored
++		 * before every BIT command by coda_command_async().
+ 		 */
+-		if (enable_bwb || ctx->inst_type == CODA_INST_ENCODER)
+-			ctx->frame_mem_ctrl = CODA9_FRAME_ENABLE_BWB;
+-		fallthrough;
+-	case CODA_HX4:
+-	case CODA_7541:
++		ctx->frame_mem_ctrl = CODA980_FRAME_MEM_CTRL_DEFAULT;
+ 		ctx->reg_idx = 0;
+-		break;
+-	default:
+-		ctx->reg_idx = idx;
++	} else {
++		switch (dev->devtype->product) {
++		case CODA_960:
++			/*
++			 * Enabling the BWB when decoding can hang the firmware with
++			 * certain streams. The issue was tracked as ENGR00293425 by
++			 * Freescale. As a workaround, disable BWB for all decoders.
++			 * The enable_bwb module parameter allows to override this.
++			 */
++			if (enable_bwb || ctx->inst_type == CODA_INST_ENCODER)
++				ctx->frame_mem_ctrl = CODA9_FRAME_ENABLE_BWB;
++			fallthrough;
++		case CODA_HX4:
++		case CODA_7541:
++			ctx->reg_idx = 0;
++			break;
++		default:
++			ctx->reg_idx = idx;
++		}
+ 	}
+ 	if (ctx->dev->vdoa && !disable_vdoa) {
+ 		ctx->vdoa = vdoa_context_create(dev->vdoa);
+@@ -2961,7 +2971,10 @@ static int coda_hw_init(struct coda_dev *dev)
+ 		coda_write(dev, CODA7_STREAM_BUF_PIC_FLUSH,
+ 			   CODA_REG_BIT_STREAM_CTRL);
+ 	}
+-	if (dev->devtype->product == CODA_960)
++	if (dev->devtype->has_coda980_h264_abi)
++		coda_write(dev, CODA980_FRAME_MEM_CTRL_DEFAULT,
++				CODA_REG_BIT_FRAME_MEM_CTRL);
++	else if (dev->devtype->product == CODA_960)
+ 		coda_write(dev, CODA9_FRAME_ENABLE_BWB,
+ 				CODA_REG_BIT_FRAME_MEM_CTRL);
+ 	else
+diff --git a/drivers/media/platform/chips-media/coda/coda_regs.h b/drivers/media/platform/chips-media/coda/coda_regs.h
+index 09530974c..e32b51ec6 100644
+--- a/drivers/media/platform/chips-media/coda/coda_regs.h
++++ b/drivers/media/platform/chips-media/coda/coda_regs.h
+@@ -51,6 +51,9 @@
+ #define		CODA9_FRAME_TILED2LINEAR	(1 << 11)
+ #define		CODA_FRAME_CHROMA_INTERLEAVE	(1 << 2)
+ #define		CODA_IMAGE_ENDIAN_SELECT	(1 << 0)
++#define		CODA9_FRAME_128BIT_LITTLE_ENDIAN	16
++#define		CODA980_FRAME_MEM_CTRL_DEFAULT	\
++	(CODA_FRAME_CHROMA_INTERLEAVE | CODA9_FRAME_128BIT_LITTLE_ENDIAN)
+ #define CODA_REG_BIT_BIT_STREAM_PARAM		0x114
+ #define		CODA_BIT_STREAM_END_FLAG	(1 << 2)
+ #define		CODA_BIT_DEC_SEQ_INIT_ESCAPE	(1 << 0)
+-- 
+2.54.0
+

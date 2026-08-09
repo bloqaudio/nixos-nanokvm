@@ -1,0 +1,55 @@
+From 23fcc118cc1ccbff1edad66442b8cbc874dab5f7 Mon Sep 17 00:00:00 2001
+From: Codex SG2002 port <codex@localhost>
+Date: Sun, 9 Aug 2026 14:55:04 +0200
+Subject: [PATCH] media: coda: constrain SG2002 staging and contexts
+
+Signed-off-by: Codex SG2002 port <codex@localhost>
+---
+ drivers/media/platform/chips-media/coda/coda-bit.c    | 3 ---
+ drivers/media/platform/chips-media/coda/coda-common.c | 9 ++++-----
+ 2 files changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index b844dd006..7af119719 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -1526,9 +1526,6 @@ static int coda_stage_nv21(struct coda_ctx *ctx,
+ 		dst[luma_size + i + 1] = src[luma_size + i];
+ 	}
+ 
+-	dma_sync_single_for_device(ctx->dev->dev, staging->paddr, size,
+-				   DMA_TO_DEVICE);
+-
+ 	return 0;
+ }
+ 
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 180200aff..028a0c9e0 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -2646,10 +2646,7 @@ int coda_encoder_queue_init(void *priv, struct vb2_queue *src_vq,
+ 		return ret;
+ 
+ 	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+-	if (ctx->dev->devtype->nv21_to_nv12)
+-		dst_vq->io_modes = VB2_MMAP;
+-	else
+-		dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
++	dst_vq->io_modes = VB2_DMABUF | VB2_MMAP;
+ 	dst_vq->mem_ops = &vb2_dma_contig_memops;
+ 
+ 	return coda_queue_init(priv, dst_vq);
+@@ -2694,7 +2691,9 @@ static int coda_open(struct file *file)
+ 	if (!ctx)
+ 		return -ENOMEM;
+ 
+-	if (dev->devtype->product == CODA_DX6)
++	if (dev->devtype->max_instances)
++		max = dev->devtype->max_instances - 1;
++	else if (dev->devtype->product == CODA_DX6)
+ 		max = CODADX6_MAX_INSTANCES - 1;
+ 	idx = ida_alloc_max(&dev->ida, max, GFP_KERNEL);
+ 	if (idx < 0) {
+-- 
+2.54.0
+
