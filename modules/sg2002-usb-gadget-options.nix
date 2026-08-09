@@ -90,6 +90,16 @@
     '';
   };
 
+  options.sg2002.usbGadget.stage2.rxGuard.enable = lib.mkOption {
+    type = lib.types.bool;
+    default = false;
+    description = ''
+      Detect the SG2002 DWC2 bulk-OUT runtime wedge by probing the USB host,
+      then re-probe the controller after two transmitted probes make no
+      receive progress. The guard stays idle while USB has no carrier.
+    '';
+  };
+
   options.sg2002.usbGadget.stage2.reenumerateAfterBoot = {
     enable = lib.mkOption {
       type = lib.types.bool;

@@ -32,6 +32,7 @@
   sg2002.usbGadget.initrd.network.enable = true;
   sg2002.usbGadget.stage2.enable = true;
   sg2002.usbGadget.stage2.preserveInitrd = true;
+  sg2002.usbGadget.stage2.rxGuard.enable = true;
 
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;
@@ -55,6 +56,10 @@
   # mkAfter keeps ttyGS0 last even when a board adds a physical rescue UART;
   # the final console= entry is the device backing /dev/console.
   boot.kernelParams = lib.mkAfter [
+    # ttyGS0 and the board's physical rescue UART both have explicit getty
+    # units below/in the board module. Do not create another serial getty for
+    # the early UART0 kernel console while its device is still coldplugging.
+    "systemd.getty_auto=no"
     "console=ttyGS0,115200"
     "riscv.fwsz=0x80000"
   ];
@@ -67,6 +72,14 @@
 
   services.openssh = {
     enable = true;
+    # RSA host-key generation consumed more than a minute on the single-core
+    # SG2002. Generate one modern, unique key on the device and persist it.
+    hostKeys = [
+      {
+        path = "/etc/ssh/ssh_host_ed25519_key";
+        type = "ed25519";
+      }
+    ];
     settings.PermitRootLogin = "yes";
     settings.PasswordAuthentication = true;
   };

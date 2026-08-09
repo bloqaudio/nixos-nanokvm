@@ -23,6 +23,7 @@
 }:
 let
   protocol = import ../lib/protocol.nix;
+  mkUsbRxGuard = import ../lib/sg2002-usb-rx-guard.nix { inherit lib; };
   cfg = config.nanokvm.nfsLive;
   usbRoot = cfg.server == protocol.hostIp;
 
@@ -130,79 +131,10 @@ let
   rxGuardRuntime = "/run/nanokvm-usb-rx-guard";
   rxGuardBusybox = "/run/nanokvm-usb-rx-guard-busybox";
   rxGuardStaticBusybox = pkgs.pkgsStatic.busybox;
-  rxGuardSource = pkgs.writeText "nanokvm-usb-rx-guard" ''
-    set -u
-    BB=${rxGuardBusybox}
-    G=/sys/kernel/config/usb_gadget/sg2002
-    stat=/sys/class/net/usb0/statistics
-    stale=0
-    last_udc=""
-    echo "usb-rx-guard: monitoring usb0 from a store-independent /run payload" > /dev/kmsg
-    while :; do
-      "$BB" sleep 2
-      [ -d "$stat" ] || continue
-      rx1=$("$BB" cat "$stat/rx_packets" 2>/dev/null || echo 0)
-      tx1=$("$BB" cat "$stat/tx_packets" 2>/dev/null || echo 0)
-      # Force one target-to-host packet into each sample window. Never wait
-      # for the probe: when the NCM function wedges, ping itself can block in
-      # the network stack and would prevent the guardian from reaching its
-      # configfs recovery path. The short-lived child is disposable; the
-      # parent only samples local sysfs counters.
-      "$BB" ping -c 1 -W 1 ${lib.escapeShellArg protocol.hostIp} >/dev/null 2>&1 &
-      probe_pid=$!
-      "$BB" sleep 2
-      rx2=$("$BB" cat "$stat/rx_packets" 2>/dev/null || echo 0)
-      tx2=$("$BB" cat "$stat/tx_packets" 2>/dev/null || echo 0)
-      "$BB" kill "$probe_pid" >/dev/null 2>&1 || true
-      if [ "$rx1" = "$rx2" ]; then
-        stale=$((stale + 1))
-        echo "usb-rx-guard: probe produced no RX, rx=$rx1->$rx2 tx=$tx1->$tx2 stale=$stale" > /dev/kmsg
-      else
-        stale=0
-      fi
-      if [ "$stale" -ge 2 ]; then
-        stale=0
-        current_udc=$("$BB" cat "$G/UDC" 2>/dev/null || true)
-        [ -z "$current_udc" ] || last_udc=$current_udc
-        udc=$last_udc
-        driver=/sys/bus/platform/drivers/dwc2
-        echo "usb-rx-guard: usb0 probe and RX stuck; re-probing dwc2 ($udc)" > /dev/kmsg
-        [ -n "$udc" ] || continue
-        echo "" > "$G/UDC" 2>/dev/null || true
-        if [ ! -e "$driver/unbind" ] || [ ! -e "$driver/bind" ]; then
-          echo "usb-rx-guard: dwc2 platform driver controls are missing" > /dev/kmsg
-          echo "$udc" > "$G/UDC" 2>/dev/null || true
-          continue
-        fi
-        if ! echo "$udc" > "$driver/unbind" 2>/dev/null; then
-          echo "usb-rx-guard: failed to unbind dwc2 ($udc)" > /dev/kmsg
-          echo "$udc" > "$G/UDC" 2>/dev/null || true
-          continue
-        fi
-        "$BB" sleep 1
-        if ! echo "$udc" > "$driver/bind" 2>/dev/null; then
-          echo "usb-rx-guard: failed to bind dwc2 ($udc)" > /dev/kmsg
-          continue
-        fi
-        # UDC registration is asynchronous after a platform-driver rebind.
-        # Keep this loop store-independent: both the shell and sleep live in
-        # the static BusyBox payload copied to /run before NFS is mounted.
-        ready=0
-        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-          if [ -e "/sys/class/udc/$udc" ]; then
-            ready=1
-            break
-          fi
-          "$BB" sleep 0.1
-        done
-        if [ "$ready" = 1 ] && echo "$udc" > "$G/UDC" 2>/dev/null; then
-          echo "usb-rx-guard: dwc2 and gadget rebound ($udc)" > /dev/kmsg
-        else
-          echo "usb-rx-guard: dwc2 re-probe failed ($udc)" > /dev/kmsg
-        fi
-      fi
-    done
-  '';
+  rxGuardSource = pkgs.writeText "nanokvm-usb-rx-guard" (mkUsbRxGuard {
+    busybox = rxGuardBusybox;
+    hostIp = protocol.hostIp;
+  });
 
   rxGuardInstall = pkgs.writeShellScript "nanokvm-install-usb-rx-guard" ''
     set -eu

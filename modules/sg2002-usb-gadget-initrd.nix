@@ -25,6 +25,7 @@
   initrdNetworkEnable = gadgetCfg.initrd.network.enable;
   preserveInitrd = gadgetCfg.stage2.preserveInitrd;
   reenumerateCfg = gadgetCfg.stage2.reenumerateAfterBoot;
+  rxGuardCfg = gadgetCfg.stage2.rxGuard;
   stage2NetworkControlFile = gadgetCfg.network.controlFile;
   stage2NetworkMayExist = networkEnable || stage2NetworkControlFile != null;
   reenumerateStage2 =
@@ -40,6 +41,13 @@
     findutils
     gnugrep
   ];
+  mkUsbRxGuard = import ../lib/sg2002-usb-rx-guard.nix { inherit lib; };
+  rxGuardScript = pkgs.writeShellScript "sg2002-usb-rx-guard" (mkUsbRxGuard {
+    busybox = "${pkgs.busybox}/bin/busybox";
+    hostIp = protocol.hostIp;
+    requireCarrier = true;
+    initialDelaySec = 10;
+  });
 
   mkSetup = setupNetwork: controlFile: resetController:
     let
@@ -326,6 +334,16 @@ in {
             reenumerateAfterBoot disabled
           '';
         }
+        {
+          assertion = !rxGuardCfg.enable || (
+            gadgetCfg.stage2.enable
+            && stage2NetworkMayExist
+          );
+          message = ''
+            sg2002.usbGadget.stage2.rxGuard requires a stage-2 USB gadget
+            with a possible network function
+          '';
+        }
       ];
 
       sg2002.initrd.pruneKernelModules = true;
@@ -365,6 +383,18 @@ in {
             stopIfChanged = false;
             serviceConfig = stage2ServiceDef.serviceConfig // {
               DefaultDependencies = false;
+            };
+          };
+          usb-rx-guard = lib.mkIf rxGuardCfg.enable {
+            description = "Recover a stalled SG2002 USB gadget RX path";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "usb-gadget.service" "systemd-networkd.service" ];
+            wants = [ "usb-gadget.service" "systemd-networkd.service" ];
+            serviceConfig = {
+              Type = "simple";
+              ExecStart = rxGuardScript;
+              Restart = "always";
+              RestartSec = "1s";
             };
           };
         } // lib.optionalAttrs reenumerateStage2 {
