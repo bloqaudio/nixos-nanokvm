@@ -53,19 +53,20 @@
   # OpenSBI firmware region reserved, matching the USB FIT boot path.
   # (sg2002-sd-image.nix already adds console=ttyS0; kernelParams is
   # a merged list.)
-  # mkAfter keeps ttyGS0 last even when a board adds a physical rescue UART;
-  # the final console= entry is the device backing /dev/console.
-  boot.kernelParams = lib.mkAfter [
-    # ttyGS0 and the board's physical rescue UART both have explicit getty
-    # units below/in the board module. Do not create another serial getty for
-    # the early UART0 kernel console while its device is still coldplugging.
+  # Keep ttyGS0 as a mirrored kernel-log sink, but put it before the board's
+  # physical UART. The final console= entry backs /dev/console; making that a
+  # gadget TTY can wedge PID 1 in u_serial gs_close() during shutdown.
+  boot.kernelParams = lib.mkBefore [
+    # Physical rescue UARTs have explicit getty units in their board modules.
+    # Do not create another serial getty for the early UART0 kernel console.
     "systemd.getty_auto=no"
     "console=ttyGS0,115200"
     "riscv.fwsz=0x80000"
   ];
 
-  # Interactive login over the USB serial console.
-  systemd.services."serial-getty@ttyGS0".enable = true;
+  # Kernel logs still reach ACM, but an agetty adds another open/close racing
+  # PID 1's console teardown. SSH and the physical UART provide logins.
+  systemd.services."serial-getty@ttyGS0".enable = false;
 
   sg2002.authorizedKeys = rootAuthorizedKeys;
   networking.hostName = lib.mkDefault "nanokvm";
