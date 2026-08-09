@@ -7,9 +7,9 @@
 # kernel + dtb + initrd from there. fip.bin (mainline U-Boot) lives on
 # the FAT firmware partition.
 #
-# Reachability: the NanoKVM-PCIe board module brings up wired Ethernet
-# in the initrd and stage 2. The USB gadget keeps only ACM serial in the
-# initrd; stage 2 recreates ECM + ACM and lets networkd assign usb0.
+# Reachability: the NanoKVM-PCIe board module brings up wired Ethernet in the
+# initrd and stage 2. One ECM + ACM gadget remains bound across switch-root;
+# stage-2 networkd adopts usb0 without a fragile USB disconnect/re-enumeration.
 {
   config,
   lib,
@@ -26,8 +26,12 @@
   # is already "mainline"; be explicit so this profile is self-evident.)
   sg2002.uboot = lib.mkForce "mainline";
   sg2002.usbGadget.network.enable = true;
-  sg2002.usbGadget.initrd.network.enable = false;
+  # Keep one ECM+ACM gadget bound from initrd through stage 2. Detaching an
+  # ACM function used as the kernel console can wait indefinitely for a host
+  # reader, while resetting DWC2 under ttyGS0 can wedge stage-2 sysinit.
+  sg2002.usbGadget.initrd.network.enable = true;
   sg2002.usbGadget.stage2.enable = true;
+  sg2002.usbGadget.stage2.preserveInitrd = true;
 
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;

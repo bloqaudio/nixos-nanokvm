@@ -79,6 +79,17 @@
     description = "Bring up the SG2002 debug USB gadget again in stage 2.";
   };
 
+  options.sg2002.usbGadget.stage2.preserveInitrd = lib.mkOption {
+    type = lib.types.bool;
+    default = false;
+    description = ''
+      Keep an identical initrd gadget bound across switch-root instead of
+      detaching and recreating it. This avoids dropping an active ACM kernel
+      console and requires the initrd and stage 2 to expose the same function
+      set without a runtime network control file.
+    '';
+  };
+
   options.sg2002.usbGadget.stage2.reenumerateAfterBoot = {
     enable = lib.mkOption {
       type = lib.types.bool;

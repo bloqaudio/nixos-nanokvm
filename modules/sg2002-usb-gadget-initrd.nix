@@ -23,6 +23,7 @@
   gadgetCfg = cfg.usbGadget;
   networkEnable = gadgetCfg.network.enable;
   initrdNetworkEnable = gadgetCfg.initrd.network.enable;
+  preserveInitrd = gadgetCfg.stage2.preserveInitrd;
   reenumerateCfg = gadgetCfg.stage2.reenumerateAfterBoot;
   stage2NetworkControlFile = gadgetCfg.network.controlFile;
   stage2NetworkMayExist = networkEnable || stage2NetworkControlFile != null;
@@ -271,6 +272,39 @@
 
   initrdServiceDef = mkServiceDef setupInitrd teardownInitrd;
   stage2ServiceDef = mkServiceDef setupStage2 teardownStage2;
+  preservedInitrdServiceDef = initrdServiceDef // {
+    unitConfig = (initrdServiceDef.unitConfig or {}) // {
+      IgnoreOnIsolate = true;
+      RefuseManualStop = true;
+      SurviveFinalKillSignal = true;
+    };
+    serviceConfig = initrdServiceDef.serviceConfig // {
+      ExecStop = lib.mkForce [ "" ];
+    };
+  };
+  preservedStage2ServiceDef = {
+    description = "Preserve the initrd SG2002 USB gadget across switch-root";
+    wantedBy = [ "sysinit.target" ];
+    before = [
+      "sysinit.target"
+      "network-pre.target"
+      "systemd-networkd.service"
+    ];
+    after = [ "sys-kernel-config.mount" ];
+    requires = [ "sys-kernel-config.mount" ];
+    unitConfig = {
+      DefaultDependencies = false;
+      IgnoreOnIsolate = true;
+      RefuseManualStop = true;
+      SurviveFinalKillSignal = true;
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+      ExecStop = lib.mkForce [ "" ];
+    };
+  };
   initrdNetworksDef = mkNetworks initrdNetworkEnable;
   stage2NetworksDef = mkNetworks stage2NetworkMayExist;
 in {
@@ -278,6 +312,22 @@ in {
 
   config = lib.mkMerge [
     {
+      assertions = [
+        {
+          assertion = !preserveInitrd || (
+            gadgetCfg.stage2.enable
+            && gadgetCfg.network.controlFile == null
+            && initrdNetworkEnable == networkEnable
+            && !reenumerateCfg.enable
+          );
+          message = ''
+            sg2002.usbGadget.stage2.preserveInitrd requires stage 2,
+            identical initrd/stage-2 network functions, no controlFile, and
+            reenumerateAfterBoot disabled
+          '';
+        }
+      ];
+
       sg2002.initrd.pruneKernelModules = true;
       sg2002.initrd.availableKernelModules = [
         "libcomposite"
@@ -287,14 +337,17 @@ in {
       sg2002.initrd.kernelModules = ["libcomposite"];
 
       boot.initrd.systemd = {
-        services.usb-gadget = initrdServiceDef;
+        services.usb-gadget =
+          if preserveInitrd
+          then preservedInitrdServiceDef
+          else initrdServiceDef;
         network.networks = initrdNetworksDef;
         storePaths = [setupInitrd teardownInitrd];
       };
 
       systemd = lib.mkIf gadgetCfg.stage2.enable {
         services = {
-          usb-gadget = stage2ServiceDef // {
+          usb-gadget = if preserveInitrd then preservedStage2ServiceDef else stage2ServiceDef // {
             # Recreate the ACM console and optional usb0 before normal
             # stage-2 boot proceeds. If this waits until multi-user.target,
             # networkd has already passed network-pre.target and the USB
