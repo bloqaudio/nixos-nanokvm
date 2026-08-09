@@ -31,7 +31,10 @@
   sg2002.usbGadget.product = lib.mkDefault "Sipeed NanoKVM-PCIe (NixOS)";
   sg2002.usbGadget.serial = lib.mkDefault "nanokvm-pcie-0001";
 
-  sg2002.uart1Rescue.enable = true;
+  # UART1 on the carrier header has never produced usable output on the
+  # physical PCIe unit. Keep the reliable USB ACM gadget as /dev/console;
+  # UART1 remains an explicitly opt-in diagnostic experiment.
+  sg2002.consoleDevice = "ttyGS0";
 
   services.nanokvm.hardwareVersion = lib.mkDefault "pcie";
   services.nanokvm.hdmiVersion = lib.mkDefault "ux";
@@ -46,14 +49,11 @@
   nanokvm.oled.enable = lib.mkDefault (config.sg2002.kernel == "mainline");
   nanokvm.oled.useOledFdt = false;
 
-  # The PCIe carrier exposes UART1 on its A19/A18 header pins. USB ttyGS0
-  # remains the primary remote console; ttyS1 is the physical fallback.
+  # The PCIe carrier labels A19/A18 as UART1, but that header is unverified.
+  # Keep its getty off unless uart1Rescue is explicitly enabled for a test.
   # OpenSBI still uses UART0, so there is intentionally no UART1 earlycon.
-  boot.kernelParams = lib.mkIf (config.sg2002.kernel == "mainline") [
-    "console=ttyS1,115200"
-  ];
   systemd.services."serial-getty@ttyS1" = lib.mkIf (
-    config.sg2002.kernel == "mainline"
+    config.sg2002.kernel == "mainline" && config.sg2002.uart1Rescue.enable
   ) {
     enable = true;
     wantedBy = ["multi-user.target"];

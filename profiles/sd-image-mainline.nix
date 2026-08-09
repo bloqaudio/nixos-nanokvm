@@ -51,18 +51,20 @@
 
   # Mirror the kernel console onto the USB gadget serial and keep the
   # OpenSBI firmware region reserved, matching the USB FIT boot path.
-  # (sg2002-sd-image.nix already adds console=ttyS0; kernelParams is
-  # a merged list.)
+  # (sg2002-sd-image.nix already selects the board's physical UART;
+  # kernelParams is a merged list.)
   # Keep ttyGS0 as a mirrored kernel-log sink, but put it before the board's
   # physical UART. The final console= entry backs /dev/console; making that a
   # gadget TTY can wedge PID 1 in u_serial gs_close() during shutdown.
-  boot.kernelParams = lib.mkBefore [
-    # Physical rescue UARTs have explicit getty units in their board modules.
-    # Do not create another serial getty for the early UART0 kernel console.
-    "systemd.getty_auto=no"
-    "console=ttyGS0,115200"
-    "riscv.fwsz=0x80000"
-  ];
+  boot.kernelParams = lib.mkBefore (
+    [
+      # Physical rescue UARTs have explicit getty units in their board modules.
+      # Do not create another serial getty for the early UART0 kernel console.
+      "systemd.getty_auto=no"
+    ]
+    ++ lib.optional (config.sg2002.consoleDevice != "ttyGS0") "console=ttyGS0,115200"
+    ++ ["riscv.fwsz=0x80000"]
+  );
 
   # Kernel logs still reach ACM, but an agetty adds another open/close racing
   # PID 1's console teardown. SSH and the physical UART provide logins.

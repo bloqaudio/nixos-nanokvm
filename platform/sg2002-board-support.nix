@@ -72,6 +72,12 @@ in {
       description = "Whether this carrier exposes UART1 as a physical rescue console.";
     };
 
+    consoleDevice = mkOption {
+      type = types.enum ["ttyS0" "ttyS1" "ttyGS0"];
+      default = "ttyS0";
+      description = "Final kernel console device used as /dev/console.";
+    };
+
     fdt = mkOption {
       type = types.path;
       description = ''

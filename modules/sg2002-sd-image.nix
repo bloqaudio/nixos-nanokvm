@@ -36,9 +36,19 @@
   diskDevice = config.disko.devices.disk.sg2002-sd.device;
   firmwarePart = partitionDevice diskDevice 1;
   rootPart = partitionDevice diskDevice 2;
-  targetExtlinuxBuilder = import "${pkgs.path}/nixos/modules/system/boot/loader/generic-extlinux-compatible/extlinux-conf-builder.nix" {
+  upstreamExtlinuxBuilder = import "${pkgs.path}/nixos/modules/system/boot/loader/generic-extlinux-compatible/extlinux-conf-builder.nix" {
     inherit lib pkgs;
   };
+  # The generic builder's plain `cp` may use Btrfs copy_file_range and retain
+  # a Nix-store file's shared, fragmented extent map. U-Boot's Btrfs reader is
+  # much less exercised than Linux's; make boot payloads independent copies so
+  # the root mount's compression policy can lay them out compactly.
+  targetExtlinuxBuilder = pkgs.runCommand "sg2002-extlinux-conf-builder" {} ''
+    cp ${upstreamExtlinuxBuilder} "$out"
+    substituteInPlace "$out" \
+      --replace-fail 'cp -r $src $dstTmp' 'cp --reflink=never -r $src $dstTmp'
+    chmod +x "$out"
+  '';
   targetExtlinuxBuilderArgs =
     "-g ${toString config.boot.loader.generic-extlinux-compatible.configurationLimit} "
     + "-t ${if config.boot.loader.timeout == null then "-1" else toString config.boot.loader.timeout}"
@@ -104,6 +114,18 @@
       echo "warning: /firmware is not mounted; fip.bin was not installed" >&2
     fi
   '';
+  rootPartitionNeedsGrowth = pkgs.writeShellScript "sg2002-root-partition-needs-growth" ''
+    set -eu
+
+    disk_sectors="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0/size)"
+    part_start="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0p2/start)"
+    part_sectors="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0p2/size)"
+
+    # ExecCondition succeeds only while more than 1 MiB remains after p2.
+    # Once the image has consumed the card, skip cloud-utils growpart before
+    # it takes an exclusive whole-device lock and waits for udev on every boot.
+    test "$((part_start + part_sectors + 2048))" -lt "$disk_sectors"
+  '';
   sdImage = pkgs.runCommand "${imageName}-${config.system.nixos.label}" {} ''
     mkdir -p "$out/sd-image" "$out/nix-support"
     ln -s ${config.system.build.diskoImages}/${imageName}.raw \
@@ -139,11 +161,15 @@ in {
         "rootwait"
         "rw"
         "rootfstype=btrfs"
-        "console=ttyS0,115200"
+        "console=${config.sg2002.consoleDevice},115200"
         "earlycon=sbi"
         "ignore_loglevel"
       ];
     };
+
+    systemd.services.growpart.serviceConfig.ExecCondition = [
+      rootPartitionNeedsGrowth
+    ];
 
     disko = {
       # The legacy `table` backend is required here because the SG2002 ROM
@@ -198,6 +224,7 @@ in {
           device = "/dev/disk/by-label/${rootLabel}";
           mountOptions = [
             "noatime"
+            "compress=zstd:3"
           ];
         };
         "/firmware" = {
@@ -216,6 +243,7 @@ in {
         fsType = "btrfs";
         options = [
           "noatime"
+          "compress=zstd:3"
         ];
         neededForBoot = true;
         autoResize = true;
