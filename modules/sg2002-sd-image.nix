@@ -44,6 +44,9 @@
     + "-t ${if config.boot.loader.timeout == null then "-1" else toString config.boot.loader.timeout}"
     + lib.optionalString (config.hardware.deviceTree.name != null) " -n ${config.hardware.deviceTree.name}"
     + lib.optionalString (!config.boot.loader.generic-extlinux-compatible.useGenerationDeviceTree) " -r";
+  # Sipeed's BootROM-known-good images use FAT16 for this small boot
+  # volume. Forcing FAT32 on 16 MiB creates only ~32k clusters, below
+  # FAT32's specified 65525 minimum and unsafe for strict readers.
   formatSg2002Filesystems = pkgs.writeShellApplication {
     name = "format-sg2002-sd-filesystems";
     text = ''
@@ -62,7 +65,7 @@
         done
       done
 
-      ${imageBuilderPkgs.dosfstools}/bin/mkfs.vfat -F 32 -n ${firmwareLabel} "${firmwarePart}"
+      ${imageBuilderPkgs.dosfstools}/bin/mkfs.vfat -F 16 -n ${firmwareLabel} "${firmwarePart}"
       ${imageBuilderPkgs.btrfs-progs}/bin/mkfs.btrfs -f -L ${rootLabel} "${rootPart}"
 
       ${imageBuilderPkgs.systemdMinimal}/bin/udevadm trigger --subsystem-match=block || true
@@ -170,6 +173,9 @@ in {
             {
               name = "firmware";
               part-type = "primary";
+              # Keep the vendor image's MBR type 0x0c even though the volume
+              # itself is FAT16; the BootROM-known-good image uses this exact
+              # combination.
               fs-type = "fat32";
               start = "1s";
               end = "32768s";
