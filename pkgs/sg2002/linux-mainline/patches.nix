@@ -146,6 +146,10 @@ let
       name = "media-coda-preserve-coda980-sps-setup-with-crop";
       patch = ./patches/0030-media-coda-preserve-Coda980-SPS-setup-with-crop.patch;
     })
+    (patch {
+      name = "media-sophgo-tighten-sg2002-csi-interrupt-handling";
+      patch = ./patches/0031-media-sophgo-tighten-SG2002-CSI-interrupt-handling.patch;
+    })
   ];
 
   meta = {
@@ -421,6 +425,16 @@ let
       upstreamStatus = "draft";
       dropWhen = "Folded into the Coda980 support patch before submission";
       notes = "Keeps 1080p frame-crop flags from bypassing the Coda980 extended SPS register setup.";
+    };
+    "media-sophgo-tighten-sg2002-csi-interrupt-handling" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Enables only the VI completion interrupt consumed by the driver,
+        exposes the five documented CSI MAC error causes, clears sticky CSI
+        bridge status between streams, and names the direct-YUV route bits.
+      '';
     };
   };
 in
