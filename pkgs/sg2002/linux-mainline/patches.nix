@@ -170,6 +170,14 @@ let
       name = "dt-bindings-media-document-sg2002-csi-capture";
       patch = ./patches/0036-dt-bindings-media-document-SG2002-CSI-capture.patch;
     })
+    (patch {
+      name = "media-sophgo-harden-sg2002-csi-stream-teardown";
+      patch = ./patches/0037-media-sophgo-harden-SG2002-CSI-stream-teardown.patch;
+    })
+    (patch {
+      name = "media-i2c-lt6911uxe-poll-uxc-while-streaming";
+      patch = ./patches/0038-media-i2c-lt6911uxe-poll-UXC-while-streaming.patch;
+    })
   ];
 
   meta = {
@@ -483,6 +491,26 @@ let
       notes = ''
         Removes diagnostic partial-stage module parameters and the one-shot
         MMIO dump now that the full CSI-to-DMA6 path is hardware-tested.
+      '';
+    };
+    "media-sophgo-harden-sg2002-csi-stream-teardown" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Quiesces DMA and wakes VB2 on fatal link errors or source changes,
+        serializes async source lifetime against stream teardown, and releases
+        active queues before notifier and device resources disappear.
+      '';
+    };
+    "media-i2c-lt6911uxe-poll-uxc-while-streaming" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the LT6911UXC support series before submission";
+      notes = ''
+        Polls the HPD-less UXC once per second only while streaming, emits one
+        event for each detected transition, and preserves ENOLINK plus safe
+        work, runtime-PM, active-state, and stream lifetime ordering.
       '';
     };
     "dt-bindings-media-document-sg2002-csi-capture" = {
