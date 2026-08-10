@@ -56,13 +56,13 @@
 		ranges;
 
 		video_pool: video-pool@86800000 {
-			/* 24 MiB for the 540p production pipeline (~17.6 MiB
-			 * simultaneous worst case). The 48 MiB 1080p-capable
-			 * variant wedges boot on this 256 MiB board; 1080p full
-			 * returns once the boot memory budget is fixed. */
+			/* 48 MiB covers the full-1080p simultaneous worst case
+			 * (~38 MiB). The budget closes because this node no
+			 * longer preserves the ~88 MiB initramfs ramfs (fleet
+			 * disables the USB gadget). */
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0x86800000 0x1800000>; /* 24 MiB */
+			reg = <0x86800000 0x3000000>; /* 48 MiB */
 		};
 	};
 };
