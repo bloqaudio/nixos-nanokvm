@@ -575,6 +575,7 @@
             nanokvm-web
             nbd-client-minimal
             sg2002-fip-mainline-fastboot
+            sg2002-h264-bridge
             sg2002-usb-boot
             sg2002-uboot-mainline-fastboot
             spacemit-k3-fsbl

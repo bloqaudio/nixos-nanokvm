@@ -337,6 +337,7 @@ in
   sg2002-boot-fit = final.callPackage ./sg2002/boot-fit { };
 
   picoclaw-lcd-test = final.callPackage ./sg2002/picoclaw-lcd-test { };
+  sg2002-h264-bridge = final.callPackage ./sg2002/h264-bridge { };
 
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;

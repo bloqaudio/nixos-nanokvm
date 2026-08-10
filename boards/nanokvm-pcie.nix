@@ -74,6 +74,9 @@
   hardware.firmware = lib.optionals (config.sg2002.kernel == "mainline") [
     pkgs.sg2002-coda980-firmware
   ];
+  environment.systemPackages = lib.optionals (config.sg2002.kernel == "mainline") [
+    pkgs.sg2002-h264-bridge
+  ];
   boot.kernelModules = lib.optionals (config.sg2002.kernel == "mainline") [
     "coda-vpu"
   ];
