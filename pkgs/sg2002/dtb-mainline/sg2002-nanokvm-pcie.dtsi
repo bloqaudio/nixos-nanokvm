@@ -56,14 +56,13 @@
 		ranges;
 
 		video_pool: video-pool@86800000 {
-			/* Re-enabled for step 2: the rollback loop that
-			 * sidelined this was the network-dependent bless
-			 * check, not the carveout. Without the pool, Coda's
-			 * reconstruction allocations hit the colonized
-			 * default CMA and fail ENOMEM within minutes. */
+			/* 24 MiB for the 540p production pipeline (~17.6 MiB
+			 * simultaneous worst case). The 48 MiB 1080p-capable
+			 * variant wedges boot on this 256 MiB board; 1080p full
+			 * returns once the boot memory budget is fixed. */
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0x86800000 0x3000000>; /* 48 MiB */
+			reg = <0x86800000 0x1800000>; /* 24 MiB */
 		};
 	};
 };
