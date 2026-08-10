@@ -198,6 +198,24 @@ in {
           "aic8800_fdrv"
           "aic8800_btlpm"
         ];
+      # systemd-modules-load remains active across switch-root and therefore
+      # does not replay boot.kernelModules in stage 2.  A pruned SD initrd must
+      # carry and load the WiFi stack itself; otherwise /dev/rfkill and wlan0
+      # never appear and the hardened wpa_supplicant unit cannot start.
+      sg2002.initrd.availableKernelModules = lib.optionals
+        (cfg.kernel == "mainline" && cfg.wifi.enable) [
+          "rfkill"
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
+      sg2002.initrd.kernelModules = lib.optionals
+        (cfg.kernel == "mainline" && cfg.wifi.enable) [
+          "rfkill"
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
 
       # The aicbsp driver opens /lib/firmware/... directly via
