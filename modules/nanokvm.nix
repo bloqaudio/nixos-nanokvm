@@ -1,5 +1,6 @@
 { config
 , lib
+, options
 , pkgs
 , ...
 }:
@@ -21,14 +22,22 @@ let
   # actual cv181x device running the vendor 5.10 kernel: the binary is
   # riscv64-musl, the sysfs gpio numbers (451/502..505) are the vendor
   # kernel's numbering, and the soph_* capture stack it babysits is
-  # vendor-only. `config.sg2002 or` so the module still evaluates on
-  # deployments (Rock-5B, dev hosts) that don't import the sg2002
-  # platform module at all.
+  # vendor-only. Probe `options`, not `config`: an attr-existence probe
+  # on `config` (`config.sg2002... or ...`) forces every config
+  # definition under the post-25.11 module system — including the
+  # optionalAttrs block below that is conditioned on this very probe —
+  # which is an infinite recursion on hosts (Rock-5B, dev hosts) that
+  # don't import the sg2002 platform module at all. `options` keys come
+  # from declarations only, so the probe is cycle-free; the && chain
+  # short-circuits before `config.sg2002` is touched when absent.
+  hasSg2002Options = options ? sg2002;
   onVendorKernelDevice =
-    ((config.sg2002.kernel or null) == "vendor")
+    hasSg2002Options
+    && ((config.sg2002.kernel or null) == "vendor")
     && pkgs.stdenv.hostPlatform.isRiscV64;
   usesSg2002Stage2Gadget =
-    (config.sg2002.usbGadget.stage2.enable or false)
+    hasSg2002Options
+    && (config.sg2002.usbGadget.stage2.enable or false)
     && !cfg.usbGadget.enable;
 
   serverConfig = yaml.generate "nanokvm-server.yaml" {
