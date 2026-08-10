@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Mon, 10 Aug 2026 22:30:00 +0200
+Subject: [PATCH] media: bind reserved-memory pools to SG2002 media devices
+
+The NanoKVM-PCIe board dtsi assigns a 24-48 MiB no-map shared-dma-pool
+to the Coda980 encoder, the CSI capture driver, and the VPSS scaler
+via memory-region. Neither of_dma_configure() nor vb2 binds a plain
+shared-dma-pool automatically on RISC-V (of_dma_set_restricted_buffer
+only handles "restricted-dma-pool" when CONFIG_DMA_RESTRICTED_POOL is
+set), so all three devices kept allocating from the default CMA and
+their multi-MiB coherent allocations failed with ENOMEM under its
+movable-page colonization.
+
+Call of_reserved_mem_device_init() in probe (harmless -ENODEV where a
+node carries no memory-region) and the matching release on remove,
+matching the mali-c55/aspeed/mtk-vpu/npcm/s5p-mfc/snps-hdmirx idiom.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 6f4f49dd0..c88f6ec90 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -22,6 +22,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
++#include <linux/of_reserved_mem.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/slab.h>
+@@ -3440,6 +3441,12 @@ static int coda_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 
+ 	dev->dev = &pdev->dev;
++
++	ret = of_reserved_mem_device_init(&pdev->dev);
++	if (ret && ret != -ENODEV)
++		dev_warn(&pdev->dev, "failed to initialize reserved memory: %d\n",
++			 ret);
++
+ 	if (dev->devtype->requires_firmware_name) {
+ 		ret = of_property_read_string(np, "firmware-name", &firmware_name);
+ 		if (ret) {
+@@ -3628,6 +3635,8 @@ static void coda_remove(struct platform_device *pdev)
+ 	struct coda_dev *dev = platform_get_drvdata(pdev);
+ 	int i;
+ 
++	of_reserved_mem_device_release(&pdev->dev);
++
+ 	for (i = 0; i < ARRAY_SIZE(dev->vfd); i++) {
+ 		if (video_get_drvdata(&dev->vfd[i]))
+ 			video_unregister_device(&dev->vfd[i]);
+-- 
+2.54.0
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+index 15cb18339..4a5ab6d18 100644
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -17,6 +17,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/of_reserved_mem.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+@@ -1315,6 +1316,11 @@ static int sg2002_probe(struct platform_device *pdev)
+ 	if (!cap)
+ 		return -ENOMEM;
+ 
++	ret = of_reserved_mem_device_init(&pdev->dev);
++	if (ret && ret != -ENODEV)
++		dev_warn(&pdev->dev, "failed to initialize reserved memory: %d\n",
++			 ret);
++
+ 	cap->dev = &pdev->dev;
+ 	platform_set_drvdata(pdev, cap);
+ 
+@@ -1397,6 +1403,8 @@ static void sg2002_remove(struct platform_device *pdev)
+ {
+ 	struct sg2002_capture *cap = platform_get_drvdata(pdev);
+ 
++	of_reserved_mem_device_release(&pdev->dev);
++
+ 	mutex_lock(&cap->lock);
+ 	cap->removing = true;
+ 	if (cap->clocks_enabled)
+diff --git a/drivers/media/platform/sophgo/sg2002-vpss.c b/drivers/media/platform/sophgo/sg2002-vpss.c
+index 35165fbaf..ddffae6da 100644
+--- a/drivers/media/platform/sophgo/sg2002-vpss.c
++++ b/drivers/media/platform/sophgo/sg2002-vpss.c
+@@ -26,6 +26,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
++#include <linux/of_reserved_mem.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+@@ -934,6 +935,11 @@ static int vpss_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_m2m;
+ 
++	ret = of_reserved_mem_device_init(&pdev->dev);
++	if (ret && ret != -ENODEV)
++		dev_warn(&pdev->dev, "failed to initialize reserved memory: %d\n",
++			 ret);
++
+ 	pm_runtime_enable(&pdev->dev);
+ 
+ 	dev_info(&pdev->dev, "registered as /dev/video%d\n", vfd->num);
+@@ -950,6 +956,8 @@ static void vpss_remove(struct platform_device *pdev)
+ {
+ 	struct vpss_dev *vpss = platform_get_drvdata(pdev);
+ 
++	of_reserved_mem_device_release(&pdev->dev);
++
+ 	pm_runtime_disable(&pdev->dev);
+ 	video_unregister_device(&vpss->vfd);
+ 	v4l2_m2m_release(vpss->m2m_dev);
+-- 
+2.54.0
+

@@ -198,6 +198,10 @@ let
       name = "riscv-dts-sophgo-add-sg2002-vpss-node";
       patch = ./patches/0046-riscv-dts-sophgo-add-SG2002-VPSS-node.patch;
     })
+    (patch {
+      name = "media-bind-reserved-memory-pools-to-sg2002-media-devices";
+      patch = ./patches/0047-media-bind-reserved-memory-pools-to-SG2002-media-devices.patch;
+    })
   ];
 
   meta = {
@@ -552,6 +556,17 @@ let
         linear-raster buffers, so the tile walker scrambled the source fetch
         (12.6 dB PSNR, vertical stripes). Linear map measures 43.2 dB direct,
         matching the staged NV21 control. Replaces the 0040 NV12 withdrawal.
+      '';
+    };
+    "media-bind-reserved-memory-pools-to-sg2002-media-devices" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the respective driver submissions upstream";
+      notes = ''
+        of_dma_configure() only binds "restricted-dma-pool" on this path, so
+        the board's shared-dma-pool was never assigned and all three media
+        devices kept hitting the colonized default CMA. Probe/remove calls
+        bind video-pool@86800000 to coda, sg2002-capture and sg2002-vpss.
       '';
     };
     "dt-bindings-media-document-sg2002-csi-capture" = {
