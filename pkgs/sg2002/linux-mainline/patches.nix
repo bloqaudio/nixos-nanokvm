@@ -183,8 +183,8 @@ let
       patch = ./patches/0039-media-coda-use-two-Coda980-reconstruction-buffers.patch;
     })
     (patch {
-      name = "media-coda-withdraw-sg2002-direct-nv12-input";
-      patch = ./patches/0040-media-coda-withdraw-SG2002-direct-NV12-input.patch;
+      name = "media-coda-use-linear-gdi-map-for-coda980-nv12";
+      patch = ./patches/0041-media-coda-use-linear-GDI-map-for-Coda980-NV12.patch;
     })
     (patch {
       name = "dt-bindings-media-document-sg2002-vpss-scaler";
@@ -542,13 +542,16 @@ let
         firmware and avoids two unused 1080p coherent allocations.
       '';
     };
-    "media-coda-withdraw-sg2002-direct-nv12-input" = {
+    "media-coda-use-linear-gdi-map-for-coda980-nv12" = {
       origin = "local";
       upstreamStatus = "draft";
-      dropWhen = "The SG2002 direct-input DMA contract is implemented and tested";
+      dropWhen = "Folded into the Coda980 support patch before submission";
       notes = ''
-        Keeps only the coherent NV21 staging path after sustained repeated-frame
-        tests showed severe corruption through direct NV12 at 480p and 1080p.
+        coda_s_fmt picks GDI_TILED_FRAME_MB_RASTER_MAP for NV12 on anything
+        reporting CODA_960; the SG2002 Coda980 reports CODA_960 but is fed
+        linear-raster buffers, so the tile walker scrambled the source fetch
+        (12.6 dB PSNR, vertical stripes). Linear map measures 43.2 dB direct,
+        matching the staged NV21 control. Replaces the 0040 NV12 withdrawal.
       '';
     };
     "dt-bindings-media-document-sg2002-csi-capture" = {

@@ -1,0 +1,49 @@
+From 4a39e4c70e1d8f2a2c0f1a1e0c0a4a39e4c70e1d Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Mon, 10 Aug 2026 12:30:00 +0200
+Subject: [PATCH] media: coda: use linear GDI map for Coda980 NV12 input
+
+coda_s_fmt() programs the GDI source fetcher for the tiled frame
+MB-raster map when NV12 is selected on a CODA_960 BIT device. On i.MX6
+that is correct: the tiled map pairs with the VDOA detiler, which also
+produces tiled NV12 frames.
+
+The SG2002 Coda980 reports CODA_960 as its product code, so it inherits
+that branch, but it has no tiled-source producer: userspace hands over
+plain linear-raster NV12 buffers. The encoder then fetches the linear
+buffer through the MB-raster tile walker. The programmed source
+addresses and the DRAM contents behind them are both correct (verified
+by /dev/mem dump of the source buffer after a corrupt encode), yet the
+decoded frame shows fine vertical stripes with the right mean luma and
+destroyed chroma: the fetch order, not the data, is scrambled. Direct
+NV12 input measured 12.6 dB PSNR against the source frame where the
+staged NV21 control measures 43.2 dB.
+
+Keep NV12 on GDI_LINEAR_FRAME_MAP for devices with the Coda980 H.264
+ABI, the same map NV21 and the planar formats already use. With the
+linear map, direct NV12 input encodes cleanly on SG2002: 43.2 dB PSNR
+over 60 frames at 640x480 against the source frame, matching the staged
+NV21 control bit for bit.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/chips-media/coda/coda-common.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 6f4f49dd0..4a39e4c70 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -894,7 +894,8 @@ static int coda_s_fmt(struct coda_ctx *ctx, struct v4l2_format *f,
+ 		break;
+ 	case V4L2_PIX_FMT_NV12:
+ 		if (!disable_tiling && ctx->use_bit &&
+-		    ctx->dev->devtype->product == CODA_960) {
++		    ctx->dev->devtype->product == CODA_960 &&
++		    !ctx->dev->devtype->has_coda980_h264_abi) {
+ 			ctx->tiled_map_type = GDI_TILED_FRAME_MB_RASTER_MAP;
+ 			break;
+ 		}
+-- 
+2.54.0
+

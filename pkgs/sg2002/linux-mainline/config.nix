@@ -381,9 +381,10 @@ with lib.kernel; {
   VIDEO_LT6911UXE = yes;
   VIDEO_SOPHGO_SG2002_CSI = yes;
   VIDEOBUF2_DMA_CONTIG = yes;
-  # Coda980 is a stateful mem2mem H.264 encoder. The SG2002 path currently
-  # exposes only NV21 and copies it into a coherent NV12 staging buffer;
-  # direct NV12 remains withdrawn until its source-address contract is fixed.
+  # Coda980 is a stateful mem2mem H.264 encoder. The SG2002 path accepts
+  # direct linear NV12 input (the corruption was the CODA_960 tiled GDI
+  # map, not addressing or coherency) and stages NV21 through a coherent
+  # buffer for chroma-order conversion.
   DMA_SHARED_BUFFER = yes;
   # System dma-heap: lets the userspace bridge CPU-convert into CACHED
   # memory and hand it to Coda as an imported DMA-BUF with explicit
