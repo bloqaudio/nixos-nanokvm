@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Mon, 10 Aug 2026 12:00:00 +0200
+Subject: [PATCH 0046] riscv: dts: sophgo: add SG2002 VPSS scaler node
+
+Add the VIP scaler/CSC block ("VPSS") at 0x0a080000 with its shared
+interrupt (PLIC 25, i.e. SOC_PERIPHERAL_IRQ(9)) and the six clocks the
+mem2mem driver needs: the VIP sys muxes plus the IMG_IN_V, SC_TOP and
+SC_V1 gates. Disabled by default; boards opt in.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+diff --git a/arch/riscv/boot/dts/sophgo/sg2002.dtsi b/arch/riscv/boot/dts/sophgo/sg2002.dtsi
+--- a/arch/riscv/boot/dts/sophgo/sg2002.dtsi
++++ b/arch/riscv/boot/dts/sophgo/sg2002.dtsi
+@@ -38,3 +38,17 @@
+ 		};
+ 
++
++		vpss: vpss@a080000 {
++			compatible = "sophgo,sg2002-vpss";
++			reg = <0x0 0x0a080000 0x0 0x10000>;
++			interrupts = <SOC_PERIPHERAL_IRQ(9) IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clk CLK_SRC_VIP_SYS_0>,
++				 <&clk CLK_SRC_VIP_SYS_1>,
++				 <&clk CLK_SRC_VIP_SYS_2>,
++				 <&clk CLK_IMG_V_VIP>,
++				 <&clk CLK_SC_TOP_VIP>,
++				 <&clk CLK_SC_V1_VIP>;
++			clock-names = "sys0", "sys1", "sys2", "img_v", "sc_top", "sc_v1";
++			status = "disabled";
++		};
+ 		vcodec: video-codec@b030000 {

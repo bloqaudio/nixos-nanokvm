@@ -186,6 +186,18 @@ let
       name = "media-coda-withdraw-sg2002-direct-nv12-input";
       patch = ./patches/0040-media-coda-withdraw-SG2002-direct-NV12-input.patch;
     })
+    (patch {
+      name = "dt-bindings-media-document-sg2002-vpss-scaler";
+      patch = ./patches/0044-dt-bindings-media-document-SG2002-VPSS-scaler.patch;
+    })
+    (patch {
+      name = "media-sophgo-add-sg2002-vpss-scaler-driver";
+      patch = ./patches/0045-media-sophgo-add-SG2002-VPSS-scaler-driver.patch;
+    })
+    (patch {
+      name = "riscv-dts-sophgo-add-sg2002-vpss-node";
+      patch = ./patches/0046-riscv-dts-sophgo-add-SG2002-VPSS-node.patch;
+    })
   ];
 
   meta = {
@@ -547,6 +559,37 @@ let
         Documents the current monolithic CSI MAC, wrapper, VI and VIP system
         resource contract, including the NanoKVM four-lane D-PHY endpoint and
         named CSI PHY reset lines.
+      '';
+    };
+    "dt-bindings-media-document-sg2002-vpss-scaler" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 VPSS scaler binding is accepted upstream";
+      notes = ''
+        Documents the mem2mem subset of the VIP scaler/CSC block: one
+        register window, the shared PLIC interrupt, and the six clocks
+        for IMG_IN_V + SC_TOP + SC_V1.
+      '';
+    };
+    "media-sophgo-add-sg2002-vpss-scaler-driver" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The SG2002 VPSS mem2mem driver is accepted upstream";
+      notes = ''
+        UYVY/YUYV/NV12/NV21 in, NV12/NV21 out, 1:1 or up to 4x downscale
+        via IMG_IN_V + SC_V1. Programming sequence implemented from the
+        vendor register map (see vpss-driver-20260810 archaeology); no
+        vendor driver code reused. Bicubic coefficients generated from
+        the standard Keys kernel (a=-0.5), identity set used at 1:1.
+      '';
+    };
+    "riscv-dts-sophgo-add-sg2002-vpss-node" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 VPSS node is accepted upstream";
+      notes = ''
+        VPSS window 0x0a080000, PLIC 25 (SOC_PERIPHERAL_IRQ(9)), VIP sys
+        muxes + IMG_IN_V/SC_TOP/SC_V1 gates. Disabled by default.
       '';
     };
     "dt-bindings-reset-add-sg2002-csi-phy-resets" = {

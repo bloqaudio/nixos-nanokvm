@@ -393,6 +393,7 @@ with lib.kernel; {
   DMABUF_HEAPS_SYSTEM = yes;
   V4L_MEM2MEM_DRIVERS = yes;
   VIDEO_CODA = module;
+  VIDEO_SOPHGO_SG2002_VPSS = module;
   # The generic Cadence receiver is a separate IP block. SG2002 capture uses
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;

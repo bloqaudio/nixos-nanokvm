@@ -267,6 +267,25 @@
 		};
 	};
 
+	/* The VIP scaler/CSC block ("VPSS") at 0x0a080000, driven as a
+	 * mem2mem device (IMG_IN_V + SC_V1) by the sophgo,sg2002-vpss
+	 * driver.  Vendor DTS numbers the shared interrupt PLIC source 25,
+	 * i.e. SOC_PERIPHERAL_IRQ(9) after the 16 core-local IDs. */
+	vpss: vpss@a080000 {
+		compatible = "sophgo,sg2002-vpss";
+		reg = <0x0 0x0a080000 0x0 0x10000>;
+		interrupts = <SOC_PERIPHERAL_IRQ(9) IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&clk CLK_SRC_VIP_SYS_0>,
+			 <&clk CLK_SRC_VIP_SYS_1>,
+			 <&clk CLK_SRC_VIP_SYS_2>,
+			 <&clk CLK_IMG_V_VIP>,
+			 <&clk CLK_SC_TOP_VIP>,
+			 <&clk CLK_SC_V1_VIP>;
+		clock-names = "sys0", "sys1", "sys2", "img_v", "sc_top", "sc_v1";
+		memory-region = <&video_pool>;
+		status = "okay";
+	};
+
 	/* The factory NanoKVM route is CSI MAC0 -> CSIBDG0 -> DMA6.  Keep
 	 * this single-purpose until the wider SG2002 media pipeline has a
 	 * complete upstream binding and driver split. */
