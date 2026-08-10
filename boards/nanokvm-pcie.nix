@@ -79,9 +79,9 @@
   ];
   boot.kernelModules = lib.optionals (config.sg2002.kernel == "mainline") [
     "coda-vpu"
-    # VPSS scaler/CSC m2m (UYVY->NV12 in hardware). Loaded at boot so the
-    # probe result is in dmesg; validation streaming happens on demand.
-    "sg2002-vpss"
+    # VPSS scaler stays manual (modprobe sg2002-vpss) until it is
+    # hardware-validated — an unproven probe must not gate boot on this
+    # 256 MiB board.
   ];
   systemd.tmpfiles.rules = lib.optionals (config.sg2002.kernel == "mainline") [
     "L+ /lib/firmware - - - - /run/current-system/firmware"

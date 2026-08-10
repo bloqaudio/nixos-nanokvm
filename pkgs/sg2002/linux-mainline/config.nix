@@ -399,16 +399,14 @@ with lib.kernel; {
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;
 
-  # CSI capture and Coda980 encode allocate from a dedicated 48 MiB
-  # no-map shared-dma-pool in the NanoKVM-PCIe board dtsi
-  # (video-pool@86800000, ~38 MiB measured worst case) — a carveout the
-  # page allocator cannot colonize, unlike the previous 48 MiB default
-  # CMA which was fully consumed by movable pages minutes after boot.
-  # The system-wide default CMA only serves small coherent users (SDIO,
-  # GMAC), so it shrinks from 48 to 16 MiB.
+  # Two-step media memory plan: step 1 (current) keeps the 48 MiB default
+  # CMA — fully movable-colonized minutes after boot on this 256 MiB
+  # board, but boot-safe. Step 2 flips the dtsi video-pool@86800000 to
+  # status="okay" (48 MiB no-map carveout for the media nodes) and drops
+  # this to 16 MiB, once the base deploy is proven.
   CMA = yes;
   DMA_CMA = yes;
-  CMA_SIZE_MBYTES = freeform "16";
+  CMA_SIZE_MBYTES = freeform "48";
   CMA_SIZE_SEL_MBYTES = yes;
   CMA_SIZE_SEL_PERCENTAGE = no;
   CMA_SYSFS = yes;
