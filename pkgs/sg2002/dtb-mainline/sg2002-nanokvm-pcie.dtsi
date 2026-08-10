@@ -56,11 +56,11 @@
 		ranges;
 
 		video_pool: video-pool@86800000 {
-			/* Step-down: disabled for the first deploy — the 48 MiB no-map
-			 * carveout is suspected of wedging boot on this 256 MiB board
-			 * (services timing out en masse). Re-enable together with the
-			 * memory-region references once the base deploy is proven. */
-			status = "disabled";
+			/* Re-enabled for step 2: the rollback loop that
+			 * sidelined this was the network-dependent bless
+			 * check, not the carveout. Without the pool, Coda's
+			 * reconstruction allocations hit the colonized
+			 * default CMA and fail ENOMEM within minutes. */
 			compatible = "shared-dma-pool";
 			no-map;
 			reg = <0x86800000 0x3000000>; /* 48 MiB */
@@ -84,6 +84,7 @@
 			      "h264c", "apb-h264c";
 		resets = <&rst RST_H264C>;
 		firmware-name = "sophgo/sg2002/coda980.bin";
+		memory-region = <&video_pool>;
 		status = "okay";
 	};
 };
@@ -290,6 +291,7 @@
 			 <&clk CLK_SC_TOP_VIP>,
 			 <&clk CLK_SC_V1_VIP>;
 		clock-names = "sys0", "sys1", "sys2", "img_v", "sc_top", "sc_v1";
+		memory-region = <&video_pool>;
 		status = "okay";
 	};
 
@@ -332,6 +334,7 @@
 		resets = <&rst RST_CSI_PHY0>, <&rst RST_CSI_PHY0_APB>;
 		reset-names = "csi-phy", "csi-phy-apb";
 		sophgo,ddr-top = <&ddr_top>;
+		memory-region = <&video_pool>;
 
 		port {
 			sg2002_csi_in: endpoint {

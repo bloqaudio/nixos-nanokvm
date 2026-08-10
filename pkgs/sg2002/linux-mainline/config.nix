@@ -403,14 +403,14 @@ with lib.kernel; {
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;
 
-  # Two-step media memory plan: step 1 (current) keeps the 48 MiB default
-  # CMA — fully movable-colonized minutes after boot on this 256 MiB
-  # board, but boot-safe. Step 2 flips the dtsi video-pool@86800000 to
-  # status="okay" (48 MiB no-map carveout for the media nodes) and drops
-  # this to 16 MiB, once the base deploy is proven.
+  # Step 2 (current): the dtsi video-pool@86800000 (48 MiB no-map
+  # shared-dma-pool) serves CSI capture + Coda980 + VPSS — a carveout the
+  # page allocator cannot colonize. The default CMA keeps only small
+  # coherent users (SDIO, GMAC), so 16 MiB suffices and returns RAM the
+  # 256 MiB boot budget needs.
   CMA = yes;
   DMA_CMA = yes;
-  CMA_SIZE_MBYTES = freeform "48";
+  CMA_SIZE_MBYTES = freeform "16";
   CMA_SIZE_SEL_MBYTES = yes;
   CMA_SIZE_SEL_PERCENTAGE = no;
   CMA_SYSFS = yes;
