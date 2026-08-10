@@ -1,0 +1,38 @@
+From f63a545ddabfd86b657d07637094900ef8ef6ebd Mon Sep 17 00:00:00 2001
+From: Codex SG2002 port <codex@localhost>
+Date: Mon, 10 Aug 2026 02:38:07 +0200
+Subject: [PATCH 2/2] media: coda: withdraw SG2002 direct NV12 input
+
+The SG2002 Coda980 NV21 path copies the source into a driver-owned
+coherent staging buffer before encoding. NV12 bypasses that staging
+buffer and programs the source addresses from the user-provided video
+buffer directly.
+
+Direct NV12 input corrupts repeated encodes even at 640x480, where no
+macroblock-height padding is required. The direct Coda9 source path has
+no proven SG2002 source-address or coherency contract, so do not expose
+it until that contract is established.
+
+Keep the NV21 interface and its staging conversion, which avoids the
+unverified direct-input path.
+
+Signed-off-by: Codex SG2002 port <codex@localhost>
+---
+ drivers/media/platform/chips-media/coda/coda-common.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 6f4f49dd0..ed5a7772c 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -355,7 +355,6 @@ static const struct coda_video_device sg2002_coda980_encoder = {
+ 	.type = CODA_INST_ENCODER,
+ 	.ops = &coda_bit_encode_ops,
+ 	.src_formats = {
+-		V4L2_PIX_FMT_NV12,
+ 		V4L2_PIX_FMT_NV21,
+ 	},
+ 	.dst_formats = {
+-- 
+2.54.0
+

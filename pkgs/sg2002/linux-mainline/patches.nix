@@ -178,6 +178,14 @@ let
       name = "media-i2c-lt6911uxe-poll-uxc-while-streaming";
       patch = ./patches/0038-media-i2c-lt6911uxe-poll-UXC-while-streaming.patch;
     })
+    (patch {
+      name = "media-coda-use-two-coda980-reconstruction-buffers";
+      patch = ./patches/0039-media-coda-use-two-Coda980-reconstruction-buffers.patch;
+    })
+    (patch {
+      name = "media-coda-withdraw-sg2002-direct-nv12-input";
+      patch = ./patches/0040-media-coda-withdraw-SG2002-direct-NV12-input.patch;
+    })
   ];
 
   meta = {
@@ -511,6 +519,24 @@ let
         Polls the HPD-less UXC once per second only while streaming, emits one
         event for each detected transition, and preserves ENOLINK plus safe
         work, runtime-PM, active-state, and stream lifetime ordering.
+      '';
+    };
+    "media-coda-use-two-coda980-reconstruction-buffers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = ''
+        Matches the two reconstruction buffers registered with Coda980
+        firmware and avoids two unused 1080p coherent allocations.
+      '';
+    };
+    "media-coda-withdraw-sg2002-direct-nv12-input" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The SG2002 direct-input DMA contract is implemented and tested";
+      notes = ''
+        Keeps only the coherent NV21 staging path after sustained repeated-frame
+        tests showed severe corruption through direct NV12 at 480p and 1080p.
       '';
     };
     "dt-bindings-media-document-sg2002-csi-capture" = {

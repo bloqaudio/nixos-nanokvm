@@ -381,9 +381,9 @@ with lib.kernel; {
   VIDEO_LT6911UXE = yes;
   VIDEO_SOPHGO_SG2002_CSI = yes;
   VIDEOBUF2_DMA_CONTIG = yes;
-  # Coda980 is a stateful mem2mem H.264 encoder.  Its SG2002 path accepts
-  # direct NV12 DMA-BUF input and uses DMA-BUF CPU access only for NV21
-  # chroma-order conversion.
+  # Coda980 is a stateful mem2mem H.264 encoder. The SG2002 path currently
+  # exposes only NV21 and copies it into a coherent NV12 staging buffer;
+  # direct NV12 remains withdrawn until its source-address contract is fixed.
   DMA_SHARED_BUFFER = yes;
   V4L_MEM2MEM_DRIVERS = yes;
   VIDEO_CODA = module;
@@ -392,10 +392,10 @@ with lib.kernel; {
   VIDEO_CADENCE_CSI2RX = no;
 
   # CSI capture owns about 12 MiB for two 1080p UYVY buffers and its scratch
-  # frame.  A concurrent 1080p Coda encode needs another roughly 33 MiB for
-  # its common/work/slice/reconstruction/staging and vb2 buffers.  Reserve
-  # 48 MiB so both pipelines can run without depending on a pristine CMA
-  # layout after boot.
+  # frame. A concurrent 1080p Coda encode needs roughly 27 MiB after matching
+  # Coda980's two registered reconstruction buffers. Reserve 48 MiB; userspace
+  # should prime the encoder before allocating CSI buffers so the largest
+  # coherent surfaces are obtained before CMA becomes fragmented.
   CMA = yes;
   DMA_CMA = yes;
   CMA_SIZE_MBYTES = freeform "48";
