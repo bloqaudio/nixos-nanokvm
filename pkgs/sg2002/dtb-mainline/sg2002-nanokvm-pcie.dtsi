@@ -278,6 +278,10 @@
 	vpss: vpss@a080000 {
 		compatible = "sophgo,sg2002-vpss";
 		reg = <0x0a080000 0x10000>;
+		/* This node lives at the root of this overlay (next to
+		 * csi_capture), not under the SoC bus, so the plic parent
+		 * must be explicit — without it the IRQ lookup fails. */
+		interrupt-parent = <&plic>;
 		interrupts = <SOC_PERIPHERAL_IRQ(9) IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clk CLK_SRC_VIP_SYS_0>,
 			 <&clk CLK_SRC_VIP_SYS_1>,

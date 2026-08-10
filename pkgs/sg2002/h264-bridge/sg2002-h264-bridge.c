@@ -56,8 +56,10 @@
 #define DMA_HEAP_SYSTEM "/dev/dma_heap/system"
 /* vb2-dma-contig imports must be single-segment; the system heap can
  * hand a multi-segment 3 MiB buffer, so prefer the guaranteed-contiguous
- * CMA heap and fall back to system. */
-#define DMA_HEAP_CMA "/dev/dma_heap/linux,cma"
+ * CMA heaps (named default_cma_region in newer kernels, linux,cma in
+ * older ones) and fall back to system. */
+#define DMA_HEAP_CMA "/dev/dma_heap/default_cma_region"
+#define DMA_HEAP_CMA_OLD "/dev/dma_heap/linux,cma"
 
 #define RTP_MTU 1400
 #define RTP_PT 96
@@ -1168,6 +1170,10 @@ static int live_bridge(const struct bridge_options *opts)
 	if (use_dmabuf) {
 		init_step = "open " DMA_HEAP_CMA;
 		heap_fd = open(DMA_HEAP_CMA, O_RDONLY | O_CLOEXEC);
+		if (heap_fd < 0) {
+			init_step = "open " DMA_HEAP_CMA_OLD;
+			heap_fd = open(DMA_HEAP_CMA_OLD, O_RDONLY | O_CLOEXEC);
+		}
 		if (heap_fd < 0) {
 			init_step = "open " DMA_HEAP_SYSTEM;
 			heap_fd = open(DMA_HEAP_SYSTEM, O_RDONLY | O_CLOEXEC);
