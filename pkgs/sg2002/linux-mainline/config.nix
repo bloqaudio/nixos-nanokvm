@@ -385,20 +385,28 @@ with lib.kernel; {
   # exposes only NV21 and copies it into a coherent NV12 staging buffer;
   # direct NV12 remains withdrawn until its source-address contract is fixed.
   DMA_SHARED_BUFFER = yes;
+  # System dma-heap: lets the userspace bridge CPU-convert into CACHED
+  # memory and hand it to Coda as an imported DMA-BUF with explicit
+  # DMA_BUF_IOCTL_SYNC coherency brackets, instead of writing uncached
+  # vb2 dma-contig mappings (the dominant pipeline cost on this SoC).
+  DMABUF_HEAPS = yes;
+  DMABUF_HEAPS_SYSTEM = yes;
   V4L_MEM2MEM_DRIVERS = yes;
   VIDEO_CODA = module;
   # The generic Cadence receiver is a separate IP block. SG2002 capture uses
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;
 
-  # CSI capture owns about 12 MiB for two 1080p UYVY buffers and its scratch
-  # frame. A concurrent 1080p Coda encode needs roughly 27 MiB after matching
-  # Coda980's two registered reconstruction buffers. Reserve 48 MiB; userspace
-  # should prime the encoder before allocating CSI buffers so the largest
-  # coherent surfaces are obtained before CMA becomes fragmented.
+  # CSI capture and Coda980 encode allocate from a dedicated 48 MiB
+  # no-map shared-dma-pool in the NanoKVM-PCIe board dtsi
+  # (video-pool@86800000, ~38 MiB measured worst case) — a carveout the
+  # page allocator cannot colonize, unlike the previous 48 MiB default
+  # CMA which was fully consumed by movable pages minutes after boot.
+  # The system-wide default CMA only serves small coherent users (SDIO,
+  # GMAC), so it shrinks from 48 to 16 MiB.
   CMA = yes;
   DMA_CMA = yes;
-  CMA_SIZE_MBYTES = freeform "48";
+  CMA_SIZE_MBYTES = freeform "16";
   CMA_SIZE_SEL_MBYTES = yes;
   CMA_SIZE_SEL_PERCENTAGE = no;
   CMA_SYSFS = yes;

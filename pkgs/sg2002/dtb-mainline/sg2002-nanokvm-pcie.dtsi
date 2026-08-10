@@ -32,6 +32,37 @@
  * Keep the enabled bring-up instance here for the PCIe carrier; the matching
  * upstream-shaped SoC description in the kernel source remains disabled.
  */
+/*
+ * Deterministic DMA carveout for the 1080p capture+encode pipeline.
+ * Measured simultaneous worst case (live-1080p CSI capture + Coda980
+ * encode, two reconstruction buffers) is ~38 MiB:
+ *   CSI:      2 x 4.15 MiB frames + 4.15 MiB scratch
+ *   Coda980:  3.13 MiB NV21 staging, 3.2 MiB slice buffer,
+ *             2 x 3.13 MiB reconstruction, bitstream + firmware arena
+ * The pool is deliberately NOT `reusable`: a reusable region registers as
+ * CMA, which the page allocator fills with movable pages — on this
+ * 256 MiB board the 48 MiB default CMA is fully colonized minutes after
+ * boot and 4 MiB coherent allocations then fail with EBUSY. `no-map`
+ * keeps the pages out of the allocator entirely. CPU access still works:
+ * the coherent-pool mapping is established with memremap(MEMREMAP_WC),
+ * which the Coda driver needs for its staging and bitstream buffers.
+ * Placement sits just below the default-CMA window previous configs
+ * reserved at 0x89800000.
+ */
+/ {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		video_pool: video-pool@86800000 {
+			compatible = "shared-dma-pool";
+			no-map;
+			reg = <0x86800000 0x3000000>; /* 48 MiB */
+		};
+	};
+};
+
 &{/soc} {
 	video-codec@b030000 {
 		compatible = "sophgo,sg2002-coda980";
@@ -48,6 +79,7 @@
 			      "h264c", "apb-h264c";
 		resets = <&rst RST_H264C>;
 		firmware-name = "sophgo/sg2002/coda980.bin";
+		memory-region = <&video_pool>;
 		status = "okay";
 	};
 };
@@ -274,6 +306,7 @@
 		resets = <&rst RST_CSI_PHY0>, <&rst RST_CSI_PHY0_APB>;
 		reset-names = "csi-phy", "csi-phy-apb";
 		sophgo,ddr-top = <&ddr_top>;
+		memory-region = <&video_pool>;
 
 		port {
 			sg2002_csi_in: endpoint {
