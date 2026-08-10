@@ -432,13 +432,22 @@ in
       };
     }
 
-    # Appended via lib.optional rather than mkIf inside the merge: the
+    # Appended via lib.optionalAttrs on an options-only probe: the
     # post-25.11 module system rejects definitions of options that don't
     # exist even under `mkIf false`, and non-SG2002 consumers of this
     # module (Rock-5B's services/kvm.nix) declare no `sg2002` options.
-    (lib.optionalAttrs usesSg2002Stage2Gadget {
-      sg2002.usbGadget.network.controlFile = lib.mkDefault "/boot/usb.rndis0";
-      sg2002.usbGadget.stage2.reenumerateAfterBoot.enable = lib.mkDefault true;
+    # The guard must not probe `config.sg2002.*` values: that would force
+    # this namespace's definitions — including this block — while the
+    # module list is still being collected, an infinite recursion on
+    # SG2002 hosts. The stage2/compat conditions therefore move into
+    # per-assignment mkIf, which only runs at option-merge time.
+    (lib.optionalAttrs hasSg2002Options {
+      sg2002.usbGadget.network.controlFile = lib.mkIf
+        ((config.sg2002.usbGadget.stage2.enable or false) && !cfg.usbGadget.enable)
+        (lib.mkDefault "/boot/usb.rndis0");
+      sg2002.usbGadget.stage2.reenumerateAfterBoot.enable = lib.mkIf
+        ((config.sg2002.usbGadget.stage2.enable or false) && !cfg.usbGadget.enable)
+        (lib.mkDefault true);
     })
 
     (lib.mkIf cfg.kmods.enable {
