@@ -1,7 +1,7 @@
 From fec967d8642ed9cc294db20e9949f51b23bf4b97 Mon Sep 17 00:00:00 2001
 From: George Whewell <georgerw@gmail.com>
 Date: Mon, 10 Aug 2026 02:28:33 +0200
-Subject: [PATCH 1/2] media: coda: use two Coda980 reconstruction buffers
+Subject: [PATCH] media: coda: use two Coda980 reconstruction buffers
 
 Coda980 reuses the Coda9 command ABI, but its Coda960 product-model
 branch makes the H.264 encoder allocate four internal framebuffers. The
