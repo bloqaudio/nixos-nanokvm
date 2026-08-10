@@ -56,13 +56,15 @@
 		ranges;
 
 		video_pool: video-pool@86800000 {
-			/* 48 MiB covers the full-1080p simultaneous worst case
-			 * (~38 MiB). The budget closes because this node no
-			 * longer preserves the ~88 MiB initramfs ramfs (fleet
-			 * disables the USB gadget). */
+			/* 24 MiB for the 540p production pipeline (~17.6 MiB
+			 * simultaneous worst case). 48 MiB (1080p) does not fit
+			 * while the ~88 MiB initramfs stays pinned by the
+			 * stage-2 gadget preservation — disabling preservation
+			 * hits the DWC2 teardown wedge instead, so 1080p waits
+			 * for the initrd slimming/repack work. */
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0x86800000 0x3000000>; /* 48 MiB */
+			reg = <0x86800000 0x1800000>; /* 24 MiB */
 		};
 	};
 };
