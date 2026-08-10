@@ -54,6 +54,10 @@
 #define DEFAULT_CAPTURE "/dev/video0"
 #define DEFAULT_ENCODER "/dev/video1"
 #define DMA_HEAP_SYSTEM "/dev/dma_heap/system"
+/* vb2-dma-contig imports must be single-segment; the system heap can
+ * hand a multi-segment 3 MiB buffer, so prefer the guaranteed-contiguous
+ * CMA heap and fall back to system. */
+#define DMA_HEAP_CMA "/dev/dma_heap/linux,cma"
 
 #define RTP_MTU 1400
 #define RTP_PT 96
@@ -1064,6 +1068,14 @@ struct bridge_options {
 	uint32_t encoder_input_format; /* V4L2_PIX_FMT_NV21 or NV12 */
 };
 
+static const char *init_step;
+
+static void die_step(void)
+{
+	fprintf(stderr, "live bridge at %s: %s\n", init_step ? init_step : "?",
+		strerror(errno));
+}
+
 static int live_bridge(const struct bridge_options *opts)
 {
 	int capture_fd = -1, encoder_fd = -1, output_fd = -1, heap_fd = -1;
@@ -1154,13 +1166,19 @@ static int live_bridge(const struct bridge_options *opts)
 
 	/* Encoder OUTPUT buffers: cached dma-heap import when possible. */
 	if (use_dmabuf) {
-		heap_fd = open(DMA_HEAP_SYSTEM, O_RDONLY | O_CLOEXEC);
+		init_step = "open " DMA_HEAP_CMA;
+		heap_fd = open(DMA_HEAP_CMA, O_RDONLY | O_CLOEXEC);
 		if (heap_fd < 0) {
-			fprintf(stderr, "no " DMA_HEAP_SYSTEM " (%s), using --io mmap\n",
+			init_step = "open " DMA_HEAP_SYSTEM;
+			heap_fd = open(DMA_HEAP_SYSTEM, O_RDONLY | O_CLOEXEC);
+		}
+		if (heap_fd < 0) {
+			fprintf(stderr, "no dma-heaps (%s), using --io mmap\n",
 				strerror(errno));
 			use_dmabuf = 0;
 		}
 	}
+	init_step = "encoder output buffer allocation";
 	if (use_dmabuf) {
 		if (heap_queue(heap_fd, encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			       ENCODER_OUT_BUFFERS, encoder_out_fmt.sizeimage,
@@ -1201,9 +1219,11 @@ static int live_bridge(const struct bridge_options *opts)
 				.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW,
 			};
 
+			init_step = "priming DMA_BUF_IOCTL_SYNC";
 			if (xioctl(encoder_out.bufs[0].dmabuf_fd,
 				   DMA_BUF_IOCTL_SYNC, &sync))
 				goto out_errno;
+			init_step = "priming QBUF (dmabuf import)";
 			if (queue_dmabuf(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 					 0, encoder_out.bufs[0].dmabuf_fd,
 					 (unsigned int)frame_size))
@@ -1390,8 +1410,8 @@ static int live_bridge(const struct bridge_options *opts)
 		frames, encoded_frames, encoded_bytes);
 	ret = 0;
 out_errno:
-	if (ret && errno)
-		die_errno("live bridge");
+	if (ret)
+		die_step();
 out:
 	if (capture_on)
 		stream(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0);

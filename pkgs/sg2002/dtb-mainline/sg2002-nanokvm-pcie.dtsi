@@ -277,7 +277,7 @@
 	 * i.e. SOC_PERIPHERAL_IRQ(9) after the 16 core-local IDs. */
 	vpss: vpss@a080000 {
 		compatible = "sophgo,sg2002-vpss";
-		reg = <0x0 0x0a080000 0x0 0x10000>;
+		reg = <0x0a080000 0x10000>;
 		interrupts = <SOC_PERIPHERAL_IRQ(9) IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clk CLK_SRC_VIP_SYS_0>,
 			 <&clk CLK_SRC_VIP_SYS_1>,

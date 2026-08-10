@@ -19,7 +19,7 @@ diff --git a/arch/riscv/boot/dts/sophgo/sg2002.dtsi b/arch/riscv/boot/dts/sophgo
 +
 +		vpss: vpss@a080000 {
 +			compatible = "sophgo,sg2002-vpss";
-+			reg = <0x0 0x0a080000 0x0 0x10000>;
++			reg = <0x0a080000 0x10000>;
 +			interrupts = <SOC_PERIPHERAL_IRQ(9) IRQ_TYPE_LEVEL_HIGH>;
 +			clocks = <&clk CLK_SRC_VIP_SYS_0>,
 +				 <&clk CLK_SRC_VIP_SYS_1>,

@@ -392,6 +392,10 @@ with lib.kernel; {
   # vb2 dma-contig mappings (the dominant pipeline cost on this SoC).
   DMABUF_HEAPS = yes;
   DMABUF_HEAPS_SYSTEM = yes;
+  # Guaranteed-contiguous heap: vb2-dma-contig rejects multi-segment
+  # imports (EFAULT at QBUF), which the system heap can produce for a
+  # 3 MiB frame. The CMA heap is the contiguous allocator.
+  DMABUF_HEAPS_CMA = yes;
   V4L_MEM2MEM_DRIVERS = yes;
   VIDEO_CODA = module;
   VIDEO_SOPHGO_SG2002_VPSS = module;

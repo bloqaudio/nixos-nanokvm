@@ -78,7 +78,7 @@ new file mode 100644
 +
 +    vpss@a080000 {
 +        compatible = "sophgo,sg2002-vpss";
-+        reg = <0x0 0x0a080000 0x0 0x10000>;
++        reg = <0x0a080000 0x10000>;
 +        interrupts = <25 IRQ_TYPE_LEVEL_HIGH>;
 +        clocks = <&clk CLK_SRC_VIP_SYS_0>, <&clk CLK_SRC_VIP_SYS_1>,
 +                 <&clk CLK_SRC_VIP_SYS_2>, <&clk CLK_IMG_V_VIP>,
