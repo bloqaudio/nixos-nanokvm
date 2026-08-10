@@ -1,11 +1,11 @@
-From 63662d1614d64ce0af4b944359363909dd10aae6 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 92348117cd0c16e47788dec7101543c5dabb612e Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 14:59:14 +0200
 Subject: [PATCH] riscv: dts: sophgo: describe SG2002 Coda980
 
 Describe the Coda980 control and H.264 windows, the H.264 interrupt, five functional clocks, and the proven H.264 reset line. Leave the SoC node disabled so a board DT must opt in after providing the firmware.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../devicetree/bindings/media/coda.yaml        |  4 ++++
  arch/riscv/boot/dts/sophgo/sg2002.dtsi         | 18 ++++++++++++++++++

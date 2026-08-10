@@ -1,9 +1,22 @@
-From c5de0191b1b8eb48523a4fd0e74c211f510e6b75 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 18b49c0228ddc02e09d86596112bafb80a057075 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 16:17:26 +0200
 Subject: [PATCH] media: coda: restore Coda980 frame memory default
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Coda980 defaults its frame-memory control to interleaved chroma with
+128-bit little-endian accesses. coda_command_async() rewrites
+CODA_REG_BIT_FRAME_MEM_CTRL from ctx->frame_mem_ctrl before every BIT
+command, but the generic open path only initialises that field for
+the i.MX Coda9 products -- for anything else it stays zero, so the
+first command clobbers the Coda980 default and subsequent frame
+buffer accesses use the wrong memory layout.
+
+Initialise ctx->frame_mem_ctrl and the hardware-init register write
+to the Coda980 default (chroma interleave | 128-bit little-endian)
+through the has_coda980_h264_abi capability. The Coda960 BWB
+workaround and all other products keep their existing values.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../platform/chips-media/coda/coda-common.c   | 43 ++++++++++++-------
  .../platform/chips-media/coda/coda_regs.h     |  3 ++

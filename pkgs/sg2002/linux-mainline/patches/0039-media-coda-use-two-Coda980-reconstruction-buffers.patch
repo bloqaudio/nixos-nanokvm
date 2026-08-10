@@ -1,5 +1,5 @@
-From 2cb1482cc20db4e3cafe621df6b2911de62278ee Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From fec967d8642ed9cc294db20e9949f51b23bf4b97 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Mon, 10 Aug 2026 02:28:33 +0200
 Subject: [PATCH 1/2] media: coda: use two Coda980 reconstruction buffers
 
@@ -15,7 +15,7 @@ retains the supplied count, and writes that count to CMD_SET_FRAME_BUF_NUM.
 Select two internal buffers through the Coda980 ABI capability. Keep the
 existing four-buffer Coda960 allocation unchanged.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  drivers/media/platform/chips-media/coda/coda-bit.c | 5 ++++-
  1 file changed, 4 insertions(+), 1 deletion(-)

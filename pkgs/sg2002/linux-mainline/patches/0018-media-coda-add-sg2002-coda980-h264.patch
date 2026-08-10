@@ -1,9 +1,25 @@
-From da8b17908a4165db63fa71314413b771a2bd4d0d Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From f575f4c8b7431e2ba35e4baf9521b8a24cfe20b3 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 14:50:32 +0200
 Subject: [PATCH] media: coda: add SG2002 Coda980 H.264 encoder
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+The SG2002 integrates a Chips&Media Coda980 H.264 encoder. The core
+speaks the Coda9 register command ABI, but it is not an i.MX Coda: the
+firmware expects its code, temporary, and parameter slices inside one
+768 KiB DMA common arena, its version word reports a customer product
+code, and the SoC's simple-reset controller cannot pulse the H.264
+reset line.
+
+Add the SG2002 Coda980 platform data and wire it through the driver:
+a single H.264 encoder video device, the common-arena layout with its
+CODE/TEMP/PARA offsets, NV21-to-NV12 input staging through a coherent
+buffer, and the firmware boot sequence. The register recipe and buffer
+layout come from the vendor SG2002 kernel source and the observed
+behaviour of the factory 3.0.1 firmware; no vendor code is reused.
+
+Tested on the SG2002 NanoKVM with 1080p NV21 input.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../media/platform/chips-media/coda/Kconfig   |   2 +-
  .../platform/chips-media/coda/coda-bit.c      | 115 +++-

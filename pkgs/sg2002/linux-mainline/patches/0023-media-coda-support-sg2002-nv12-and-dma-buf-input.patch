@@ -1,5 +1,5 @@
-From 6799d8e51dbb909138be7022481f21795ec9a475 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From f4e3aa600aa68e3a90cbd4b1ec974a16bfff2043 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 15:05:06 +0200
 Subject: [PATCH] media: coda: support SG2002 NV12 and DMA-BUF input
 
@@ -8,7 +8,7 @@ NV21 INPUT through a coherent staging buffer; imported DMA-BUFs are explicitly
 CPU-mapped for the chroma-order conversion. Keep H.264 CAPTURE MMAP-only for
 now because Coda header generation writes the destination buffer on the CPU.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../platform/chips-media/coda/coda-bit.c      | 62 ++++++++++++++++---
  .../platform/chips-media/coda/coda-common.c   | 13 ++--
@@ -158,3 +158,6 @@ index e15185341..ac460644b 100644
  MODULE_AUTHOR("Javier Martin <javier.martin@vista-silicon.com>");
  MODULE_DESCRIPTION("Coda multi-standard codec V4L2 driver");
 +MODULE_IMPORT_NS("DMA_BUF");
+-- 
+2.54.0
+

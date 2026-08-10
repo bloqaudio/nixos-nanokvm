@@ -1,9 +1,21 @@
-From 23fcc118cc1ccbff1edad66442b8cbc874dab5f7 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 9a2e379ee649ec7de5bdfeb727d0a8b1e9ed02cb Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 14:55:04 +0200
 Subject: [PATCH] media: coda: constrain SG2002 staging and contexts
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Tighten three SG2002 bring-up details:
+
+- The NV21 staging buffer is allocated coherent, so the
+  dma_sync_single_for_device() at the end of coda_stage_nv21() is
+  redundant; drop it.
+- The CAPTURE queue's io_modes have no reason to depend on the INPUT
+  staging path; advertise VB2_DMABUF | VB2_MMAP uniformly.
+- The SG2002 firmware handles a single encoder context. Honour the
+  devtype max_instances limit in coda_open() instead of relying on
+  the CODA_DX6 special case, so the SG2002 cap of one context is
+  enforced.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  drivers/media/platform/chips-media/coda/coda-bit.c    | 3 ---
  drivers/media/platform/chips-media/coda/coda-common.c | 9 ++++-----

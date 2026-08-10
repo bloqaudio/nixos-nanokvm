@@ -1,5 +1,5 @@
-From 36c2e228db5151e35b590479692111a9b4bdc22b Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From b4a9ab0668d187ca9cde7ace296db7a0eb7bbf57 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 14:36:05 +0200
 Subject: [PATCH] dt-bindings: media: coda: add Sophgo SG2002 Coda980
 
@@ -9,7 +9,7 @@ register windows, its H.264 interrupt, and its five required clocks.
 Keep the existing i.MX tuple shapes in the non-SG2002 branch and require
 a firmware name for the SG2002 node.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../devicetree/bindings/media/coda.yaml       | 112 +++++++++++++++---
  1 file changed, 94 insertions(+), 18 deletions(-)

@@ -1,5 +1,5 @@
-From c21ed93ceddcfff8f4e1c4a3e021b7c5c528d04e Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 140531c1a3bdccbdc5bc669effe083dccf7e7d0d Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 16:03:25 +0200
 Subject: [PATCH] media: coda: configure SG2002 Coda980 encoder ABI
 
@@ -15,7 +15,7 @@ subsampling, gamma, or min/max-QP semantics to the Coda980 encoder.
 This keeps the shared Coda9 path intact while making the SG2002 baseline
 H.264 configuration deterministic.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../platform/chips-media/coda/coda-bit.c      | 96 +++++++++++++------
  .../platform/chips-media/coda/coda-common.c   |  2 +-

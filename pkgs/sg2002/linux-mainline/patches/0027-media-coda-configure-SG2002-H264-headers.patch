@@ -1,8 +1,22 @@
-From 72be5997db932ee852d6970437be47e9b5fa7da7 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 70f845dbb92e1768e1f58e639d06c131a0bdcea1 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 15:55:39 +0200
 Subject: [PATCH] media: coda: configure SG2002 H.264 headers
 
+Coda980 extends the Coda9 ENC_HEADER register window with six words
+past the Coda960 frame-crop registers: H.264 profile, chroma format,
+field flag, and the PPS CABAC mode, CABAC init idc, and 8x8 transform
+flags. The SG2002 firmware consumes them when it generates SPS and
+PPS; left unprogrammed, they hold whatever the previous command
+sequence left behind and the emitted headers are not deterministic.
+
+Select the extension through a new has_extended_h264_header devtype
+flag. For SPS, program the profile derived from h264_profile_idc
+(baseline, main, or high) and the fixed 4:2:0 progressive values; for
+PPS, program the CAVLC defaults with the 8x8 transform disabled,
+matching the baseline streams this encoder path produces.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../platform/chips-media/coda/coda-bit.c      | 33 +++++++++++++++++++
  .../platform/chips-media/coda/coda-common.c   |  1 +

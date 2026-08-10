@@ -1,11 +1,13 @@
-From 7bc8499b42a9158a241d058d2d967d5b3921320e Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 99e49e71fd7fe94f067e5e30a786724e470f6801 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 15:35:44 +0200
 Subject: [PATCH] media: coda: download SG2002 firmware into BIT SRAM
 
 The SG2002 firmware uses the common DMA arena as its backing store, but the Coda BIT processor still requires the normal 4 KiB register download before CODE_RUN.
 
 Use the existing Coda9 download path, whose four-word reorder matches the factory Coda9VpuInit sequence.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  drivers/media/platform/chips-media/coda/coda-common.c | 1 -
  1 file changed, 1 deletion(-)

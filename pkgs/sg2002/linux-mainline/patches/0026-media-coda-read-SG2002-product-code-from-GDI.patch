@@ -1,11 +1,13 @@
-From 52c92b2491a145c871037fd9a5586b0547434cb7 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 8ab94f075521e022e190d5925bed37d0f6b76c67 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 15:40:28 +0200
 Subject: [PATCH] media: coda: read SG2002 product code from GDI
 
 Coda980 returns a customer code in the upper half of the firmware version word. Its hardware product code is instead exposed by the GDI product register at offset 0x1044.
 
 Let platform data select that register and validate the observed 3.0.1 firmware against CODA980 without changing the existing Coda firmware ABI.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  drivers/media/platform/chips-media/coda/coda-bit.c    | 11 ++++++++---
  drivers/media/platform/chips-media/coda/coda-common.c |  1 +

@@ -1,11 +1,13 @@
-From 279534edb286b650b59278e1dbb3b32b8792231b Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 3b6ed804fd36394f5e78934573bc2602c984386d Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 15:26:41 +0200
 Subject: [PATCH] media: coda: handle SG2002 H.264 reset
 
 The SG2002 simple-reset controller has no pulse duration, so its reset operation returns -ENOTSUPP. The H.264 reset line still supports explicit assertion and deassertion.
 
 Use those level operations for SG2002 during initial firmware boot and runtime recovery. Keep the existing pulse-reset operation for every other Coda platform.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../media/platform/chips-media/coda/coda-bit.c |  2 +-
  .../platform/chips-media/coda/coda-common.c    | 18 +++++++++++++++++-

@@ -1,11 +1,11 @@
-From 23a07fcb34e4aeea4bbb0792fc28363bd76613c8 Mon Sep 17 00:00:00 2001
-From: Codex SG2002 port <codex@localhost>
+From 37b86d2c66643377c54c042897c66df9f54a79b6 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
 Date: Sun, 9 Aug 2026 14:58:22 +0200
 Subject: [PATCH] media: coda: boot SG2002 firmware from common arena
 
 The SG2002 Coda980 firmware is loaded in the DMA common arena and expects its code, temporary, and parameter addresses before CODE_RUN. Keep the legacy CODE_DOWN path for i.MX Coda instances, but skip it for SG2002 and program the common parameter slice during hardware initialization.
 
-Signed-off-by: Codex SG2002 port <codex@localhost>
+Signed-off-by: George Whewell <georgerw@gmail.com>
 ---
  .../platform/chips-media/coda/coda-common.c   | 45 +++++++++++--------
  .../media/platform/chips-media/coda/coda.h    |  1 +
