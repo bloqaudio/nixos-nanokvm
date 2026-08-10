@@ -243,6 +243,19 @@ in {
         lib.mkForce (lib.unique cfg.initrd.kernelModules);
     })
 
+    (lib.mkIf (cfg.kernel == "mainline" && cfg.wifi.enable) {
+      # AIC8800 opens its blobs through literal /lib/firmware paths rather
+      # than request_firmware().  systemd-modules-load runs before tmpfiles,
+      # so the firmware must be part of the initrd's /lib tree at build time.
+      boot.initrd.systemd.contents."/lib".source = lib.mkForce (
+        pkgs.runCommand "sg2002-initrd-lib" {} ''
+          mkdir -p $out
+          ln -s ${config.system.build.modulesClosure}/lib/modules $out/modules
+          ln -s ${config.hardware.firmware}/lib/firmware $out/firmware
+        ''
+      );
+    })
+
     (lib.mkIf cfg.tuning.enable {
       # noatime kills per-read timestamp writes; commit=600 extends Btrfs
       # transaction commits to 10 min. Trade-off: a longer window of recent
