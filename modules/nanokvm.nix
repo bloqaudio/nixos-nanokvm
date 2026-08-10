@@ -423,7 +423,11 @@ in
       };
     }
 
-    (lib.mkIf usesSg2002Stage2Gadget {
+    # Appended via lib.optional rather than mkIf inside the merge: the
+    # post-25.11 module system rejects definitions of options that don't
+    # exist even under `mkIf false`, and non-SG2002 consumers of this
+    # module (Rock-5B's services/kvm.nix) declare no `sg2002` options.
+    (lib.optionalAttrs usesSg2002Stage2Gadget {
       sg2002.usbGadget.network.controlFile = lib.mkDefault "/boot/usb.rndis0";
       sg2002.usbGadget.stage2.reenumerateAfterBoot.enable = lib.mkDefault true;
     })
