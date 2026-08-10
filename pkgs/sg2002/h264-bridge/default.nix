@@ -2,7 +2,7 @@
 
 stdenv.mkDerivation {
   pname = "sg2002-h264-bridge";
-  version = "0.1";
+  version = "0.2";
 
   src = ./sg2002-h264-bridge.c;
   dontUnpack = true;
