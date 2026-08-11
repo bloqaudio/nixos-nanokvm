@@ -56,15 +56,14 @@
 		ranges;
 
 		video_pool: video-pool@86800000 {
-			/* 24 MiB for the 540p production pipeline (~17.6 MiB
-			 * simultaneous worst case). 48 MiB (1080p) does not fit
-			 * while the ~88 MiB initramfs stays pinned by the
-			 * stage-2 gadget preservation — disabling preservation
-			 * hits the DWC2 teardown wedge instead, so 1080p waits
-			 * for the initrd slimming/repack work. */
+			/* 32 MiB: 540p pipeline with the deeper pipelining queues is
+			 * ~24.6 MiB simultaneous worst case (CSI 3x4.15 + 4.15
+			 * scratch, coda internals + 4x0.78 out + 3x1M cap).
+			 * 1080p needs ~38+ MiB and still waits on the initrd
+			 * memory work. */
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0x86800000 0x1800000>; /* 24 MiB */
+			reg = <0x86800000 0x2000000>; /* 32 MiB */
 		};
 	};
 };
