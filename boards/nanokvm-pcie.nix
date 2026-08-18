@@ -46,8 +46,14 @@
   # tell oled.nix to leave sg2002.fdt alone. Mainline-only: the vendor
   # DTS carries no panel node (vendor userspace bit-bangs the I2C
   # itself), so on the vendor kernel the service would just spin on a
-  # missing /dev/fb0. mkDefault so targets can opt out.
-  nanokvm.oled.enable = lib.mkDefault (config.sg2002.kernel == "mainline");
+  # missing /dev/fb0.
+  #
+  # Default OFF on this carrier: the fbcon -> ssd1307fb deferred-I/O
+  # repaint bit-bangs the full panel over ~100 kHz GPIO I2C on the
+  # single C906 every couple of seconds (procps top), which is real CPU
+  # and RAM on a 256 MiB box that the capture/encode pipeline needs.
+  # Opt back in with `nanokvm.oled.enable = lib.mkForce true;`.
+  nanokvm.oled.enable = lib.mkDefault false;
   nanokvm.oled.useOledFdt = false;
 
   # The PCIe carrier labels A19/A18 as UART1, but that header is unverified.
@@ -79,9 +85,11 @@
   ];
   boot.kernelModules = lib.optionals (config.sg2002.kernel == "mainline") [
     "coda-vpu"
-    # VPSS scaler stays manual (modprobe sg2002-vpss) until it is
-    # hardware-validated — an unproven probe must not gate boot on this
-    # 256 MiB board.
+    # VPSS scaler: one-shot conversion is hardware-validated (2026-08-18)
+    # and the DT node claims its own fabric clocks, so udev autoload is
+    # fine — but keep it out of the boot critical path on this 256 MiB
+    # board until a full production boot with the 0048-0052 queue has
+    # soaked.
   ];
   systemd.tmpfiles.rules = lib.optionals (config.sg2002.kernel == "mainline") [
     "L+ /lib/firmware - - - - /run/current-system/firmware"

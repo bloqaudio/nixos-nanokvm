@@ -2,6 +2,10 @@
  * SG2002 V4L2 H.264 bridge:
  *
  *   /dev/video0 (UYVY capture) -> CPU UYVY->NV12/NV21 -> /dev/video1 (Coda)
+ * or, with --scaler vpss:
+ *   /dev/video0 -> /dev/video2 (VPSS scaler/CSC mem2mem) -> /dev/video1,
+ *   a zero-copy dmabuf chain (capture expbuf -> scaler OUTPUT import;
+ *   scaler CAPTURE and encoder OUTPUT share the same CMA-heap buffers).
  *   sinks: Annex-B file/stdout and/or RTSP publisher (mediamtx-style).
  *
  * Performance shape:
@@ -51,8 +55,10 @@
 #define CAPTURE_BUFFERS 4
 #define ENCODER_OUT_BUFFERS 4
 #define ENCODER_CAP_BUFFERS 3
+#define SCALER_MID_BUFFERS 4
 #define DEFAULT_CAPTURE "/dev/video0"
 #define DEFAULT_ENCODER "/dev/video1"
+#define DEFAULT_SCALER "/dev/video2"
 #define DMA_HEAP_SYSTEM "/dev/dma_heap/system"
 /* vb2-dma-contig imports must be single-segment; the system heap can
  * hand a multi-segment 3 MiB buffer, so prefer the guaranteed-contiguous
@@ -60,6 +66,9 @@
  * older ones) and fall back to system. */
 #define DMA_HEAP_CMA "/dev/dma_heap/default_cma_region"
 #define DMA_HEAP_CMA_OLD "/dev/dma_heap/linux,cma"
+/* The no-map media pool exported as a heap: contiguous by definition and
+ * independent of the colonized default CMA. */
+#define DMA_HEAP_RESERVED "/dev/dma_heap/reserved"
 
 #define RTP_MTU 1400
 #define RTP_PT 96
@@ -521,13 +530,19 @@ static int queue_dmabuf(int fd, enum v4l2_buf_type type, unsigned int index,
 	return xioctl(fd, VIDIOC_QBUF, &buffer);
 }
 
-static int dequeue_buffer(int fd, enum v4l2_buf_type type,
-			  struct v4l2_buffer *buffer)
+static int dequeue_buffer_mem(int fd, enum v4l2_buf_type type,
+			      unsigned int memory, struct v4l2_buffer *buffer)
 {
 	memset(buffer, 0, sizeof(*buffer));
 	buffer->type = type;
-	buffer->memory = V4L2_MEMORY_MMAP;
+	buffer->memory = memory;
 	return xioctl(fd, VIDIOC_DQBUF, buffer);
+}
+
+static int dequeue_buffer(int fd, enum v4l2_buf_type type,
+			  struct v4l2_buffer *buffer)
+{
+	return dequeue_buffer_mem(fd, type, V4L2_MEMORY_MMAP, buffer);
 }
 
 static int stream(int fd, enum v4l2_buf_type type, int on)
@@ -1061,12 +1076,17 @@ static void rtsp_offer(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 struct bridge_options {
 	const char *capture_path;
 	const char *encoder_path;
+	const char *scaler_path;
 	const char *output_path;
 	const char *rtsp_url;
 	unsigned int bitrate;
 	unsigned int gop;
+	unsigned int mid_buffers;
+	unsigned int capture_buffers;
 	int half_scale;
 	int use_dmabuf;
+	int use_vpss;
+	int mid_heap_reserved;
 	uint32_t encoder_input_format; /* V4L2_PIX_FMT_NV21 or NV12 */
 };
 
@@ -1441,6 +1461,521 @@ out:
 	return ret;
 }
 
+/* ------------------------------------------------------------------ */
+/* Live bridge through the VPSS scaler/CSC (zero-copy)                 */
+/* ------------------------------------------------------------------ */
+
+/* capture (UYVY, pool buffers, exported) -> VPSS OUTPUT (dmabuf import)
+ * -> hardware CSC/scale -> VPSS CAPTURE (shared CMA-heap dmabuf)
+ * -> encoder OUTPUT (same dmabuf imported again) -> H.264.
+ *
+ * The CPU touches no frame data: per frame the bridge only moves dmabuf
+ * fds between the three queues.  The VPSS CAPTURE format carries the
+ * encoder's macroblock-padded geometry (e.g. 1920x1088) while the
+ * CAPTURE-side crop selection marks the visible image (1920x1080), so
+ * the scaler DMA lands exactly in the surface layout Coda980 expects.
+ */
+
+enum mid_state { MID_FREE, MID_AT_VPSS, MID_AT_ENCODER };
+
+static int live_bridge_vpss(const struct bridge_options *opts)
+{
+	int capture_fd = -1, encoder_fd = -1, scaler_fd = -1, heap_fd = -1;
+	int output_fd = -1;
+	struct mapped_queue capture_queue = { 0 }, mid = { 0 }, encoder_cap = { 0 };
+	int *cap_fds = NULL;
+	uint8_t *mid_state = NULL;
+	struct v4l2_pix_format capture_fmt, scaler_in_fmt, scaler_out_fmt;
+	struct v4l2_pix_format encoder_out_fmt, encoder_cap_fmt;
+	unsigned int i, free_mid = 0, held_capture = UINT32_MAX;
+	unsigned int visible_width, visible_height, coded_height;
+	uint64_t frames = 0, encoded_frames = 0, encoded_bytes = 0;
+	uint64_t start_ms = 0, last_stats_ms = 0, last_stats_frames = 0;
+	int capture_on = 0, encoder_out_on = 0, encoder_cap_on = 0;
+	int scaler_out_on = 0, scaler_cap_on = 0, ret = -1;
+	struct rtsp_sink rtsp;
+
+	memset(&rtsp, 0, sizeof(rtsp));
+	rtsp.fd = -1;
+	if (opts->rtsp_url && rtsp_parse_url(&rtsp, opts->rtsp_url)) {
+		fprintf(stderr, "bad rtsp url: %s\n", opts->rtsp_url);
+		return -1;
+	}
+	rtsp.rtp_ssrc = 0x53324732; /* "S2G2" */
+
+	capture_fd = open(opts->capture_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (capture_fd < 0) {
+		die_errno(opts->capture_path);
+		goto out;
+	}
+	encoder_fd = open(opts->encoder_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (encoder_fd < 0) {
+		die_errno(opts->encoder_path);
+		goto out;
+	}
+	scaler_fd = open(opts->scaler_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (scaler_fd < 0) {
+		die_errno(opts->scaler_path);
+		goto out;
+	}
+	if (opts->output_path) {
+		if (!strcmp(opts->output_path, "-"))
+			output_fd = STDOUT_FILENO;
+		else
+			output_fd = open(opts->output_path,
+					 O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+					 0644);
+		if (output_fd < 0) {
+			die_errno(opts->output_path);
+			goto out;
+		}
+	}
+
+	init_step = "capture G_FMT";
+	if (get_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, &capture_fmt))
+		goto out_errno;
+	if (capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY ||
+	    capture_fmt.width < 4 || capture_fmt.height < 2 ||
+	    capture_fmt.bytesperline < capture_fmt.width * 2) {
+		fprintf(stderr, "capture must provide packed UYVY with a valid stride\n");
+		goto out;
+	}
+	visible_width = opts->half_scale ? capture_fmt.width / 2 : capture_fmt.width;
+	visible_height = opts->half_scale ? capture_fmt.height / 2 : capture_fmt.height;
+	coded_height = (visible_height + 15U) & ~15U;
+
+	/* Encoder first: its padded OUTPUT geometry dictates the VPSS
+	 * CAPTURE surface layout. */
+	init_step = "encoder OUTPUT S_FMT";
+	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+			       opts->encoder_input_format, visible_width,
+			       coded_height, &encoder_out_fmt))
+		goto out_errno;
+	init_step = "encoder OUTPUT crop";
+	if (set_output_crop(encoder_fd, visible_width, visible_height))
+		goto out_errno;
+	init_step = "encoder OUTPUT G_FMT";
+	if (get_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, &encoder_out_fmt))
+		goto out_errno;
+	init_step = "encoder CAPTURE S_FMT";
+	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			       V4L2_PIX_FMT_H264, visible_width,
+			       visible_height, &encoder_cap_fmt))
+		goto out_errno;
+	if (encoder_cap_fmt.pixelformat != V4L2_PIX_FMT_H264)
+		goto out;
+	if (set_encoder_controls(encoder_fd, opts->bitrate, opts->gop))
+		fprintf(stderr, "warning: encoder controls rejected, running firmware defaults\n");
+	fprintf(stderr, "init: encoder formats ok\n");
+
+	/* VPSS: OUTPUT = the capture frame, CAPTURE = the encoder surface. */
+	init_step = "scaler OUTPUT S_FMT";
+	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+			       V4L2_PIX_FMT_UYVY, capture_fmt.width,
+			       capture_fmt.height, &scaler_in_fmt))
+		goto out_errno;
+	if (scaler_in_fmt.bytesperline != capture_fmt.bytesperline) {
+		fprintf(stderr, "capture stride %u unsupported by scaler (wants %u)\n",
+			capture_fmt.bytesperline, scaler_in_fmt.bytesperline);
+		goto out;
+	}
+	init_step = "scaler CAPTURE S_FMT";
+	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			       opts->encoder_input_format, encoder_out_fmt.width,
+			       encoder_out_fmt.height, &scaler_out_fmt))
+		goto out_errno;
+	if (scaler_out_fmt.bytesperline != encoder_out_fmt.bytesperline ||
+	    scaler_out_fmt.sizeimage > encoder_out_fmt.sizeimage) {
+		fprintf(stderr, "scaler/encoder surface mismatch (%u@%u vs %u@%u)\n",
+			scaler_out_fmt.bytesperline, scaler_out_fmt.sizeimage,
+			encoder_out_fmt.bytesperline, encoder_out_fmt.sizeimage);
+		goto out;
+	}
+	init_step = "scaler CAPTURE crop";
+	{
+		struct v4l2_selection selection = {
+			.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			.target = V4L2_SEL_TGT_CROP,
+			.r = {
+				.width = visible_width,
+				.height = visible_height,
+			},
+		};
+
+		if (xioctl(scaler_fd, VIDIOC_S_SELECTION, &selection)) {
+			if (errno == EINVAL &&
+			    encoder_out_fmt.height == visible_height) {
+				fprintf(stderr, "warning: scaler has no CAPTURE crop; unpadded surface fits anyway\n");
+			} else if (errno == EINVAL) {
+				fprintf(stderr, "scaler driver lacks CAPTURE crop, cannot emit the %ux%u surface\n",
+					encoder_out_fmt.width, encoder_out_fmt.height);
+				goto out;
+			} else {
+				goto out_errno;
+			}
+		}
+	}
+
+	/* Middle buffers: heap-allocated, imported by both the scaler
+	 * CAPTURE queue and the encoder OUTPUT queue. */
+	init_step = opts->mid_heap_reserved ? "open " DMA_HEAP_RESERVED :
+		"open " DMA_HEAP_CMA;
+	heap_fd = open(opts->mid_heap_reserved ? DMA_HEAP_RESERVED : DMA_HEAP_CMA,
+		       O_RDONLY | O_CLOEXEC);
+	if (heap_fd < 0 && !opts->mid_heap_reserved) {
+		init_step = "open " DMA_HEAP_CMA_OLD;
+		heap_fd = open(DMA_HEAP_CMA_OLD, O_RDONLY | O_CLOEXEC);
+	}
+	if (heap_fd < 0 && !opts->mid_heap_reserved) {
+		init_step = "open " DMA_HEAP_RESERVED;
+		heap_fd = open(DMA_HEAP_RESERVED, O_RDONLY | O_CLOEXEC);
+	}
+	if (heap_fd < 0) {
+		init_step = "open " DMA_HEAP_SYSTEM;
+		heap_fd = open(DMA_HEAP_SYSTEM, O_RDONLY | O_CLOEXEC);
+	}
+	if (heap_fd < 0)
+		goto out_errno;
+	init_step = "middle buffer allocation";
+	{
+		struct v4l2_requestbuffers request = {
+			.count = opts->mid_buffers,
+			.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			.memory = V4L2_MEMORY_DMABUF,
+		};
+
+		if (xioctl(scaler_fd, VIDIOC_REQBUFS, &request) || !request.count)
+			goto out_errno;
+		mid.count = request.count;
+		request.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+		if (xioctl(encoder_fd, VIDIOC_REQBUFS, &request) ||
+		    request.count < mid.count)
+			goto out_errno;
+		mid.bufs = calloc(mid.count, sizeof(*mid.bufs));
+		if (!mid.bufs)
+			goto out_errno;
+		for (i = 0; i < mid.count; i++) {
+			struct dma_heap_allocation_data alloc = {
+				.len = encoder_out_fmt.sizeimage,
+				.fd_flags = O_CLOEXEC | O_RDWR,
+			};
+
+			if (xioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &alloc))
+				goto out_errno;
+			mid.bufs[i].dmabuf_fd = (int)alloc.fd;
+			mid.bufs[i].length = encoder_out_fmt.sizeimage;
+			mid.bufs[i].addr = mmap(NULL, encoder_out_fmt.sizeimage,
+						PROT_READ | PROT_WRITE, MAP_SHARED,
+						(int)alloc.fd, 0);
+			if (mid.bufs[i].addr == MAP_FAILED) {
+				mid.bufs[i].addr = NULL;
+				goto out_errno;
+			}
+		}
+	}
+	mid_state = calloc(mid.count, sizeof(*mid_state));
+	if (!mid_state)
+		goto out_errno;
+	fprintf(stderr, "init: scaler formats + %u middle buffers ok\n", mid.count);
+
+	/* Encoder CAPTURE queue + priming frame (first claim on the media
+	 * pool, and a valid reference picture for the first live frame). */
+	init_step = "encoder CAPTURE buffers";
+	if (map_queue(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+		      ENCODER_CAP_BUFFERS, &encoder_cap))
+		goto out_errno;
+	for (i = 0; i < encoder_cap.count; i++)
+		if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, i, 0))
+			goto out_errno;
+	init_step = "encoder priming";
+	{
+		size_t luma_size = (size_t)encoder_out_fmt.bytesperline *
+			encoder_out_fmt.height;
+		size_t frame_size = luma_size * 3 / 2;
+		struct dma_buf_sync sync = {
+			.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW,
+		};
+
+		if (frame_size > UINT32_MAX || frame_size > mid.bufs[0].length)
+			goto out;
+		memset(mid.bufs[0].addr, 16, luma_size);
+		memset((uint8_t *)mid.bufs[0].addr + luma_size, 128,
+		       frame_size - luma_size);
+		if (xioctl(mid.bufs[0].dmabuf_fd, DMA_BUF_IOCTL_SYNC, &sync))
+			goto out_errno;
+		if (queue_dmabuf(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+				 0, mid.bufs[0].dmabuf_fd, (unsigned int)frame_size))
+			goto out_errno;
+		mid_state[0] = MID_AT_ENCODER;
+	}
+	free_mid = mid.count - 1;
+	fprintf(stderr, "init: encoder primed\n");
+
+	init_step = "encoder STREAMON";
+	if (stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
+		goto out_errno;
+	encoder_cap_on = 1;
+	if (stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, 1))
+		goto out_errno;
+	encoder_out_on = 1;
+
+	/* Capture buffers: driver-owned (media pool), exported for the
+	 * scaler OUTPUT queue. */
+	init_step = "capture buffers";
+	if (map_queue(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+		      opts->capture_buffers, &capture_queue))
+		goto out_errno;
+	cap_fds = calloc(capture_queue.count, sizeof(*cap_fds));
+	if (!cap_fds)
+		goto out_errno;
+	for (i = 0; i < capture_queue.count; i++) {
+		struct v4l2_exportbuffer export = {
+			.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			.index = i,
+			.flags = O_CLOEXEC | O_RDWR,
+		};
+
+		init_step = "capture EXPBUF (scaler must not be pool-bound)";
+		if (xioctl(capture_fd, VIDIOC_EXPBUF, &export))
+			goto out_errno;
+		cap_fds[i] = export.fd;
+	}
+
+	for (i = 0; i < capture_queue.count; i++)
+		if (queue_buffer(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, i, 0))
+			goto out_errno;
+	/* Capture first: while the CSI driver streams, the VIP fabric
+	 * clocks are on and VPSS register access is safe (the 6-clock DT
+	 * leaves the fabric clocks to the capture driver; with them the
+	 * order is merely hygienic). */
+	init_step = "capture STREAMON";
+	if (stream(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
+		goto out_errno;
+	capture_on = 1;
+	fprintf(stderr, "init: capture streaming\n");
+
+	/* Scaler OUTPUT imports the capture buffers 1:1 by index. */
+	init_step = "scaler OUTPUT REQBUFS";
+	{
+		struct v4l2_requestbuffers request = {
+			.count = capture_queue.count,
+			.type = V4L2_BUF_TYPE_VIDEO_OUTPUT,
+			.memory = V4L2_MEMORY_DMABUF,
+		};
+
+		if (xioctl(scaler_fd, VIDIOC_REQBUFS, &request) ||
+		    request.count < capture_queue.count) {
+			fprintf(stderr, "scaler OUTPUT queue too shallow (%u < %u)\n",
+				request.count, capture_queue.count);
+			goto out;
+		}
+	}
+	if (stream(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, 1))
+		goto out_errno;
+	scaler_out_on = 1;
+	if (stream(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
+		goto out_errno;
+	scaler_cap_on = 1;
+
+	fprintf(stderr, "bridge %s (%ux%u) -> %s (%s %ux%u crop %ux%u) -> %s %s io=vpss-dmabuf bitrate=%u gop=%u\n",
+		opts->capture_path, capture_fmt.width, capture_fmt.height,
+		opts->scaler_path,
+		opts->encoder_input_format == V4L2_PIX_FMT_NV21 ? "NV21" : "NV12",
+		scaler_out_fmt.width, scaler_out_fmt.height,
+		visible_width, visible_height,
+		opts->encoder_path, encoder_cap_fmt.pixelformat == V4L2_PIX_FMT_H264 ? "h264" : "?",
+		opts->bitrate, opts->gop);
+	start_ms = now_ms();
+	last_stats_ms = start_ms;
+
+	while (!stop_requested) {
+		struct v4l2_buffer buffer;
+		int progress = 0;
+
+		/* Drain encoded CAPTURE buffers and forward to the sinks. */
+		for (;;) {
+			uint64_t pts_ms;
+
+			if (dequeue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					   &buffer)) {
+				if (errno == EAGAIN)
+					break;
+				goto out_errno;
+			}
+			if (buffer.index >= encoder_cap.count ||
+			    buffer.bytesused > encoder_cap.bufs[buffer.index].length) {
+				fprintf(stderr, "encoder returned an invalid capture buffer\n");
+				goto out;
+			}
+			pts_ms = (uint64_t)buffer.timestamp.tv_sec * 1000ULL +
+				(uint64_t)buffer.timestamp.tv_usec / 1000;
+			if (!pts_ms)
+				pts_ms = now_ms();
+			if (output_fd >= 0 && buffer.bytesused &&
+			    write_all(output_fd, encoder_cap.bufs[buffer.index].addr,
+				      buffer.bytesused))
+				goto out_errno;
+			if (opts->rtsp_url && buffer.bytesused)
+				rtsp_offer(&rtsp, encoder_cap.bufs[buffer.index].addr,
+					   buffer.bytesused, pts_ms);
+			encoded_frames++;
+			encoded_bytes += buffer.bytesused;
+			if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					 buffer.index, 0))
+				goto out_errno;
+			progress = 1;
+		}
+		/* Encoder OUTPUT done -> middle buffer back to free. */
+		for (;;) {
+			if (dequeue_buffer_mem(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+					       V4L2_MEMORY_DMABUF, &buffer)) {
+				if (errno == EAGAIN)
+					break;
+				goto out_errno;
+			}
+			if (buffer.index >= mid.count || mid_state[buffer.index] != MID_AT_ENCODER) {
+				fprintf(stderr, "encoder returned an unexpected output buffer\n");
+				goto out;
+			}
+			mid_state[buffer.index] = MID_FREE;
+			free_mid++;
+			progress = 1;
+		}
+		/* Scaler CAPTURE done -> filled middle buffer to the encoder. */
+		for (;;) {
+			if (dequeue_buffer_mem(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					       V4L2_MEMORY_DMABUF, &buffer)) {
+				if (errno == EAGAIN)
+					break;
+				goto out_errno;
+			}
+			if (buffer.index >= mid.count || mid_state[buffer.index] != MID_AT_VPSS) {
+				fprintf(stderr, "scaler returned an unexpected capture buffer\n");
+				goto out;
+			}
+			if (queue_dmabuf(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+					 buffer.index, mid.bufs[buffer.index].dmabuf_fd,
+					 encoder_out_fmt.sizeimage))
+				goto out_errno;
+			mid_state[buffer.index] = MID_AT_ENCODER;
+			progress = 1;
+		}
+		/* Scaler OUTPUT done -> capture buffer back to the CSI queue. */
+		for (;;) {
+			if (dequeue_buffer_mem(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+					       V4L2_MEMORY_DMABUF, &buffer)) {
+				if (errno == EAGAIN)
+					break;
+				goto out_errno;
+			}
+			if (buffer.index >= capture_queue.count) {
+				fprintf(stderr, "scaler returned an invalid output buffer\n");
+				goto out;
+			}
+			if (queue_buffer(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					 buffer.index, 0))
+				goto out_errno;
+			progress = 1;
+		}
+		if (held_capture == UINT32_MAX) {
+			if (!dequeue_buffer(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					    &buffer))
+				held_capture = buffer.index;
+			else if (errno != EAGAIN)
+				goto out_errno;
+		}
+		if (held_capture != UINT32_MAX && free_mid) {
+			unsigned int mid_index;
+
+			for (mid_index = 0; mid_index < mid.count; mid_index++)
+				if (mid_state[mid_index] == MID_FREE)
+					break;
+			if (mid_index == mid.count) {
+				fprintf(stderr, "no usable free middle buffer\n");
+				goto out;
+			}
+			if (queue_dmabuf(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+					 held_capture, cap_fds[held_capture],
+					 capture_fmt.sizeimage))
+				goto out_errno;
+			if (queue_dmabuf(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+					 mid_index, mid.bufs[mid_index].dmabuf_fd, 0))
+				goto out_errno;
+			mid_state[mid_index] = MID_AT_VPSS;
+			free_mid--;
+			held_capture = UINT32_MAX;
+			frames++;
+			progress = 1;
+		}
+		{
+			uint64_t now = now_ms();
+
+			if (now - last_stats_ms >= 5000) {
+				uint64_t delta = now - last_stats_ms;
+				uint64_t df = encoded_frames - last_stats_frames;
+
+				fprintf(stderr, "stats: %.1f fps encoded (%" PRIu64
+					" total, %.1f kB/s)\n",
+					delta ? (double)df * 1000.0 / (double)delta : 0,
+					encoded_frames,
+					delta ? (double)encoded_bytes / 1024.0 *
+					1000.0 / (double)(now - start_ms) : 0);
+				last_stats_ms = now;
+				last_stats_frames = encoded_frames;
+			}
+		}
+		if (!progress) {
+			struct pollfd fds[3] = {
+				{ .fd = capture_fd, .events = POLLIN },
+				{ .fd = scaler_fd, .events = POLLIN | POLLOUT },
+				{ .fd = encoder_fd, .events = POLLIN | POLLOUT },
+			};
+			if (poll(fds, 3, 1000) < 0 && errno != EINTR)
+				goto out_errno;
+		}
+	}
+	fprintf(stderr, "stopped after %" PRIu64 " scaled frames, %" PRIu64
+		" encoded frames, %" PRIu64 " encoded bytes\n",
+		frames, encoded_frames, encoded_bytes);
+	ret = 0;
+out_errno:
+	if (ret)
+		die_step();
+out:
+	if (scaler_out_on)
+		stream(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, 0);
+	if (scaler_cap_on)
+		stream(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0);
+	if (capture_on)
+		stream(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0);
+	if (encoder_out_on)
+		stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, 0);
+	if (encoder_cap_on)
+		stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0);
+	unmap_queue(&encoder_cap);
+	unmap_queue(&mid);
+	unmap_queue(&capture_queue);
+	if (cap_fds) {
+		for (i = 0; i < capture_queue.count; i++)
+			if (cap_fds[i] > 0)
+				close(cap_fds[i]);
+		free(cap_fds);
+	}
+	free(mid_state);
+	rtsp_close(&rtsp);
+	if (heap_fd >= 0)
+		close(heap_fd);
+	if (scaler_fd >= 0)
+		close(scaler_fd);
+	if (encoder_fd >= 0)
+		close(encoder_fd);
+	if (capture_fd >= 0)
+		close(capture_fd);
+	if (output_fd >= 0 && output_fd != STDOUT_FILENO)
+		close(output_fd);
+	return ret;
+}
+
 static void usage(const char *program)
 {
 	fprintf(stderr,
@@ -1451,10 +1986,18 @@ static void usage(const char *program)
 		"options:\n"
 		"  --output PATH|-      write the Annex-B stream (repeatable with --rtsp)\n"
 		"  --rtsp URL           publish via RTSP (rtsp://host[:8554]/hdmi)\n"
-		"  --size full|half     half = 2x box-filter downscale (default full)\n"
+		"  --size full|half     half = 2x downscale (default full)\n"
 		"  --format nv21|nv12   encoder input format (default nv21 staged; nv12\n"
 		"                       needs a kernel with fixed direct input)\n"
 		"  --io dmabuf|mmap     raw-frame buffers: cached dma-heap (default) or vb2 mmap\n"
+		"  --scaler cpu|vpss    cpu = software UYVY->NVxx (default); vpss = hardware\n"
+		"                       scaler/CSC via the mem2mem node, zero-copy dmabuf chain\n"
+		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
+		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
+		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
+		"                       then the reserved media pool, then system)\n"
+		"  --capture-buffers N  vpss mode: CSI queue depth (default 4; 3 fits the\n"
+		"                       32 MiB media pool at 1080p)\n"
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
 		"  --gop N              encoder GOP size (default 30)\n",
 		program, program, program);
@@ -1465,12 +2008,16 @@ int main(int argc, char **argv)
 	struct bridge_options opts = {
 		.capture_path = DEFAULT_CAPTURE,
 		.encoder_path = DEFAULT_ENCODER,
+		.scaler_path = DEFAULT_SCALER,
 		.output_path = NULL,
 		.rtsp_url = NULL,
 		.bitrate = 4000000,
 		.gop = 30,
+		.mid_buffers = SCALER_MID_BUFFERS,
+		.capture_buffers = CAPTURE_BUFFERS,
 		.half_scale = 0,
 		.use_dmabuf = 1,
+		.use_vpss = 0,
 		.encoder_input_format = V4L2_PIX_FMT_NV21,
 	};
 	struct sigaction action = { .sa_handler = on_signal };
@@ -1511,6 +2058,26 @@ int main(int argc, char **argv)
 				opts.use_dmabuf = 0;
 			else if (strcmp(argv[i], "dmabuf"))
 				goto bad_usage;
+		} else if (!strcmp(arg, "--scaler") && i + 1 < argc) {
+			if (!strcmp(argv[++i], "vpss"))
+				opts.use_vpss = 1;
+			else if (strcmp(argv[i], "cpu"))
+				goto bad_usage;
+		} else if (!strcmp(arg, "--scaler-node") && i + 1 < argc) {
+			opts.scaler_path = argv[++i];
+		} else if (!strcmp(arg, "--mid-buffers") && i + 1 < argc) {
+			if (parse_u32(argv[++i], &opts.mid_buffers) ||
+			    opts.mid_buffers < 2 || opts.mid_buffers > 16)
+				goto bad_usage;
+		} else if (!strcmp(arg, "--heap") && i + 1 < argc) {
+			if (!strcmp(argv[++i], "reserved"))
+				opts.mid_heap_reserved = 1;
+			else if (strcmp(argv[i], "auto"))
+				goto bad_usage;
+		} else if (!strcmp(arg, "--capture-buffers") && i + 1 < argc) {
+			if (parse_u32(argv[++i], &opts.capture_buffers) ||
+			    opts.capture_buffers < 2 || opts.capture_buffers > 16)
+				goto bad_usage;
 		} else if (!strcmp(arg, "--bitrate") && i + 1 < argc) {
 			if (parse_u32(argv[++i], &opts.bitrate))
 				goto bad_usage;
@@ -1541,6 +2108,8 @@ int main(int argc, char **argv)
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGINT, &action, NULL) ||
 	    sigaction(SIGTERM, &action, NULL))
 		return EXIT_FAILURE;
+	if (opts.use_vpss)
+		return live_bridge_vpss(&opts) ? EXIT_FAILURE : EXIT_SUCCESS;
 	return live_bridge(&opts) ? EXIT_FAILURE : EXIT_SUCCESS;
 
 bad_usage:

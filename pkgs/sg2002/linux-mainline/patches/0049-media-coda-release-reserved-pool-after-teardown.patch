@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Tue, 18 Aug 2026 10:05:00 +0200
+Subject: [PATCH 0049] media: coda: release the reserved pool after teardown
+
+0047 called of_reserved_mem_device_release() first in coda_remove,
+before video_unregister_device(), v4l2 teardown and
+coda_free_device_buffers(). The release detaches the rmem dma_ops
+while vb2 queues and the firmware arena still allocate/free through
+them, which on SG2002 makes "modprobe -r coda-vpu" die with a
+segfault-class fault. Move the release to the very end of remove,
+after the last coherent free.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index d2470e2..50f6c67 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -3636,8 +3636,6 @@ static void coda_remove(struct platform_device *pdev)
+ 	struct coda_dev *dev = platform_get_drvdata(pdev);
+ 	int i;
+ 
+-	of_reserved_mem_device_release(&pdev->dev);
+-
+ 	for (i = 0; i < ARRAY_SIZE(dev->vfd); i++) {
+ 		if (video_get_drvdata(&dev->vfd[i]))
+ 			video_unregister_device(&dev->vfd[i]);
+@@ -3649,6 +3647,9 @@ static void coda_remove(struct platform_device *pdev)
+ 	destroy_workqueue(dev->workqueue);
+ 	coda_free_device_buffers(dev);
+ 	ida_destroy(&dev->ida);
++
++	/* only after every coherent/vb2 user of the rmem dma_ops is gone */
++	of_reserved_mem_device_release(&pdev->dev);
+ }
+ 
+ #ifdef CONFIG_PM
+-- 
+2.54.0
+

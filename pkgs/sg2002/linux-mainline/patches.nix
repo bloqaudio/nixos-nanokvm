@@ -202,6 +202,26 @@ let
       name = "media-bind-reserved-memory-pools-to-sg2002-media-devices";
       patch = ./patches/0047-media-bind-reserved-memory-pools-to-SG2002-media-devices.patch;
     })
+    (patch {
+      name = "media-sophgo-unbind-sg2002-vpss-from-reserved-pool";
+      patch = ./patches/0048-media-sophgo-unbind-SG2002-VPSS-from-reserved-pool.patch;
+    })
+    (patch {
+      name = "media-coda-release-reserved-pool-after-teardown";
+      patch = ./patches/0049-media-coda-release-reserved-pool-after-teardown.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-capture-crop";
+      patch = ./patches/0050-media-sophgo-SG2002-VPSS-capture-crop.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-session-clocking";
+      patch = ./patches/0051-media-sophgo-SG2002-VPSS-session-clocking.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-fabric-clocks";
+      patch = ./patches/0052-media-sophgo-SG2002-VPSS-fabric-clocks.patch;
+    })
   ];
 
   meta = {
@@ -608,6 +628,65 @@ let
       notes = ''
         VPSS window 0x0a080000, PLIC 25 (SOC_PERIPHERAL_IRQ(9)), VIP sys
         muxes + IMG_IN_V/SC_TOP/SC_V1 gates. Disabled by default.
+      '';
+    };
+    "media-sophgo-unbind-sg2002-vpss-from-reserved-pool" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        rmem_dma_ops cannot map imported dma-bufs, which a zero-copy
+        capture->VPSS->encoder chain needs in both directions; VPSS is
+        import-only and gains nothing from the pool. Also takes 0047's
+        of_reserved_mem_device_release() out of vpss_remove while the
+        rmmod wedge is being chased on hardware.
+      '';
+    };
+    "media-coda-release-reserved-pool-after-teardown" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = ''
+        0047 released the rmem dma_ops first in coda_remove, while vb2
+        queues and the firmware arena still free through them —
+        "modprobe -r coda-vpu" faulted (rc=139) on hardware. Release
+        now runs after the last coherent free.
+      '';
+    };
+    "media-sophgo-sg2002-vpss-capture-crop" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        CAPTURE-side V4L2_SEL_TGT_CROP marks the visible image inside a
+        macroblock-padded CAPTURE surface (e.g. 1080 lines in a 1088-line
+        buffer, chroma plane at the padded offset) so the scaler feeds
+        Coda980's expected layout without a CPU padding pass. Hardware
+        validated 2026-08-18 (one-shot + live bridge).
+      '';
+    };
+    "media-sophgo-sg2002-vpss-session-clocking" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        Hold the VPSS clocks for the whole streaming session instead of
+        per-job pm_runtime get/put: gating right after frame-end, while
+        the ODMA may still be draining AXI, wedges the bus silently on
+        hardware (watchdog reset). Also clear the full raw interrupt
+        status in the ISR, per the vendor sclr_intr_clr.
+      '';
+    };
+    "media-sophgo-sg2002-vpss-fabric-clocks" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        The VPSS register window needs the VIP fabric clocks, which the
+        CSI capture driver gates at stream stop; a VPSS write with them
+        off stalls the bus silently (hardware-verified). Claimed as
+        optional DT clocks so the driver still probes against the older
+        6-clock board description.
       '';
     };
     "dt-bindings-reset-add-sg2002-csi-phy-resets" = {

@@ -403,17 +403,24 @@ with lib.kernel; {
   # the SoC-specific MAC0/VI driver above and never instantiates this module.
   VIDEO_CADENCE_CSI2RX = no;
 
-  # Step 2 (current): the dtsi video-pool@86800000 (48 MiB no-map
-  # shared-dma-pool) serves CSI capture + Coda980 + VPSS — a carveout the
-  # page allocator cannot colonize. The default CMA keeps only small
-  # coherent users (SDIO, GMAC), so 16 MiB suffices and returns RAM the
-  # 256 MiB boot budget needs.
+  # Step 2 (current): the dtsi video-pool@86800000 (32 MiB no-map
+  # shared-dma-pool) serves CSI capture + Coda980 — a carveout the page
+  # allocator cannot colonize. VPSS is deliberately NOT pool-bound (0048):
+  # rmem dma_ops cannot map imported dma-bufs. The default CMA serves the
+  # VPSS<->encoder middle buffers at 1080p (4 x 3.13 MiB) — 24 MiB keeps
+  # them out of the pool, and is only affordable once the fleet drops the
+  # ~88 MiB preserved-initrd pin (usbGadget.stage2.preserveInitrd=false).
   CMA = yes;
   DMA_CMA = yes;
-  CMA_SIZE_MBYTES = freeform "16";
+  CMA_SIZE_MBYTES = freeform "24";
   CMA_SIZE_SEL_MBYTES = yes;
   CMA_SIZE_SEL_PERCENTAGE = no;
   CMA_SYSFS = yes;
+
+  # printk over UDP: the only console that survives the SoC bus-stall
+  # wedges this board's media bring-up keeps hitting (journald lag +
+  # btrfs loss ate every post-mortem before this).
+  NETCONSOLE = module;
 
   MEDIA_SUBDRV_AUTOSELECT = no;
   MEDIA_ANALOG_TV_SUPPORT = no;

@@ -275,7 +275,10 @@
 	/* The VIP scaler/CSC block ("VPSS") at 0x0a080000, driven as a
 	 * mem2mem device (IMG_IN_V + SC_V1) by the sophgo,sg2002-vpss
 	 * driver.  Vendor DTS numbers the shared interrupt PLIC source 25,
-	 * i.e. SOC_PERIPHERAL_IRQ(9) after the 16 core-local IDs. */
+	 * i.e. SOC_PERIPHERAL_IRQ(9) after the 16 core-local IDs.
+	 * Deliberately NOT bound to video_pool: rmem_dma_ops cannot map
+	 * imported dma-bufs, and this node is import-only in the
+	 * capture -> VPSS -> encoder zero-copy chain. */
 	vpss: vpss@a080000 {
 		compatible = "sophgo,sg2002-vpss";
 		reg = <0x0a080000 0x10000>;
@@ -289,9 +292,14 @@
 			 <&clk CLK_SRC_VIP_SYS_2>,
 			 <&clk CLK_IMG_V_VIP>,
 			 <&clk CLK_SC_TOP_VIP>,
-			 <&clk CLK_SC_V1_VIP>;
-		clock-names = "sys0", "sys1", "sys2", "img_v", "sc_top", "sc_v1";
-		memory-region = <&video_pool>;
+			 <&clk CLK_SC_V1_VIP>,
+			 /* The register window hangs off the VIP fabric;
+			  * csi_capture owns these and gates them at stream
+			  * stop — without them a VPSS write stalls the bus. */
+			 <&clk CLK_AXI_VIP>,
+			 <&clk CLK_CFG_REG_VIP>;
+		clock-names = "sys0", "sys1", "sys2", "img_v", "sc_top", "sc_v1",
+			      "axi", "cfg_reg";
 		status = "okay";
 	};
 
