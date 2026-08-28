@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Fri, 28 Aug 2026 17:12:00 +0200
+Subject: [PATCH 0060] media: sophgo: SG2002 CSI: advertise repacked RAW
+
+The CSIBDG DMA does not preserve a CSI-2 RAW10 payload's four-pixels-
+per-five-bytes packing.  It writes the ISP's packed 12-bit memory format:
+two samples occupy three bytes.  The vendor vi driver consequently uses
+`3 * DIV_ROUND_UP(width, 2)` for DMA6's segment length, regardless of the
+sensor's RAW input depth.
+
+Programming the CSI payload length instead made every 2560-pixel line 640
+bytes too short.  Advertise the bridge output as packed RAW12 and program
+the vendor line geometry.  The media-bus side remains RAW10, since that is
+what the GC4653 transmits; only the capture node describes the repacked
+memory representation.
+---
+ drivers/media/platform/sophgo/sg2002-capture.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -272,17 +272,17 @@ static void sg2002_set_hdmi_defaults(struct sg2002_capture *cap)
+ 	cap->yuv_input = true;
+ }
+ 
+-static u32 sg2002_raw10_pixelformat(u32 code)
++static u32 sg2002_repacked_raw_pixelformat(u32 code)
+ {
+ 	switch (code) {
+ 	case MEDIA_BUS_FMT_SRGGB10_1X10:
+-		return V4L2_PIX_FMT_SRGGB10P;
++		return V4L2_PIX_FMT_SRGGB12P;
+ 	case MEDIA_BUS_FMT_SGRBG10_1X10:
+-		return V4L2_PIX_FMT_SGRBG10P;
++		return V4L2_PIX_FMT_SGRBG12P;
+ 	case MEDIA_BUS_FMT_SGBRG10_1X10:
+-		return V4L2_PIX_FMT_SGBRG10P;
++		return V4L2_PIX_FMT_SGBRG12P;
+ 	case MEDIA_BUS_FMT_SBGGR10_1X10:
+-		return V4L2_PIX_FMT_SBGGR10P;
++		return V4L2_PIX_FMT_SBGGR12P;
+ 	default:
+ 		return 0;
+ 	}
+@@ -305,7 +305,7 @@ static void sg2002_adopt_source_format(struct sg2002_capture *cap)
+ 	};
+ 	u32 pixelformat;
+ 
+-	pixelformat = sg2002_raw10_pixelformat(fmt.format.code);
++	pixelformat = sg2002_repacked_raw_pixelformat(fmt.format.code);
+ 	if (!pixelformat)
+ 		return;
+ 
+@@ -313,7 +313,7 @@ static void sg2002_adopt_source_format(struct sg2002_capture *cap)
+ 	cap->mbus_code = fmt.format.code;
+ 	cap->width = fmt.format.width;
+ 	cap->height = fmt.format.height;
+-	cap->bytesperline = ALIGN(cap->width * 10 / 8, 16);
++	cap->bytesperline = ALIGN(3 * DIV_ROUND_UP(cap->width, 2), 16);
+ 	cap->sizeimage = cap->bytesperline * cap->height;
+ 	cap->yuv_input = false;
+ 	dev_info(cap->dev, "RAW source %ux%u code %#x -> %p4cc, %u B/line\n",
+-- 
+2.51.0

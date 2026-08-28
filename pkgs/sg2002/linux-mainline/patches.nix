@@ -242,6 +242,10 @@ let
       name = "media-sophgo-sg2002-csi-arm-sink-before-source";
       patch = ./patches/0059-media-sophgo-SG2002-CSI-arm-sink-before-source.patch;
     })
+    (patch {
+      name = "media-sophgo-sg2002-csi-advertise-repacked-raw";
+      patch = ./patches/0060-media-sophgo-SG2002-CSI-advertise-repacked-RAW.patch;
+    })
   ];
 
   meta = {
