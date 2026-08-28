@@ -4,7 +4,72 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.sg2002.watchdogKeeper;
-  keeper = pkgs.pkgsStatic.busybox;
+  busybox = pkgs.pkgsStatic.busybox;
+  keeper = pkgs.writeShellScript "sg2002-watchdog-keeper" ''
+    set -u
+    BB=${lib.escapeShellArg "${busybox}/bin/busybox"}
+    health_host=${lib.escapeShellArg (if cfg.healthHost == null then "" else cfg.healthHost)}
+
+    if [ -z "$health_host" ]; then
+      exec "$BB" watchdog -F -t 5 -T 85 /dev/watchdog0
+    fi
+
+    "$BB" watchdog -F -t 5 -T 85 /dev/watchdog0 &
+    watchdog_pid=$!
+    trap '"$BB" kill "$watchdog_pid" 2>/dev/null || true; wait "$watchdog_pid" 2>/dev/null || true' EXIT INT TERM
+
+    armed=0
+    failures=0
+    probe_seq=0
+    while "$BB" kill -0 "$watchdog_pid" 2>/dev/null; do
+      probe_seq=$((probe_seq + 1))
+      probe_ok="/run/sg2002-watchdog-health-$$-$probe_seq"
+      "$BB" rm -f "$probe_ok"
+      # A USB-net send can itself sleep uninterruptibly. Keep it outside this
+      # watchdog supervisor so a wedged ping cannot keep the petter alive.
+      ( "$BB" ping -c 1 -W 1 "$health_host" >/dev/null 2>&1 && : > "$probe_ok" ) &
+      probe_pid=$!
+      "$BB" sleep 2
+      "$BB" kill "$probe_pid" >/dev/null 2>&1 || true
+
+      if [ -e "$probe_ok" ]; then
+        "$BB" rm -f "$probe_ok"
+        if [ "$armed" = 0 ]; then
+          echo "sg2002-watchdog-keeper: health armed on $health_host" > /dev/kmsg
+        fi
+        armed=1
+        failures=0
+        "$BB" sleep ${toString (lib.max 1 (cfg.healthCheckIntervalSec - 2))}
+        continue
+      fi
+
+      # Do not punish a slow initrd before the private USB route has worked
+      # once. After it has, persistent loss means the target can no longer
+      # use its NFS root and keeping the watchdog alive preserves a corpse.
+      if [ "$armed" != 1 ]; then
+        "$BB" sleep ${toString (lib.max 1 (cfg.healthCheckIntervalSec - 2))}
+        continue
+      fi
+      failures=$((failures + 1))
+      echo "sg2002-watchdog-keeper: health failed $failures/${toString cfg.healthFailureCount} for $health_host" > /dev/kmsg
+      [ "$failures" -lt ${toString cfg.healthFailureCount} ] || break
+      "$BB" sleep ${toString (lib.max 1 (cfg.healthCheckIntervalSec - 2))}
+    done
+
+    if "$BB" kill -0 "$watchdog_pid" 2>/dev/null; then
+      echo "sg2002-watchdog-keeper: host unreachable; releasing watchdog for hardware reset" > /dev/kmsg
+      "$BB" kill "$watchdog_pid" 2>/dev/null || true
+      wait "$watchdog_pid" 2>/dev/null || true
+      # WATCHDOG_NOWAYOUT keeps the hardware countdown running after close.
+      # Stay alive so systemd's Restart=always cannot reopen and pet it.
+      trap - EXIT INT TERM
+      while :; do
+        "$BB" sleep 60
+      done
+    fi
+
+    wait "$watchdog_pid"
+  '';
   keeperService = {
     description = "Keep the SG2002 hardware watchdog alive across switch-root";
     after = [ "systemd-udevd.service" ];
@@ -16,7 +81,7 @@ let
     };
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${keeper}/bin/busybox watchdog -F -t 5 -T 85 /dev/watchdog0";
+      ExecStart = keeper;
       Restart = "always";
       RestartSec = "250ms";
     };
@@ -26,6 +91,25 @@ in
   options.sg2002.watchdogKeeper = {
     initrd.enable = lib.mkEnableOption "the independent SG2002 initrd watchdog keeper";
     stage2.enable = lib.mkEnableOption "the independent SG2002 stage-2 watchdog keeper";
+    healthHost = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Optional host whose loss releases the nowayout watchdog. Health does
+        not arm until the host has answered once, so slow initrd networking is
+        safe. USB/NFS live targets set this to their private host endpoint.
+      '';
+    };
+    healthCheckIntervalSec = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 5;
+      description = "Seconds between watchdog host-health probes.";
+    };
+    healthFailureCount = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 6;
+      description = "Consecutive failed probes before releasing the watchdog.";
+    };
   };
 
   config = lib.mkMerge [
@@ -45,7 +129,7 @@ in
     (lib.mkIf cfg.initrd.enable {
       # The keeper, rather than a possibly blocked PID 1, owns watchdog0.
       boot.initrd.systemd.settings.Manager.RuntimeWatchdogSec = lib.mkForce "off";
-      boot.initrd.systemd.storePaths = [ keeper ];
+      boot.initrd.systemd.storePaths = [ busybox keeper ];
       boot.initrd.systemd.services.sg2002-watchdog-keeper = keeperService // {
         wantedBy = [ "initrd.target" ];
       };
