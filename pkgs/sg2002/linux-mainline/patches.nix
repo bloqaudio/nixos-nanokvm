@@ -238,6 +238,10 @@ let
       name = "media-sophgo-sg2002-csi-complete-lane-permutation";
       patch = ./patches/0058-media-sophgo-SG2002-CSI-complete-lane-permutation.patch;
     })
+    (patch {
+      name = "media-sophgo-sg2002-csi-arm-sink-before-source";
+      patch = ./patches/0059-media-sophgo-SG2002-CSI-arm-sink-before-source.patch;
+    })
   ];
 
   meta = {
@@ -722,6 +726,16 @@ let
         Completes the PHY data-lane selector permutation for sensors with
         fewer than four active lanes, matching the vendor CIF driver's fill
         of unused logical slots and avoiding duplicate physical selectors.
+      '';
+    };
+    "media-sophgo-sg2002-csi-arm-sink-before-source" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Arms CSI and VI before starting a sensor subdevice so the receiver
+        observes the source's LP-to-HS transition, and reverses that ordering
+        during teardown.
       '';
     };
   };
