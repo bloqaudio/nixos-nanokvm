@@ -637,6 +637,7 @@ let
         android-tools
         bash
         coreutils
+        gawk # nfsLocalExportCheck parses exportfs output
         gnugrep
         inetutils # telnet client for the target busybox telnetd
         iproute2
@@ -769,6 +770,7 @@ let
       runtimeInputs = with pkgs; [
         bash
         coreutils
+        gawk # nfsLocalExportCheck parses exportfs output
         gnugrep
         inetutils
         iproute2
