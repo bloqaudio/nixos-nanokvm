@@ -495,6 +495,7 @@ in
       "systemd.getty_auto=no"
       "udev.children_max=2"
     ];
+    mixins = [ ../modules/sg2002-coda.nix ];
     modules = [
       ({ pkgs, ... }: {
         sg2002.fdt = pkgs.sg2002-dtb-mainline-cam;

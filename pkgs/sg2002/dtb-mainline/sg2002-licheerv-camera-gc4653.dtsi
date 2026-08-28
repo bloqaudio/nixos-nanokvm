@@ -57,14 +57,15 @@
 };
 
 / {
-	/* Deterministic DMA carveout for the capture path: 4.6 MiB per
-	 * 2560x1440 RAW10P frame; the driver's STREAMON-time scratch alloc
+	/* Deterministic DMA carveout for the capture/encode path: 5.5 MiB per
+	 * 2560x1440 RAW12P frame; the driver's STREAMON-time scratch alloc
 	 * plus a shallow buffer queue cannot rely on late-boot CMA on a
 	 * 256 MiB board (observed -ENOMEM at STREAMON without this).
-	 * dma_alloc_from_coherent() rounds each 4.6 MiB frame buffer to an
+	 * dma_alloc_from_coherent() rounds each 5.5 MiB frame buffer to an
 	 * order-11 (8 MiB) 8 MiB-aligned region, so budget 8 MiB per queued
 	 * buffer plus the scratch. The 32 MiB pool covers a shallow three-buffer
-	 * queue plus scratch without taking a quarter of this 256 MiB board.
+	 * queue plus scratch. Coda980's 640x360 firmware and reconstruction
+	 * arena fit in the remaining 16 MiB.
 	 * Its base matches the NanoKVM-PCIe media-pool placement. */
 	reserved-memory {
 		#address-cells = <1>;
@@ -74,7 +75,8 @@
 		video_pool: video-pool@86800000 {
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0x86800000 0x2000000>;
+			/* End exactly where the default-CMA window begins. */
+			reg = <0x86800000 0x3000000>;
 		};
 	};
 
@@ -103,6 +105,28 @@
 	ddr_top: syscon@800a000 {
 		compatible = "sophgo,sg2002-ddr-top", "syscon";
 		reg = <0x0800a000 0x1000>;
+	};
+
+	/* The generic SoC node is disabled, and the standalone DTB builder
+	 * consumes an unpatched kernel source. Keep the complete enabled node
+	 * here, sharing the deterministic media pool with CSI capture. */
+	video-codec@b030000 {
+		compatible = "sophgo,sg2002-coda980";
+		reg = <0x0b030000 0x100>, <0x0b010000 0x10000>;
+		reg-names = "vc-ctrl", "h264";
+		interrupts = <SOC_PERIPHERAL_IRQ(5) IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "h264";
+		clocks = <&clk CLK_AXI_VIDEO_CODEC>,
+			 <&clk CLK_CFG_REG_VC>,
+			 <&clk CLK_VC_SRC0>,
+			 <&clk CLK_H264C>,
+			 <&clk CLK_APB_H264C>;
+		clock-names = "axi-video-codec", "cfg-reg-vc", "vc-src0",
+			      "h264c", "apb-h264c";
+		resets = <&rst RST_H264C>;
+		firmware-name = "sophgo/sg2002/coda980.bin";
+		memory-region = <&video_pool>;
+		status = "okay";
 	};
 
 	/* CSI MAC0 -> CSIBDG0 -> DMA6 capture, as on the NanoKVM-PCIe

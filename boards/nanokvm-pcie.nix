@@ -9,7 +9,6 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }: {
   imports = [
@@ -24,6 +23,7 @@
     # variant.
     ../modules/oled.nix
     ../modules/sg2002-usb-gadget-options.nix
+    ../modules/sg2002-coda.nix
   ];
 
   # Accurate USB gadget identity for this board (was hardcoded to the
@@ -73,25 +73,4 @@
   sg2002.initrd.availableKernelModules = [ "mmc_block" ];
   sg2002.initrd.kernelModules = [ "mmc_block" ];
 
-  # The Coda980 node is enabled only by the PCIe mainline DTB. Keep its
-  # firmware separate from the broader factory runtime and preserve the
-  # literal name consumed by request_firmware(). The module is stage-2 only:
-  # the NFS-live initrd has no encoder users and should not pay for it.
-  hardware.firmware = lib.optionals (config.sg2002.kernel == "mainline") [
-    pkgs.sg2002-coda980-firmware
-  ];
-  environment.systemPackages = lib.optionals (config.sg2002.kernel == "mainline") [
-    pkgs.sg2002-h264-bridge
-  ];
-  boot.kernelModules = lib.optionals (config.sg2002.kernel == "mainline") [
-    "coda-vpu"
-    # VPSS scaler: one-shot conversion is hardware-validated (2026-08-18)
-    # and the DT node claims its own fabric clocks, so udev autoload is
-    # fine — but keep it out of the boot critical path on this 256 MiB
-    # board until a full production boot with the 0048-0052 queue has
-    # soaked.
-  ];
-  systemd.tmpfiles.rules = lib.optionals (config.sg2002.kernel == "mainline") [
-    "L+ /lib/firmware - - - - /run/current-system/firmware"
-  ];
 }

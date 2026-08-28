@@ -1538,7 +1538,7 @@ static int live_bridge(const struct bridge_options *opts)
 		goto out_errno;
 	encoder_out_on = 1;
 	if (map_queue(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
-		      CAPTURE_BUFFERS, &capture_queue))
+		      opts->capture_buffers, &capture_queue))
 		goto out_errno;
 	for (i = 0; i < capture_queue.count; i++)
 		if (queue_buffer(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, i, 0))
@@ -2277,8 +2277,8 @@ static void usage(const char *program)
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
-		"  --capture-buffers N  vpss mode: CSI queue depth (default 4; 3 fits the\n"
-		"                       32 MiB media pool at 1080p)\n"
+		"  --capture-buffers N  CSI queue depth (default 4; 3 fits the camera's\n"
+		"                       deterministic media-pool budget)\n"
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
 		"  --gop N              encoder GOP size (default 30)\n",
 		program, program, program);
