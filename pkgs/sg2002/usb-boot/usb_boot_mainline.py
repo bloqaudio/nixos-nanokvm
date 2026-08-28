@@ -47,6 +47,12 @@ DWC2_DCTL_SFTDISCON = 1 << 1
 FASTBOOT_VENDOR_ID = 0x18d1
 FASTBOOT_PRODUCT_ID = 0xd00d
 
+# Cvitek's BootROM CDC ACM gadget.  Do not start an attempt's transfer
+# timeout until this device has actually appeared: an unattended runner can
+# be armed minutes before somebody resets the board into ROM mode.
+ROM_VENDOR_ID = 0x3346
+ROM_PRODUCT_ID = 0x1000
+
 
 _SERIAL_AUTO = "<auto>"  # sentinel: device present but iSerial empty
 
@@ -101,6 +107,24 @@ def find_nanokvm_fastboot_serial():
     return None
 
 
+def find_nanokvm_rom_device():
+    """Return True while the Cvitek BootROM USB device is enumerated."""
+    base = "/sys/bus/usb/devices"
+    if not os.path.isdir(base):
+        return False
+    for entry in os.listdir(base):
+        try:
+            with open(os.path.join(base, entry, "idVendor")) as f:
+                vid = int(f.read().strip(), 16)
+            with open(os.path.join(base, entry, "idProduct")) as f:
+                pid = int(f.read().strip(), 16)
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if vid == ROM_VENDOR_ID and pid == ROM_PRODUCT_ID:
+            return True
+    return False
+
+
 def main():
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -135,12 +159,13 @@ def main():
                         'retry more (see --attempts).')
     p.add_argument('--attempts', type=int, default=60,
                    help='how many rom-dl invocations to make before '
-                        'giving up. Per-attempt timeout = rom-dl-timeout / '
-                        'attempts, floored at 15s. After each attempt we '
-                        'poll fastboot for 6s; if found, stop retrying. '
-                        '15s/attempt gives FSBL enough room for the '
-                        'cvi_utask 2nd-stage push. Generous default so flaky '
-                        'hub paths still converge.')
+                        'giving up. Waiting for the ROM device consumes the '
+                        'overall rom-dl-timeout but not an attempt transfer '
+                        'window. Each detected transfer gets up to 120s (or '
+                        'rom-dl-timeout / attempts when larger). After each '
+                        'attempt we poll fastboot for 6s; if found, stop '
+                        'retrying. Generous default so flaky hub paths still '
+                        'converge.')
     p.add_argument('--rom-dl-verbose', action='store_true',
                    help='let cv181x-rom-dl write to our stderr instead of '
                         'discarding (useful for debugging which stage hung)')
@@ -231,26 +256,52 @@ def main():
         # invocation, then a fastboot probe. If fastboot enumerates,
         # we move on. If not, try rom-dl again. Stop after a.attempts.
         outsink = None if a.rom_dl_verbose else subprocess.DEVNULL
-        # Per-attempt timeout floored high (45s): a *successful* push is
+        # Per-attempt timeout floored high (120s): a *successful* push is
         # multi-stage (1st-stage FSBL → cvi_utask 2nd-stage → OpenSBI+
-        # U-Boot), which over a hub takes 15-25s; a 15s ceiling killed it
-        # mid-2nd-stage so U-Boot never came up. EIO attempts (device
-        # cycled mid-send) still return in ~2s, so the high ceiling only
-        # bites on a real push — exactly when we want to let it finish.
-        per_attempt = max(45.0, a.rom_dl_timeout / max(a.attempts, 1))
+        # U-Boot). The Claw path through fuckup has taken about 70s in real
+        # use; a 45s ceiling killed a valid push mid-2nd-stage. EIO attempts
+        # (device cycled mid-send) still return quickly, so the high ceiling
+        # only bites on a real push — exactly when we want to let it finish.
+        #
+        # rom-dl-timeout remains an overall wall-clock budget. Crucially, we
+        # wait for 3346:1000 *before* starting an attempt. Previously a runner
+        # armed 86s before reset could spend 86s of a 90s attempt polling and
+        # then kill the newly-started transfer four seconds later.
+        rom_deadline = time.monotonic() + a.rom_dl_timeout
+        per_attempt = max(120.0,
+                          a.rom_dl_timeout / max(a.attempts, 1))
+        saw_fastboot = False
         for attempt in range(1, a.attempts + 1):
+            while time.monotonic() < rom_deadline:
+                seen = find_fastboot_target()
+                if seen:
+                    log(f"  fastboot live: {seen}")
+                    saw_fastboot = True
+                    break
+                if find_nanokvm_rom_device():
+                    break
+                time.sleep(0.1)
+            if saw_fastboot:
+                break
+
+            remaining = rom_deadline - time.monotonic()
+            if remaining <= 0:
+                log("rom-dl timeout expired while waiting for the "
+                    f"{ROM_VENDOR_ID:04x}:{ROM_PRODUCT_ID:04x} ROM gadget")
+                break
+            attempt_timeout = min(per_attempt, remaining)
             log(f"attempt {attempt}/{a.attempts}: "
-                f"rom-dl push (per-attempt timeout {per_attempt:.0f}s)...")
+                f"rom-dl push (per-attempt timeout {attempt_timeout:.0f}s)...")
             try:
                 rc = subprocess.call(
                     [a.rom_dl, '--image_dir', a.fip],
                     stdout=outsink,
                     stderr=outsink,
-                    timeout=per_attempt,
+                    timeout=attempt_timeout,
                 )
                 log(f"  rom-dl exited {rc}")
             except subprocess.TimeoutExpired:
-                log(f"  rom-dl still running at {per_attempt:.0f}s — killing "
+                log(f"  rom-dl still running at {attempt_timeout:.0f}s — killing "
                     f"(FIP push has either happened or it's stuck polling)")
 
             # Quick fastboot probe — if the device transitioned, exit
@@ -267,10 +318,11 @@ def main():
                 time.sleep(0.2)
             if seen:
                 log(f"  fastboot live: {seen}")
+                saw_fastboot = True
                 break
             else:
                 log(f"  no fastboot yet — retrying rom-dl")
-        else:
+        if not saw_fastboot:
             log("rom-dl never produced a fastboot gadget after "
                 f"{a.attempts} attempts — giving up")
 
