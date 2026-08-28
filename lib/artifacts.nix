@@ -622,7 +622,8 @@ let
         if [ "$ssh_ready" = 1 ]; then
           echo "[usb-boot] SSH is up: ssh -o StrictHostKeyChecking=accept-new root@$nanokvm_target_ip (password: nixos)"
         else
-          echo "[usb-boot] SSH did not answer yet"
+          echo "[usb-boot] SSH did not answer" >&2
+          exit 1
         fi
       '';
       # Nothing to babysit after detach: the store is served by the
