@@ -63,9 +63,10 @@
 	 * 256 MiB board (observed -ENOMEM at STREAMON without this).
 	 * dma_alloc_from_coherent() rounds each 5.5 MiB frame buffer to an
 	 * order-11 (8 MiB) 8 MiB-aligned region, so budget 8 MiB per queued
-	 * buffer plus the scratch. The 32 MiB pool covers a shallow three-buffer
-	 * queue plus scratch. Coda980's small 640x360 arena gets first claim on
-	 * the same pool; vb2 may reduce the requested CSI queue if necessary.
+	 * buffer plus the scratch. The 32 MiB pool covers Coda980's small 640x360
+	 * arena plus a double-buffered CSI queue and scratch. The capture driver
+	 * permits that explicit two-buffer queue; larger queues do not fit once
+	 * Coda is active.
 	 * Its base matches the NanoKVM-PCIe media-pool placement. */
 	reserved-memory {
 		#address-cells = <1>;

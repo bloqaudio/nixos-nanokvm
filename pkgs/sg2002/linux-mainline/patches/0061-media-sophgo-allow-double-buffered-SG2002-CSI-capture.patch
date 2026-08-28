@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Fri, 28 Aug 2026 21:05:00 +0200
+Subject: [PATCH 0061] media: sophgo: allow double-buffered SG2002 CSI capture
+
+vb2 adds one buffer to min_queued_buffers when sizing a REQBUFS queue.
+The SG2002 driver set that minimum to two, so an application asking for
+two buffers received three.  A double-buffered queue is sufficient: one
+buffer is active in the VI DMA engine while the other remains queued,
+and the driver's scratch buffer already absorbs frames if userspace does
+not return a buffer before the following interrupt.
+
+Allow the two-buffer queue by setting min_queued_buffers to one.  This
+saves one order-11 RAW12 allocation on the 256 MiB LicheeRV camera node,
+where the 32 MiB shared media pool also holds Coda980 state.  Applications
+requesting three or more buffers are unchanged.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/sophgo/sg2002-capture.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+index 90f35bb1d..2f72a55d1 100644
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -1352,7 +1352,7 @@ static int sg2002_probe(struct platform_device *pdev)
+ 	q->ops = &sg2002_vb2_ops;
+ 	q->mem_ops = &vb2_dma_contig_memops;
+ 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+-	q->min_queued_buffers = 2;
++	q->min_queued_buffers = 1;
+ 	q->dev = cap->dev;
+ 	ret = vb2_queue_init(q);
+ 	if (ret)
+-- 
+2.54.0

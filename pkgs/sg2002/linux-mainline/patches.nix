@@ -246,6 +246,10 @@ let
       name = "media-sophgo-sg2002-csi-advertise-repacked-raw";
       patch = ./patches/0060-media-sophgo-SG2002-CSI-advertise-repacked-RAW.patch;
     })
+    (patch {
+      name = "media-sophgo-allow-double-buffered-sg2002-csi-capture";
+      patch = ./patches/0061-media-sophgo-allow-double-buffered-SG2002-CSI-capture.patch;
+    })
   ];
 
   meta = {
@@ -740,6 +744,17 @@ let
         Arms CSI and VI before starting a sensor subdevice so the receiver
         observes the source's LP-to-HS transition, and reverses that ordering
         during teardown.
+      '';
+    };
+    "media-sophgo-allow-double-buffered-sg2002-csi-capture" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Allows an explicit two-buffer RAW capture queue. The DMA engine uses
+        one active buffer while the second remains queued, and the existing
+        scratch buffer absorbs starvation. This keeps the LicheeRV camera's
+        capture plus Coda980 state within the proven 32 MiB media pool.
       '';
     };
   };

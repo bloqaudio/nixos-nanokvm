@@ -677,15 +677,24 @@ static int map_queue(int fd, enum v4l2_buf_type type, unsigned int requested,
 	};
 	unsigned int i;
 
-	if (xioctl(fd, VIDIOC_REQBUFS, &request))
+	if (xioctl(fd, VIDIOC_REQBUFS, &request)) {
+		int saved_errno = errno;
+
+		fprintf(stderr, "VIDIOC_REQBUFS mmap type=%u count=%u: %s\n",
+			type, requested, strerror(saved_errno));
+		errno = saved_errno;
 		return -1;
+	}
 	if (request.count < 1) {
 		errno = ENOBUFS;
 		return -1;
 	}
 	queue->bufs = calloc(request.count, sizeof(*queue->bufs));
-	if (!queue->bufs)
+	if (!queue->bufs) {
+		fprintf(stderr, "calloc V4L2 mmap queue count=%u: %s\n",
+			request.count, strerror(errno));
 		return -1;
+	}
 	queue->count = request.count;
 	for (i = 0; i < queue->count; i++) {
 		struct v4l2_buffer buffer = {
@@ -693,14 +702,25 @@ static int map_queue(int fd, enum v4l2_buf_type type, unsigned int requested,
 			.memory = V4L2_MEMORY_MMAP,
 			.index = i,
 		};
-		if (xioctl(fd, VIDIOC_QUERYBUF, &buffer))
+		if (xioctl(fd, VIDIOC_QUERYBUF, &buffer)) {
+			int saved_errno = errno;
+
+			fprintf(stderr, "VIDIOC_QUERYBUF mmap type=%u index=%u: %s\n",
+				type, i, strerror(saved_errno));
+			errno = saved_errno;
 			return -1;
+		}
 		queue->bufs[i].length = buffer.length;
 		queue->bufs[i].dmabuf_fd = -1;
 		queue->bufs[i].addr = mmap(NULL, buffer.length, PROT_READ | PROT_WRITE,
 					  MAP_SHARED, fd, buffer.m.offset);
 		if (queue->bufs[i].addr == MAP_FAILED) {
+			int saved_errno = errno;
+
 			queue->bufs[i].addr = NULL;
+			fprintf(stderr, "mmap V4L2 buffer type=%u index=%u length=%u: %s\n",
+				type, i, buffer.length, strerror(saved_errno));
+			errno = saved_errno;
 			return -1;
 		}
 	}
@@ -1487,9 +1507,11 @@ static int live_bridge(const struct bridge_options *opts)
 	output_queued = calloc(encoder_out.count, sizeof(*output_queued));
 	if (!output_queued)
 		goto out_errno;
+	init_step = "encoder capture buffer allocation";
 	if (map_queue(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 		      ENCODER_CAP_BUFFERS, &encoder_cap))
 		goto out_errno;
+	init_step = "encoder capture QBUF";
 	for (i = 0; i < encoder_cap.count; i++)
 		if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, i, 0))
 			goto out_errno;
@@ -1531,18 +1553,23 @@ static int live_bridge(const struct bridge_options *opts)
 		output_queued[0] = 1;
 		free_output = encoder_out.count - 1;
 	}
+	init_step = "encoder capture STREAMON";
 	if (stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
 		goto out_errno;
 	encoder_cap_on = 1;
+	init_step = "encoder output STREAMON";
 	if (stream(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, 1))
 		goto out_errno;
 	encoder_out_on = 1;
+	init_step = "CSI capture buffer allocation";
 	if (map_queue(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 		      opts->capture_buffers, &capture_queue))
 		goto out_errno;
+	init_step = "CSI capture QBUF";
 	for (i = 0; i < capture_queue.count; i++)
 		if (queue_buffer(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, i, 0))
 			goto out_errno;
+	init_step = "CSI capture STREAMON";
 	if (stream(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
 		goto out_errno;
 	capture_on = 1;
@@ -2277,8 +2304,8 @@ static void usage(const char *program)
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
-		"  --capture-buffers N  CSI queue depth (default 4; 3 fits the camera's\n"
-		"                       deterministic media-pool budget)\n"
+		"  --capture-buffers N  CSI queue depth (default 4; 2 fits the camera's\n"
+		"                       shared capture/Coda media-pool budget)\n"
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
 		"  --gop N              encoder GOP size (default 30)\n",
 		program, program, program);
