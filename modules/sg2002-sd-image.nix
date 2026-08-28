@@ -1,89 +1,278 @@
-# Include — populate an SD card image (via nixpkgs's sd-image-aarch64
-# recipe, generalised). Works in combination with either the
-# extlinux.nix or vendor-fit.nix include:
-#   - extlinux: firmware partition holds fip.bin; root partition
-#     holds the extlinux.conf tree.
-#   - vendor-fit: firmware partition holds fip.bin + boot.sd + uEnv.txt
-#     (via vendor-fit.nix's system.build.{boot-fit,uenv,fip}); root
-#     partition is empty save for /etc (stage-2 system lives in
-#     /nix/store on root).
+# SG2002 SD-card boot media, defined with disko.
+#
+# The SG2002 ROM is picky: the FAT firmware partition containing fip.bin
+# must start at LBA 1. Use disko's legacy MSDOS table backend so the disk
+# layout itself is declarative instead of patching a generic sd-image after
+# the fact.
 {
   config,
   lib,
-  modulesPath,
   pkgs,
   ...
 }: let
-  cfg = config.sg2002;
-  usingVendorFit = config ? system.build.boot-fit;
+  firmwareLabel = "FIRMWARE";
+  rootLabel = "NIXOS_SD";
+  imageName = "${config.networking.hostName}-sg2002-sd";
+  partitionDevice = device: index:
+    if builtins.match "/dev/(disk|zvol)/.+" device != null
+    then "${device}-part${toString index}"
+    else if builtins.match "/dev/((nvme|mmcblk).+|md/.*[[:digit:]])" device != null
+    then "${device}p${toString index}"
+    else "${device}${toString index}";
+  nativePkgs = import pkgs.path {
+    system = pkgs.buildPackages.stdenv.hostPlatform.system;
+    config = pkgs.config;
+  };
+  imageBuilderPkgs = nativePkgs.extend (final: prev: {
+    aggregateModules = modules:
+      (prev.aggregateModules modules).overrideAttrs (old: {
+        passthru =
+          (old.passthru or {})
+          // {
+            target = (builtins.head modules).target;
+          };
+      });
+  });
+  diskDevice = config.disko.devices.disk.sg2002-sd.device;
+  firmwarePart = partitionDevice diskDevice 1;
+  rootPart = partitionDevice diskDevice 2;
+  upstreamExtlinuxBuilder = import "${pkgs.path}/nixos/modules/system/boot/loader/generic-extlinux-compatible/extlinux-conf-builder.nix" {
+    inherit lib pkgs;
+  };
+  # The generic builder's plain `cp` may use Btrfs copy_file_range and retain
+  # a Nix-store file's shared, fragmented extent map. U-Boot's Btrfs reader is
+  # much less exercised than Linux's; make boot payloads independent copies.
+  targetExtlinuxBuilder = pkgs.runCommand "sg2002-extlinux-conf-builder" {} ''
+    cp ${upstreamExtlinuxBuilder} "$out"
+    substituteInPlace "$out" \
+      --replace-fail 'cp -r $src $dstTmp' 'cp --reflink=never -r $src $dstTmp'
+    chmod +x "$out"
+  '';
+  targetExtlinuxBuilderArgs =
+    "-g ${toString config.boot.loader.generic-extlinux-compatible.configurationLimit} "
+    + "-t ${if config.boot.loader.timeout == null then "-1" else toString config.boot.loader.timeout}"
+    + lib.optionalString (config.hardware.deviceTree.name != null) " -n ${config.hardware.deviceTree.name}"
+    + lib.optionalString (!config.boot.loader.generic-extlinux-compatible.useGenerationDeviceTree) " -r";
+  # Sipeed's BootROM-known-good images use FAT16 for this small boot
+  # volume. Forcing FAT32 on 16 MiB creates only ~32k clusters, below
+  # FAT32's specified 65525 minimum and unsafe for strict readers.
+  formatSg2002Filesystems = pkgs.writeShellApplication {
+    name = "format-sg2002-sd-filesystems";
+    text = ''
+      set -euo pipefail
 
-  fipPkg =
-    if cfg.uboot == "mainline"
-    then pkgs.sg2002-fip-mainline-uboot
-    else pkgs.sg2002-fip;
+      for part in "${firmwarePart}" "${rootPart}"; do
+        for attempt in $(${imageBuilderPkgs.coreutils}/bin/seq 1 120); do
+          if [ -b "$part" ]; then
+            break
+          fi
+          if [ "$attempt" -eq 120 ]; then
+            echo "partition $part did not appear" >&2
+            exit 1
+          fi
+          ${imageBuilderPkgs.coreutils}/bin/sleep 1
+        done
+      done
+
+      ${imageBuilderPkgs.dosfstools}/bin/mkfs.vfat -F 16 -n ${firmwareLabel} "${firmwarePart}"
+      ${imageBuilderPkgs.btrfs-progs}/bin/mkfs.btrfs -f -L ${rootLabel} "${rootPart}"
+
+      ${imageBuilderPkgs.systemdMinimal}/bin/udevadm trigger --subsystem-match=block || true
+      ${imageBuilderPkgs.systemdMinimal}/bin/udevadm settle --timeout=120 || true
+    '';
+  };
+  formatMount = pkgs.writeShellApplication {
+    name = "sg2002-disko-format-mount";
+    text = ''
+      set -euo pipefail
+      ${lib.getExe config.system.build.format}
+      ${lib.getExe formatSg2002Filesystems}
+      ${lib.getExe config.system.build.mount}
+    '';
+  };
+  destroyFormatMount = pkgs.writeShellApplication {
+    name = "sg2002-disko-destroy-format-mount";
+    text = ''
+      set -euo pipefail
+      ${lib.getExe config.system.build.destroy} "$@"
+      ${lib.getExe config.system.build.format}
+      ${lib.getExe formatSg2002Filesystems}
+      ${lib.getExe config.system.build.mount}
+    '';
+  };
+  installBootLoader = pkgs.writeShellScript "install-sg2002-extlinux-boot" ''
+    set -euo pipefail
+
+    ${pkgs.coreutils}/bin/mkdir -p /boot/nixos
+    # Keep the rest of the small root compressed, but give U-Boot plain,
+    # compact extents. This directory property is inherited by new payloads;
+    # --reflink=never above ensures each installed generation is newly laid out.
+    ${pkgs.btrfs-progs}/bin/btrfs property set /boot/nixos compression none
+    ${targetExtlinuxBuilder} ${targetExtlinuxBuilderArgs} -c "$@" -d /boot
+
+    if [ -d /firmware ]; then
+      ${pkgs.coreutils}/bin/install -D -m 0644 ${config.system.build.fip}/fip.bin /firmware/fip.bin
+      ${pkgs.coreutils}/bin/sync -f /firmware/fip.bin 2>/dev/null || ${pkgs.coreutils}/bin/sync
+    else
+      echo "warning: /firmware is not mounted; fip.bin was not installed" >&2
+    fi
+  '';
+  rootPartitionNeedsGrowth = pkgs.writeShellScript "sg2002-root-partition-needs-growth" ''
+    set -eu
+
+    disk_sectors="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0/size)"
+    part_start="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0p2/start)"
+    part_sectors="$(${pkgs.coreutils}/bin/cat /sys/class/block/mmcblk0p2/size)"
+
+    # ExecCondition succeeds only while more than 1 MiB remains after p2.
+    # Once the image has consumed the card, skip cloud-utils growpart before
+    # it takes an exclusive whole-device lock and waits for udev on every boot.
+    test "$((part_start + part_sectors + 2048))" -lt "$disk_sectors"
+  '';
+  sdImage = pkgs.runCommand "${imageName}-${config.system.nixos.label}" {} ''
+    mkdir -p "$out/sd-image" "$out/nix-support"
+    ln -s ${config.system.build.diskoImages}/${imageName}.raw \
+      "$out/sd-image/${imageName}-${config.system.nixos.label}-${pkgs.stdenv.hostPlatform.system}.img"
+    echo "file sd-image $out/sd-image/${imageName}-${config.system.nixos.label}-${pkgs.stdenv.hostPlatform.system}.img" \
+      > "$out/nix-support/hydra-build-products"
+    echo "${pkgs.stdenv.hostPlatform.system}" > "$out/nix-support/system"
+  '';
 in {
-  imports = [
-    "${modulesPath}/installer/sd-card/sd-image.nix"
-  ];
-
   config = {
-    # sd-image would pull a grab-bag of initrd modules "just in
-    # case"; the SG2002 doesn't need them and with our pruned kernel
-    # those modules simply don't exist.
-    boot.initrd.availableKernelModules = lib.mkForce [];
-    boot.initrd.kernelModules = lib.mkForce [];
+    # The SG2002 does not need nixpkgs' generic SD-card initrd module set.
+    sg2002.initrd.pruneKernelModules = true;
+    # The board-support module force-prunes the generic initrd module set, so
+    # supportedFilesystems alone cannot retain a modular Btrfs driver.
+    sg2002.initrd.availableKernelModules = ["btrfs"];
 
-    boot.kernelParams = [
-      "root=/dev/disk/by-label/${config.sdImage.rootVolumeLabel}"
-      "rootwait"
-      "rw"
-      "console=ttyS0,115200"
-      "earlycon=sbi"
-      "ignore_loglevel"
+    # These deployed SD images are not self-reconfiguring systems. Besides
+    # shrinking the target, disabling the installer tools avoids pulling
+    # cross-built helper payloads (notably bcachefs-tools) into the closure.
+    system.disableInstallerTools = true;
+
+    boot = {
+      growPartition = lib.mkDefault true;
+      supportedFilesystems = lib.mkDefault [
+        "btrfs"
+        "vfat"
+      ];
+      initrd.supportedFilesystems = lib.mkDefault [
+        "btrfs"
+      ];
+      kernelParams = [
+        "root=/dev/disk/by-label/${rootLabel}"
+        "rootwait"
+        "rw"
+        "rootfstype=btrfs"
+        (if config.sg2002.consoleDevice == "tty0" then
+          "console=tty0"
+        else
+          "console=${config.sg2002.consoleDevice},115200")
+        "earlycon=sbi"
+        "ignore_loglevel"
+      ];
+    };
+
+    systemd.services.growpart.serviceConfig.ExecCondition = [
+      rootPartitionNeedsGrowth
     ];
 
-    sdImage = {
-      compressImage = lib.mkDefault false;
-      # Vendor-FIT path overflows 30 MiB default; 256 gives headroom
-      # for both extlinux and vendor-fit firmware payloads.
-      firmwareSize = lib.mkDefault 256;
+    disko = {
+      # The legacy `table` backend is required here because the SG2002 ROM
+      # expects a FAT partition starting at LBA 1. It can create/format/mount
+      # that layout, but its generated NixOS fileSystems config is not reliable
+      # for this table type, so fileSystems are declared explicitly below.
+      enableConfig = false;
 
-      populateFirmwareCommands =
-        if usingVendorFit
-        then ''
-          cp ${fipPkg}/fip.bin             firmware/fip.bin
-          cp ${config.system.build.boot-fit} firmware/boot.sd
-          cp ${config.system.build.uenv}     firmware/uEnv.txt
-        ''
-        else ''
-          cp ${fipPkg}/fip.bin firmware/fip.bin
-        '';
+      imageBuilder = {
+        enableBinfmt = true;
+        imageFormat = "raw";
+        name = imageName;
+        copyNixStoreThreads = 4;
+        pkgs = imageBuilderPkgs;
+        kernelPackages = imageBuilderPkgs.linuxPackages_latest;
+      };
 
-      populateRootCommands =
-        if config.boot.loader.generic-extlinux-compatible.enable
-        then ''
-          mkdir -p ./files/boot
-          ${config.boot.loader.generic-extlinux-compatible.populateCmd} \
-            -c ${config.system.build.toplevel} -d ./files/boot
-        ''
-        else "";
+      devices.disk.sg2002-sd = {
+        type = "disk";
+        device = "/dev/mmcblk0";
+        imageName = imageName;
+        imageSize = lib.mkDefault "4G";
+        content = {
+          type = "table";
+          format = "msdos";
+          partitions = [
+            {
+              name = "firmware";
+              part-type = "primary";
+              # Keep the vendor image's MBR type 0x0c even though the volume
+              # itself is FAT16; the BootROM-known-good image uses this exact
+              # combination.
+              fs-type = "fat32";
+              start = "1s";
+              end = "32768s";
+              bootable = true;
+            }
+            {
+              name = "root";
+              part-type = "primary";
+              fs-type = "btrfs";
+              start = "49152s";
+              end = "100%";
+            }
+          ];
+        };
+      };
 
-      # Partition bootable-flag setup.
-      # - ROM loads fip.bin from the FAT firmware partition, picked
-      #   by MBR bootable flag → partition 1 MUST be active.
-      # - Mainline U-Boot's distro_bootcmd iterates partitions listed
-      #   by `part list -bootable`; without activating partition 2 it
-      #   never scans the ext4 root for extlinux.conf.
-      # MBR allows the active bit on multiple entries (first match
-      # wins for the ROM, which comes before U-Boot).
-      postBuildCommands =
-        if config.boot.loader.generic-extlinux-compatible.enable
-        then ''
-          sfdisk --activate $img 1 2
-        ''
-        else ''
-          sfdisk --activate $img 1
-        '';
+      devices.nodev = {
+        "/" = {
+          fsType = "btrfs";
+          device = "/dev/disk/by-label/${rootLabel}";
+          mountOptions = [
+            "noatime"
+            "compress=zstd:3"
+          ];
+        };
+        "/firmware" = {
+          fsType = "vfat";
+          device = "/dev/disk/by-label/${firmwareLabel}";
+          mountOptions = [
+            "umask=0022"
+          ];
+        };
+      };
     };
+
+    fileSystems = {
+      "/" = {
+        device = "/dev/disk/by-label/${rootLabel}";
+        fsType = "btrfs";
+        options = [
+          "noatime"
+          "compress=zstd:3"
+        ];
+        neededForBoot = true;
+        autoResize = true;
+      };
+      "/firmware" = {
+        device = "/dev/disk/by-label/${firmwareLabel}";
+        fsType = "vfat";
+        options = [
+          "umask=0022"
+          "nofail"
+        ];
+        neededForBoot = true;
+      };
+    };
+
+    system.build = {
+      formatMount = lib.mkForce formatMount;
+      destroyFormatMount = lib.mkForce destroyFormatMount;
+      installBootLoader = lib.mkForce installBootLoader;
+      sdImage = sdImage;
+      sdImageRaw = config.system.build.diskoImages;
+      sdImageScript = config.system.build.diskoImagesScript;
+    };
+    system.boot.loader.id = lib.mkForce "sg2002-extlinux";
   };
 }

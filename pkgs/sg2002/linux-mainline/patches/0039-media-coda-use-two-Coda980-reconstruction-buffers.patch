@@ -1,0 +1,41 @@
+From fec967d8642ed9cc294db20e9949f51b23bf4b97 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Mon, 10 Aug 2026 02:28:33 +0200
+Subject: [PATCH] media: coda: use two Coda980 reconstruction buffers
+
+Coda980 reuses the Coda9 command ABI, but its Coda960 product-model
+branch makes the H.264 encoder allocate four internal framebuffers. The
+set-frame command already advertises two for this path, leaving the other
+allocations unregistered with firmware.
+
+The vendor Coda980 VPU API requires two normal H.264 buffers: the
+reconstructed frame and its reference. It rejects a smaller registration,
+retains the supplied count, and writes that count to CMD_SET_FRAME_BUF_NUM.
+
+Select two internal buffers through the Coda980 ABI capability. Keep the
+existing four-buffer Coda960 allocation unchanged.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/chips-media/coda/coda-bit.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index b648786c6..5ae013a56 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -1420,7 +1420,10 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 	ctx->initialized = 1;
+ 
+ 	if (dst_fourcc != V4L2_PIX_FMT_JPEG) {
+-		if (dev->devtype->product == CODA_960)
++		/* Coda980 uses two reconstruction buffers: current and reference. */
++		if (dev->devtype->has_coda980_h264_abi)
++			ctx->num_internal_frames = 2;
++		else if (dev->devtype->product == CODA_960)
+ 			ctx->num_internal_frames = 4;
+ 		else
+ 			ctx->num_internal_frames = 2;
+-- 
+2.54.0
+

@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """postPatch for sg2002-cv181x-usb-dl.
 
-Two fixes against the upstream Sipeed package:
+Four fixes against the upstream Sipeed package:
 
-1. `cv181x_rom_usb_download.py` enters an infinite poll loop
-   ("Connecting to ROM 2nd stage...") after the FIP push, looking for
-   the vendor `uboot_cvi_vidpid` (3346:1001) USB gadget. That gadget
-   never appears with mainline U-Boot — mainline replaces cvi_utask
-   with the standard fastboot gadget (18d1:d00d) which the *wrapper*
-   `usb_boot_mainline.py` polls for separately. We short-circuit the
-   2nd-stage loop to `sys.exit(0)` immediately after BREAK.
-
-2. `cv_usb_pyserial.py` opens the serial device with `timeout=10000`
+1. `cv_usb_pyserial.py` opens the serial device with `timeout=10000`
    (ten THOUSAND seconds). When the CV181x ROM disconnects mid-read
    (~1 s after each enumeration cycle in USB-DL mode), pyserial
    blocks for ~2.8 hours on the next read. We change it to
    `timeout=1.0` so each read fails fast and the script can be
    retried from the next ROM cycle.
 
-Idempotent — both fixes are skipped if their marker text is present.
+2. Its redundant 100 ms delay before opening the newly enumerated ACM
+   device wastes a material part of the ROM's short connection window.
+
+3. The sender calls pyserial's deprecated `flushOutput()` immediately
+   after each write. Despite its name, that is an alias for
+   `reset_output_buffer()` and discards bytes which have not reached the
+   device yet. Replace it with `flush()`, which waits for queued bytes to
+   drain before reading the acknowledgement.
+
+4. A failed packet is retried forever inside `usb_send_chunk()`, so the
+   outer recovery loop cannot start a clean downloader process until its
+   coarse timeout kills the child. Limit each packet to three attempts
+   and raise an error so the outer loop can retry promptly.
+
+Idempotent — all fixes are skipped if their marker text is present.
 """
 import re
 import sys
@@ -27,7 +33,8 @@ import sys
 MARKER = "# patched by sg2002-cv181x-rom-dl-skip-2nd-stage.py"
 TIMEOUT_MARKER = "# patched timeout: short read so disconnect doesn't deadlock"
 FAST_OPEN_MARKER = "# patched fast-open: skip the 100ms pre-open sleep"
-FLUSH_EIO_MARKER = "# patched flush-eio: swallow transient tcflush EIO"
+FLUSH_DRAIN_MARKER = "# patched flush: drain queued bytes instead of discarding them"
+BOUNDED_RETRY_MARKER = "# patched retry: bound a dead USB packet"
 
 
 def main():
@@ -41,7 +48,8 @@ def main():
     )
     patch_pyserial_timeout(pyserial_path)
     patch_pyserial_fast_open(pyserial_path)
-    patch_pyserial_flush_eio(pyserial_path)
+    patch_pyserial_flush(pyserial_path)
+    patch_pyserial_bounded_retry(pyserial_path)
     # NOTE: skip_2nd_stage is intentionally disabled. After BREAK the
     # chip transitions to FSBL which presents `cvi_utask` at 3346:1001
     # — FSBL uses that to pull the REST of FIP from the host (only
@@ -121,7 +129,7 @@ def patch_pyserial_fast_open(path):
     print(f"patched (fast-open): {path}")
 
 
-def patch_pyserial_flush_eio(path):
+def patch_pyserial_flush(path):
     """serial_write() does:
 
         try:
@@ -130,38 +138,36 @@ def patch_pyserial_flush_eio(path):
         except serial.SerialTimeoutException as e:
             return pkt.FAIL
 
-    flushOutput() is tcflush(TCOFLUSH), which raises termios.error
-    (EIO — an OSError, NOT a SerialTimeoutException) when the cdc_acm
-    port is in a transitional state. Over a USB hub the CV181x ROM
-    cycles so fast this fires on nearly every attempt, and the
-    UNHANDLED OSError crashes the whole tool mid-1st-stage FIP send —
-    so the push never completes and U-Boot never comes up. write()
-    has already queued the bytes and the recv_ack read is the real
-    success check, so wrap flushOutput() to swallow the EIO and keep
-    going. Anchor on the exact two-line write/flush pair.
+    pyserial implements flushOutput() as reset_output_buffer(), which
+    uses tcflush(TCOFLUSH) to abort and discard queued output. That races
+    the USB ACM transport: on a slower path the command can be discarded
+    before it reaches the ROM, so recv_ack reads nothing forever. Use
+    flush() instead; it calls tcdrain() and waits for the command to leave
+    the host before we read its acknowledgement. A disconnect during the
+    drain is still a transient failed attempt, so keep it bounded by the
+    existing broad exception handling.
     """
     with open(path) as f:
         src = f.read()
-    if FLUSH_EIO_MARKER in src:
-        print(f"already patched (flush-eio): {path}")
+    if FLUSH_DRAIN_MARKER in src:
+        print(f"already patched (flush-drain): {path}")
         return
     pattern = re.compile(
         r'(\n            self\.device\.write\(command\)\n)'
         r'            self\.device\.flushOutput\(\)\n'
     )
-    # NB: catch Exception, not OSError — termios.error (raised by
-    # tcflush) is its OWN exception class, NOT an OSError subclass, so
-    # `except OSError` silently misses it and the tool still crashes.
+    # A disconnect during tcdrain can raise termios.error, which is not
+    # an OSError subclass on all supported Python versions.
     replacement = (
         r'\1'
-        f'            try:  {FLUSH_EIO_MARKER}\n'
-        '                self.device.flushOutput()\n'
+        f'            try:  {FLUSH_DRAIN_MARKER}\n'
+        '                self.device.flush()\n'
         '            except Exception:\n'
         '                pass\n'
     )
     new_src, n = pattern.subn(replacement, src, count=1)
     if n == 0:
-        print(f"WARN: flush-eio pattern not found in {path}; skipping")
+        print(f"WARN: flush-drain pattern not found in {path}; skipping")
         return
 
     # serial_write also catches only `serial.SerialTimeoutException` on
@@ -179,7 +185,73 @@ def patch_pyserial_flush_eio(path):
 
     with open(path, "w") as f:
         f.write(new_src)
-    print(f"patched (flush-eio + broadened serial excepts): {path}")
+    print(f"patched (flush-drain + broadened serial excepts): {path}")
+
+
+def patch_pyserial_bounded_retry(path):
+    """Let the outer process-level retry recover from a dead ACM session.
+
+    usb_send_chunk() currently rewinds after any failed acknowledgement
+    and retries the same packet forever. Three packet attempts already
+    span up to three serial read timeouts; after that, a fresh device
+    query and file handle are safer than continuing on a dead endpoint.
+    Raising is intentional because the callers ignore this method's
+    return value.
+    """
+    with open(path) as f:
+        src = f.read()
+    if BOUNDED_RETRY_MARKER in src:
+        print(f"already patched (bounded retry): {path}")
+        return
+
+    function_start = src.find("    def usb_send_chunk(")
+    function_end = src.find("\n    def ", function_start + 1)
+    if function_start == -1 or function_end == -1:
+        sys.exit("FAILED to locate usb_send_chunk() for bounded retry")
+
+    prefix = src[:function_start]
+    body = src[function_start:function_end]
+    suffix = src[function_end:]
+    init_old = (
+        "            last_pos = content_file.tell()\n"
+        "            # print(\"Send to address 0x%x\" % dest_addr)\n"
+    )
+    init_new = (
+        "            last_pos = content_file.tell()\n"
+        f"            packet_retries = 0  {BOUNDED_RETRY_MARKER}\n"
+        "            # print(\"Send to address 0x%x\" % dest_addr)\n"
+    )
+    result_old = (
+        "                if send_ok == 0:\n"
+        "                    dest_addr += tx_len - pkt.HEADER_SIZE\n"
+        "                    content_size -= tx_len - pkt.HEADER_SIZE\n"
+        "                else:\n"
+        "                    last_pos -= tx_len - pkt.HEADER_SIZE\n"
+    )
+    result_new = (
+        "                if send_ok == 0:\n"
+        "                    packet_retries = 0\n"
+        "                    dest_addr += tx_len - pkt.HEADER_SIZE\n"
+        "                    content_size -= tx_len - pkt.HEADER_SIZE\n"
+        "                else:\n"
+        "                    packet_retries += 1\n"
+        "                    if packet_retries >= 3:\n"
+        "                        raise RuntimeError(\"USB packet failed after 3 attempts\")\n"
+        "                    last_pos -= tx_len - pkt.HEADER_SIZE\n"
+    )
+    init_count = body.count(init_old)
+    result_count = body.count(result_old)
+    if init_count != 1 or result_count != 1:
+        sys.exit(
+            "FAILED to add bounded usb_send_chunk retry; "
+            f"init matches={init_count}, result matches={result_count}"
+        )
+    body = body.replace(init_old, init_new, 1).replace(result_old, result_new, 1)
+    new_src = prefix + body + suffix
+
+    with open(path, "w") as f:
+        f.write(new_src)
+    print(f"patched (bounded retry): {path}")
 
 
 def patch_skip_2nd_stage(path):

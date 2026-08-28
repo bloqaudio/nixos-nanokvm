@@ -166,6 +166,40 @@ in
           cp -a ${nanokvm-patched-src}/kvmapp/picoclaw "$runtimeDir/picoclaw"
         ''
       }
+
+      ${
+        lib.optionalString (isRiscvCross && !effectiveNoCamera) ''
+          # Camera builds also carry the prebuilt kvm_system binary
+          # (LT6911 bridge config / OLED UI / ATX buttons — capture
+          # doesn't work without it; see nanokvm-factory-runtime for
+          # provenance). The source kvm_system/ dir copied above only
+          # holds a zero-byte kvm_stream placeholder — overlay the real
+          # binary on top so the module's /kvmapp/kvm_system symlink
+          # serves both. Its stock interpreter
+          # (/lib/ld-musl-riscv64v0p7_xthead.so.1) and NEEDED libs
+          # (libstdc++/libgcc_s/libc) don't exist on a NixOS rootfs;
+          # point both at the same cross-musl runtime the server's
+          # dl_lib rpath already uses. Keep $ORIGIN/dl_lib first for
+          # fidelity with the stock rpath (the shipped dl_lib/ is
+          # empty, but harmless).
+          chmod -R u+w "$runtimeDir/kvm_system"
+          cp -a ${nanokvm-factory-runtime}/kvm_system/. "$runtimeDir/kvm_system/"
+          chmod u+w "$runtimeDir/kvm_system/kvm_system"
+          patchelf \
+            --set-interpreter "${riscvMusl.musl}/lib/ld-musl-riscv64.so.1" \
+            --set-rpath "\$ORIGIN/dl_lib:${targetRuntimeLibPath}" \
+            "$runtimeDir/kvm_system/kvm_system"
+
+          # Sensor INI for the vendor capture SDK. libkvm_mmf.so's
+          # SAMPLE_COMM_VI_ParseIni reads /mnt/data/sensor_cfg.ini at
+          # kvmv_init time; the stock S95nanokvm refreshes it from the
+          # .LT (Lontium LT6911) variant on every boot. Ship the
+          # variants under lib/nanokvm/data so the NixOS compat unit
+          # can install the .LT one the same way.
+          mkdir -p "$runtimeDir/data"
+          cp -a ${nanokvm-factory-runtime}/data/. "$runtimeDir/data/"
+        ''
+      }
       printf '%s\n' 'unstable' > "$runtimeDir/version"
 
       ${

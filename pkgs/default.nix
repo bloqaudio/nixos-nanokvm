@@ -1,11 +1,12 @@
 # Overlay for everything this flake adds to nixpkgs.
 #
-# Two halves:
-#   1. `sg2002-*` — board-support for the Sophgo CV181x family
+# Three halves:
+#   1. `spacemit-k3-*` — board-support for SpacemiT K3 systems.
+#   2. `sg2002-*` — board-support for the Sophgo CV181x family
 #      (kernel builds, FIP, OpenSBI, U-Boot, AIC8800 driver/firmware,
 #      USB-recovery tool, DTBs). Inlined here from nixos-sg2002 so
 #      this repo is self-contained.
-#   2. `nanokvm-*` — the userspace bits (the Go server, the web
+#   3. `nanokvm-*` — the userspace bits (the Go server, the web
 #      bundle, the erofs rootfs builder, the kexec payload format)
 #      that turn a CV181x board into a working KVM.
 { inputs
@@ -24,8 +25,9 @@ let
     then final
     else final.pkgsCross.riscv64;
 
+  mainlineLinuxSource = final.buildPackages.callPackage ./sg2002/linux-mainline/source.nix { };
   dtbMainline = final.buildPackages.callPackage ./sg2002/dtb-mainline {
-    linuxSrc = final.buildPackages.linux_latest.src;
+    linuxSrc = mainlineLinuxSource.src;
   };
   dtbVendor = final.buildPackages.callPackage ./sg2002/dtb-vendor {
     licheerv-nano-build = inputs.licheerv-nano-build;
@@ -74,6 +76,22 @@ in
     else prev.vmtouch;
 
   # -----------------------------------------------------------------
+  # spacemit-k3-* (board support)
+  # -----------------------------------------------------------------
+
+  "spacemit-k3-linux" = cross.callPackage ./spacemit-k3/linux {
+    kernelPatches = [ ];
+  };
+  "linuxPackages_spacemit-k3" = cross.linuxPackagesFor final."spacemit-k3-linux";
+  "spacemit-k3-fsbl" = cross.callPackage ./spacemit-k3/fsbl { };
+  "spacemit-k3-rtw89-firmware" = final.callPackage ./spacemit-k3/rtw89-firmware { };
+  "spacemit-k3-uefi-blobs" = final.callPackage ./spacemit-k3/uefi-blobs { };
+  "spacemit-k3-raw-fastboot-boot" = final.callPackage ./spacemit-k3/raw-fastboot-boot { };
+  "spacemit-k3-flash-uefi" = final.callPackage ./spacemit-k3/flash-uefi {
+    uefiBlobs = final."spacemit-k3-uefi-blobs";
+  };
+
+  # -----------------------------------------------------------------
   # nanokvm-* (userspace KVM stack)
   # -----------------------------------------------------------------
 
@@ -82,8 +100,14 @@ in
     patches = nanokvmPatches;
   };
 
-  nanokvm-web = final.callPackage ./nanokvm-web { };
+  # Static web assets are built on the build host and copied into the
+  # target server package; do not cross-build Node/V8 for riscv64.
+  nanokvm-web = final.buildPackages.callPackage ./nanokvm-web {
+    nanokvm-patched-src = final.nanokvm-patched-src;
+  };
   nanokvm-factory-runtime = final.callPackage ./nanokvm-factory-runtime { };
+  nanokvm-host-keys = final.callPackage ./nanokvm-host-keys { };
+  sg2002-coda980-firmware = final.callPackage ./sg2002/coda980-firmware { };
   nanokvm-server = final.callPackage ./nanokvm-server { };
 
   # Build with -tags nocamera so libkvm.so isn't linked in at all —
@@ -98,6 +122,19 @@ in
   # that dies 203/EXEC on the device. nocamera = pure-Go cross-compile.
   nanokvm-server-device = final.callPackage ./nanokvm-server {
     noCamera = true;
+    targetSystem = "riscv64-linux";
+  };
+
+  # Device server with the camera/HDMI capture path compiled in —
+  # the build the vendor-kernel images run. Same forced-riscv64
+  # instantiation rationale as nanokvm-server-device above; the only
+  # difference is noCamera = false, which keeps the kvm_vision cgo
+  # binding (libkvm.so) linked in and ships the vendor dl_lib blobs,
+  # the prebuilt kvm_system binary, and the LT6911 sensor INI. Only
+  # safe with sg2002.kernel = "vendor": libkvm.so's C++ static ctors
+  # SEGV under mainline (see nanokvm-server-nocamera above).
+  nanokvm-server-device-camera = final.callPackage ./nanokvm-server {
+    noCamera = false;
     targetSystem = "riscv64-linux";
   };
 
@@ -178,6 +215,12 @@ in
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline;
   };
+  sg2002-fip-mainline-fastboot = final.callPackage ./sg2002/fip-mainline-uboot {
+    sg2002-fip = final.sg2002-fip;
+    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
+    sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
+    sg2002-uboot-mainline = cross.sg2002-uboot-mainline-fastboot;
+  };
 
   # AIC8800DC firmware blobs (Nano-W onboard WiFi+BT). passthru
   # `compressFirmware=false` because aicbsp's rwnx_load_firmware uses
@@ -246,6 +289,9 @@ in
     };
 
   sg2002-uboot-mainline = cross.callPackage ./sg2002/uboot-mainline { };
+  sg2002-uboot-mainline-fastboot = cross.sg2002-uboot-mainline.override {
+    bootCommand = "fastboot usb 0";
+  };
 
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
@@ -277,18 +323,29 @@ in
   # one flat top-level attr per concrete output the overlay exposes.
   sg2002-dtb-mainline = dtbMainline.dtb;
   sg2002-dtbs-mainline = dtbMainline.dtbs;
+  sg2002-dtb-mainline-high-speed = dtbMainline.high-speed;
+  sg2002-dtb-mainline-eth = dtbMainline.eth;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
+  sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
+  sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
+  sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
+  sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
+  sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
+  sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;
   sg2002-dtb-vendor-gadget = dtbVendor.gadget;
 
   sg2002-boot-fit = final.callPackage ./sg2002/boot-fit { };
 
+  picoclaw-lcd-test = final.callPackage ./sg2002/picoclaw-lcd-test { };
+  sg2002-h264-bridge = final.callPackage ./sg2002/h264-bridge { };
+
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
-    sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-uboot;
+    sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-fastboot;
   };
 
   # AIC8800 kernel module — vendor and mainline variants, parameterised

@@ -13,11 +13,6 @@
 }: let
   cfg = config.sg2002;
 
-  fipPkg =
-    if cfg.uboot == "mainline"
-    then pkgs.sg2002-fip-mainline-uboot
-    else pkgs.sg2002-fip;
-
   # The plain `sg2002-dtb-vendor` leaves the dwc2 USB controller in
   # The DTB comes from the single source of truth, sg2002.fdt (set by
   # the platform default + feature/board modules). For the vendor kernel
@@ -44,7 +39,7 @@
   # `loglevel=0`, which silences the kernel) and hardcodes a specific
   # FIT config name — so we override both sdboot/sdbootauto AND bootargs.
   uenv = pkgs.writeText "uEnv.txt" ''
-    bootargs=${lib.concatStringsSep " " config.boot.kernelParams}
+    bootargs=init=/nix/var/nix/profiles/system/init ${lib.concatStringsSep " " config.boot.kernelParams}
     sdboot=mmc dev 0 && fatload mmc 0:1 ''${uImage_addr} boot.sd && bootm ''${uImage_addr}
     sdbootauto=run sdboot
   '';
@@ -91,8 +86,6 @@ in {
 
     system.build.boot-fit = bootFit;
     system.build.uenv = uenv;
-    system.build.fip = fipPkg;
-
     # Symlink the three files into the toplevel under bootfit/ so the
     # installBootLoader script can find them. systemBuilderCommands
     # runs while the system derivation is being assembled.
@@ -100,7 +93,7 @@ in {
       mkdir -p $out/bootfit
       ln -s ${bootFit} $out/bootfit/boot.sd
       ln -s ${uenv}    $out/bootfit/uEnv.txt
-      ln -s ${fipPkg}/fip.bin $out/bootfit/fip.bin
+      ln -s ${config.system.build.fip}/fip.bin $out/bootfit/fip.bin
     '';
 
     system.build.installBootLoader = installBootLoader;

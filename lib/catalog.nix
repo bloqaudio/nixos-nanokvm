@@ -1,8 +1,8 @@
 # Catalog of board × kernel × profile × variant combinations.
 #
 # One record per shipped configuration. lib/catalog.nix is the single
-# source of truth for what `nixosConfigurations.boards.<...>` and
-# `packages.<sys>.boards.<...>` expose; flake.nix doesn't repeat the
+# source of truth for what flat `nixosConfigurations.<...>` names and
+# `legacyPackages.<sys>.boards.<...>` expose; flake.nix doesn't repeat the
 # matrix on the artifact side anymore.
 #
 # Record schema:
@@ -21,7 +21,8 @@
 #   artifact     — "kernel-test" | "live" | "debug" | "sd"
 #                  drives which artifact-builder runs.
 #   artifactArgs — key/value extras forwarded to the artifact builder
-#                  (oled, rootfsBindIp, extraBootargs, includeKexec).
+#                  (oled, rootfsBindIp, requireRootfsHostOverride,
+#                  extraBootargs, includeKexec, uartConsole, usbConsole).
 #   liveCfgPath  — `debug` artifacts only: the catalog path that
 #                  supplies the rootfs the debug payload pivots into.
 #
@@ -30,6 +31,8 @@
 # don't exist.
 { lib }:
 let
+  protocol = import ./protocol.nix;
+
   lichee =
     kernel: pathTail: attrs:
     {
@@ -114,18 +117,16 @@ let
     ];
     modules = [
       ({ ... }: {
-        # In wifi mode the rootfs NBD lives on the LAN — networkd
-        # brings wlan0 up via DHCP and connects to the host's LAN
-        # address. USB-ECM stays up purely for the control plane.
-        # 192.168.23.136 is grw's site-specific LAN address; override
-        # via the `wifiBindIp` field below if needed.
+        # In wifi mode the rootfs NBD lives on the caller's LAN:
+        # networkd brings wlan0 up via DHCP and USB-ECM stays up only
+        # for the control plane. The runner must provide
+        # NANOKVM_NBD_ROOTFS_HOST so this catalog remains site-neutral.
         nanokvm.nbdLive = {
-          host = "192.168.23.136";
           staticIface = null;
         };
       })
     ];
-    artifactArgs.rootfsBindIp = "192.168.23.136";
+    artifactArgs.requireRootfsHostOverride = true;
   };
 
   vendorUsb = {
@@ -138,12 +139,19 @@ let
   # the `lichee` helpers above so PCIe entries stay one-liners too.
   pcie =
     kernel: pathTail: attrs:
-    {
-      path = [ "pcie" kernel ] ++ pathTail;
-      boardName = "nanokvm-pcie";
-      inherit kernel;
-    }
-    // attrs;
+    lib.recursiveUpdate
+      {
+        path = [ "pcie" kernel ] ++ pathTail;
+        boardName = "nanokvm-pcie";
+        inherit kernel;
+        # Mainline enables the carrier's exposed UART1 as a physical rescue
+        # console. Direct FIT/kexec artifacts do not inherit boot.kernelParams,
+        # so carry the choice in every PCIe artifact rather than one profile.
+        artifactArgs = lib.optionalAttrs (kernel == "mainline") {
+          uartConsole = "ttyS1";
+        };
+      }
+      attrs;
 
   pcieLive =
     kernel: tag: attrs:
@@ -156,10 +164,16 @@ let
       // attrs
     );
 
+  pcieKernelTest = kernel:
+    pcie kernel [ "kernel-test" ] {
+      profile = "usb-kernel-test";
+      artifact = "kernel-test";
+      tag = "kernel-test-pcie-${kernel}";
+    };
+
   # PCIe-live bring-up extras:
-  #   - WiFi driver only (wlan0 enumerates so the radio is exercisable;
-  #     associating needs ./wifi.conf + the wifi-aic8800 mixin, so we
-  #     avoid that mixin's wpaConf assertion to build without a conf).
+  #   - WiFi driver only, so wlan0 enumerates and the radio is
+  #     exercisable. Association remains downstream policy.
   #   - nanokvm-server (the web UI + ATX/GPIO control), which the live
   #     profile doesn't enable on its own.
   pcieLiveExtras = {
@@ -173,19 +187,129 @@ let
       })
     ];
   };
+
+  # LicheeRV-Nano PicoClaw (SG2002 + expansion board, no SD slot in
+  # use). USB-boot only; the live profile is NFS-rooted, not NBD.
+  picoclaw =
+    kernel: pathTail: attrs:
+    {
+      path = [ "picoclaw" kernel ] ++ pathTail;
+      boardName = "licheerv-nano-picoclaw";
+      inherit kernel;
+    }
+    // attrs;
+
+  picoclawKernelTest = kernel:
+    picoclaw kernel [ "kernel-test" ] {
+      profile = "usb-kernel-test";
+      artifact = "kernel-test";
+      tag = "kernel-test-picoclaw-${kernel}";
+      # The dwc2 gadget (net function AND ACM console) dies ~30-60 s
+      # into every boot, exactly when the system goes idle after
+      # bring-up. Suspect: C906 WFI cpuidle gating something the USB
+      # controller needs. cpuidle.off=1 is the A/B test.
+      artifactArgs.extraBootargs = [ "cpuidle.off=1" ];
+    };
+
+  picoclawLive = kernel: tag: attrs:
+    picoclaw kernel [ "live" "usb" ] (
+      {
+        profile = "usb-nfs-live";
+        artifact = "nfs-live";
+        inherit tag;
+        modules = [ ({ ... }: { sg2002.usbGadget.network.transport = "ncm"; }) ];
+      }
+      // attrs
+    );
 in
 [
   # ===== licheerv-nano-w / mainline =====
   (kernelTest "mainline")
+  # Experimental: same initrd and kernel as kernel-test, with only the
+  # full-speed DT cap lifted.  Keep the stable recovery target available.
+  (lichee "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-mainline-hs";
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
   (debug "mainline")
   (live "mainline" "usb" "live-mainline" { })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
+  # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder
+  # stalls sustained NBD pulls; HS also matches U-Boot's fastboot gadget.
+  (live "mainline" "usb-hs" "live-mainline-hs" {
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+  # Rootfs NBD over wired LAN: the initrd DHCPs eth0 and nbd-client
+  # connects to the host's LAN address (NANOKVM_NBD_ROOTFS_HOST at run
+  # time), leaving the USB gadget for console/control only. For boards
+  # whose USB data path is compromised (e.g. usbip through a weak AP).
+  (live "mainline" "eth" "live-mainline-eth" {
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-eth;
+        nanokvm.nbdLive.staticIface = null;
+
+        boot.kernelModules = [ "dwmac-sophgo" ];
+        sg2002.initrd.availableKernelModules = [ "dwmac-sophgo" ];
+        sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
+
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig.DHCP = "yes";
+          linkConfig.RequiredForOnline = "no";
+        };
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            IPv6AcceptRA = true;
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
   (live "mainline" "usb-g-multi" "live-mainline-g-multi" gMulti)
   (live "mainline" "usb-oled" "live-mainline-oled" oled)
   # Historical kink: tag is "live-wifi-<kernel>" not "live-<kernel>-wifi".
   # Kept stable so kexec_target diagnostics don't change.
   (live "mainline" "wifi" "live-wifi-mainline" wifi)
+
+  # ===== licheerv-nano-w / mainline / SD =====
+  # Self-contained extlinux SD image for units with the RJ45 wired:
+  # eth0 DHCPs in stage 2, console stays on ttyS0 (never ttyGS0 — a
+  # gadget console with no host reader wedges the boot), USB gadget
+  # remains for control/debug.
+  (lichee "mainline" [ "sd" ] {
+    profile = "sd-image-mainline";
+    artifact = "sd";
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-eth;
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            IPv6AcceptRA = true;
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
 
   # ===== licheerv-nano-w / vendor =====
   (kernelTest "vendor")
@@ -193,18 +317,381 @@ in
   (live "vendor" "usb" "live-vendor" vendorUsb)
 
   # ===== nanokvm-pcie / vendor =====
-  # Production SD image (vendor kernel + vendor-FIT). Wifi mixin appended
-  # by flake.nix only when wifi.conf exists.
+  # Production SD image (vendor kernel + vendor-FIT). Network policy
+  # belongs in the downstream config that imports the board module.
   (pcie "vendor" [ "sd" ] { profile = "sd-image"; artifact = "sd"; })
+  # Initrd-only recovery target using the vendor SDHCI stack. Useful when
+  # mainline can reach USB but cannot enumerate the card.
+  (pcieKernelTest "vendor")
   # USB-NBD live for hardware bring-up: ethernet (bm-dwmac) + WiFi work
   # natively off the vendor DTS.
   (pcieLive "vendor" "live-pcie-vendor" (pcieLiveExtras // vendorUsb))
 
   # ===== nanokvm-pcie / mainline =====
+  # Initrd-only recovery target for USB/kexec bring-up on the actual PCIe
+  # carrier (same DTB as the SD image, but no stage-2 services).
+  (pcieKernelTest "mainline")
+  (pcie "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-pcie-mainline-hs";
+    modules = [
+      ({ lib, pkgs, ... }:
+        let
+          autoReboot = pkgs.writeShellScript "pcie-hs-auto-reboot" ''
+            ${pkgs.coreutils}/bin/sleep 300
+            ${pkgs.systemd}/bin/systemctl reboot -ff
+          '';
+        in
+        {
+          sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-high-speed;
+          sg2002.usbGadget.network.transport = "ncm";
+
+          # This initrd deliberately keeps the nowayout watchdog alive.  Give
+          # remote tests a bounded escape if USB networking never appears.
+          boot.initrd.systemd.storePaths = [ autoReboot ];
+          boot.initrd.systemd.services.pcie-hs-auto-reboot = {
+            description = "Return from the experimental PCIe USB test";
+            wantedBy = [ "initrd.target" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = autoReboot;
+            };
+          };
+        })
+    ];
+  })
   # extlinux SD image (mainline U-Boot). Ethernet via stmmac + the
   # ethernet-enabled DTB; reachable over the USB-ECM gadget too.
   (pcie "mainline" [ "sd" ] { profile = "sd-image-mainline"; artifact = "sd"; })
   # USB-NBD live exercising the full PCIe hardware — eth0 (stmmac) and
   # wlan0 (AIC8800) both come up.
   (pcieLive "mainline" "live-pcie-mainline" pcieLiveExtras)
+
+  # ===== licheerv-nano-w / mainline / NFS over WiFi =====
+  # Same WiFi-rooted experiment as the picoclaw wifi entry, on the
+  # original dev board (self-cycles its ROM loop on fuckup, so no
+  # physical resets while iterating). The AIC8800 is identical.
+  (lichee "mainline" [ "live" "wifi-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-nfs-mainline";
+    mixins = [
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, rootWpaConf ? null, ... }: {
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        nanokvm.nfsLive.server = "192.168.23.8";
+      })
+    ];
+  })
+
+  # ===== licheerv-nano-w / mainline / NFS over ethernet =====
+  # Same data path as the pcie NFS entry, for LicheeRV units with the
+  # RJ45 wired: initrd DHCPs eth0, store mounts from the host over LAN.
+  # USB carries the boot chain + console only.
+  (lichee "mainline" [ "live" "eth-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-eth-nfs-mainline";
+    # No console=ttyGS0: when the USB host can't drain the ACM port (e.g.
+    # the console is only reachable through a flaky forwarder), ttyGS
+    # writes back up and wedge the kernel mid-boot. uartConsole stays.
+    artifactArgs.usbConsole = false;
+    modules = [
+      ({ lib, pkgs, ... }:
+        let
+          # Boot-eye for headless bring-up: the kernel console stays on
+          # ttyS0 (a ttyGS0 console with no host reader wedges the boot),
+          # so this dumps the initrd's network/driver state onto the ACM
+          # gadget instead, where a host-side `cat` (directly attached,
+          # NOT through usbip — its ACM path drops data) can read it.
+          ttygsDebug = pkgs.writeShellScript "nanokvm-ttygs-debug" ''
+            export PATH=${lib.makeBinPath [ pkgs.busybox ]}
+            for _ in $(seq 1 60); do
+              [ -e /dev/ttyGS0 ] && break
+              sleep 1
+            done
+            while :; do
+              {
+                echo "===== ttyGS debug $(cat /proc/uptime) ====="
+                echo "--- links"
+                ip -br link
+                echo "--- addrs"
+                ip -br addr
+                echo "--- routes"
+                ip route
+                echo "--- dmesg tail"
+                dmesg | tail -25
+                echo "===== end ====="
+              } > /dev/ttyGS0 2>/dev/null
+              sleep 15
+            done
+          '';
+        in
+        {
+          sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-eth;
+          nanokvm.nfsLive.server = "192.168.23.8";
+          boot.initrd.systemd.network.networks."20-eth0" = {
+            matchConfig.Name = "eth0";
+            networkConfig.DHCP = "yes";
+            linkConfig.RequiredForOnline = "no";
+          };
+          systemd.network.networks."20-eth0" = {
+            matchConfig.Name = "eth0";
+            networkConfig = {
+              DHCP = "yes";
+              IPv6AcceptRA = true;
+            };
+            linkConfig.RequiredForOnline = "no";
+          };
+
+          boot.initrd.systemd.storePaths = [ ttygsDebug ];
+          boot.initrd.systemd.services.ttygs-debug = {
+            description = "Dump initrd state to the USB ACM gadget";
+            wantedBy = [ "initrd.target" ];
+            after = [ "usb-gadget.service" ];
+            wants = [ "usb-gadget.service" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "simple";
+              ExecStart = ttygsDebug;
+              Restart = "always";
+              RestartSec = "5s";
+            };
+          };
+        })
+    ];
+  })
+
+  # ===== licheerv-nano-w / mainline / NFS over USB gadget =====
+  # Board on the NFS server's own USB port (trex): the store mount comes
+  # from the host's gadget address directly (server == hostIp, so the
+  # dwc2 usb-rx-guard is active), no LAN hairpin at all. This is also the
+  # dwmac-RX-stall lifeboat: store traffic rides the USB gadget, eth0
+  # stays idle for bring-up.
+  (lichee "mainline" [ "live" "usb-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-usb-nfs-mainline";
+    artifactArgs.usbConsole = false;
+    modules = [
+      ({ ... }: {
+        nanokvm.nfsLive.server = protocol.hostIp;
+      })
+    ];
+  })
+
+  # Same USB-gadget NFS lifeboat, plus the GC4653 camera + ethernet DTB.
+  (lichee "mainline" [ "live" "usb-nfs-cam" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-usb-nfs-cam-mainline";
+    artifactArgs.usbConsole = false;
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-cam;
+        nanokvm.nfsLive.server = protocol.hostIp;
+        nanokvm.nfsLive.prefetchStage2Systemd = true;
+      })
+    ];
+  })
+
+  # ===== nanokvm-pcie / mainline / NFS over ethernet =====
+  # The cleanest data path of all: the PCIe carrier's RJ45. eth0 does
+  # DHCP in the initrd (dwmac-sophgo), the root-nfs service mounts
+  # trex over the LAN — no dwc2 data, no WiFi. Runs on the router's
+  # self-cycling board, so iteration needs no physical resets.
+  (pcie "mainline" [ "live" "nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-pcie-nfs-mainline";
+    # Direct USB runners do not inherit boot.kernelParams. Carry the two
+    # low-memory stage-2 limits explicitly.
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+      # The PCIe carrier's 128x64 SSD1306 is usable with the default font,
+      # but only as a cramped 16x4 display. Do not rotate this panel.
+      "fbcon=font:MINI4x6"
+    ];
+    mixins = [ ../modules/ethernet.nix ];
+    modules = [
+      ({ lib, pkgs, ... }: {
+        nanokvm.nfsLive.server = "192.168.23.8";
+        # Ethernet is the root transport for this capture image. Avoid the
+        # absent AIC8800 SDIO probe and its repeated mmc1 command timeouts.
+        sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-pcie-nowifi;
+        sg2002.wifi.enable = lib.mkForce false;
+        # A/B the stage-2 PID1 handoff: warm only systemd's direct ELF
+        # dependencies from the mounted NFS store before switch-root.
+        nanokvm.nfsLive.prefetchStage2Systemd = true;
+        # This Ethernet-rooted image is the capture bring-up environment.
+        # Avoid a permanent `top` process and bound volatile logging so CMA
+        # migration does not force the tiny system into boot-time OOM.
+        nanokvm.oled.enable = lib.mkForce false;
+        services.journald.extraConfig = ''
+          Storage=volatile
+          RuntimeMaxUse=4M
+        '';
+        systemd.services.sshd.serviceConfig.ExecStartPre = [
+          "${pkgs.coreutils}/bin/install -d -m 0555 -o root -g root /var/empty"
+        ];
+        security.wrappers = {
+          mount.enable = lib.mkForce false;
+          newgidmap.enable = lib.mkForce false;
+          newgrp.enable = lib.mkForce false;
+          newuidmap.enable = lib.mkForce false;
+          sg.enable = lib.mkForce false;
+          sudo.enable = lib.mkForce false;
+          sudoedit.enable = lib.mkForce false;
+          umount.enable = lib.mkForce false;
+        };
+        systemd.services.lastlog2-import.enable = lib.mkForce false;
+        systemd.suppressedSystemUnits = [
+          "systemd-journal-catalog-update.service"
+          "systemd-update-done.service"
+        ];
+        boot.initrd.systemd.services.usb-debug-acm-status.enable =
+          lib.mkForce false;
+        sg2002.initrd.availableKernelModules = [
+          "stmmac"
+          "stmmac_platform"
+          "dwmac-sophgo"
+        ];
+        sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
+        # The store is already mounted over this DHCP lease when initrd
+        # networkd hands the interface to stage 2. Preserve it until the new
+        # manager has renewed the lease; dropping it deadlocks every uncached
+        # executable on the NFS store. Pin the carrier's fleet MAC before the
+        # first DHCP request as well, so router assigns its reserved .17.
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          linkConfig = {
+            MACAddress = "02:4b:56:4d:00:17";
+            RequiredForOnline = "no";
+          };
+        };
+        systemd.network.networks."20-eth0" = {
+          networkConfig.KeepConfiguration = "dynamic";
+          linkConfig.MACAddress = "02:4b:56:4d:00:17";
+        };
+      })
+    ];
+  })
+
+  # ===== licheerv-nano-picoclaw / mainline =====
+  # Initrd-only recovery target — the first thing to run on new silicon.
+  (picoclawKernelTest "mainline")
+  (picoclaw "mainline" [ "kernel-test-hs" ] {
+    profile = "usb-kernel-test";
+    artifact = "kernel-test";
+    tag = "kernel-test-picoclaw-mainline-hs";
+    artifactArgs.extraBootargs = [ "cpuidle.off=1" ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-nowifi-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+  # USB-booted, NFS-rooted live system (replaces the NBD transport).
+  #
+  # Bring-up note 2026-07-27: with the WiFi DTB (sdhci1 enabled), the
+  # fragile AIC8800 init sequence spins on sdhci1 timeouts and — per
+  # the nowifi dtsi's own comment — the SDIO probing contends with the
+  # USB gadget for the SoC bus, killing usb0's data path mid-boot.
+  # Booting the nowifi DTB avoids that entirely. The wifi-aic8800
+  # mixin returns in a follow-up entry once the base boot is solid.
+  (picoclawLive "mainline" "live-picoclaw-mainline" {
+    # Direct USB runners construct the command line themselves rather than
+    # using boot.loader, so carry the getty-generator override explicitly.
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-nowifi;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
+  # Dedicated onboard-LCD sibling of the proven headless USB/NFS boot.
+  # It preserves the no-WiFi base and low-memory limits, but swaps in the
+  # PicoClaw SPI1/GPIO DTB and runs a persistent ST7789 visible self-test.
+  (picoclaw "mainline" [ "live" "usb-lcd" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
+  # High-speed sibling of the LCD/NFS system.  This intentionally keeps the
+  # production usb-lcd artifact on its proven full-speed DTB until sustained
+  # NFS workloads are verified on the other SG2002 boards too.
+  (picoclaw "mainline" [ "live" "usb-lcd-hs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline-hs";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    artifactArgs.usbConsole = false;
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+
+  # WiFi-booted variant: the dwc2 gadget net function wedges on this
+  # unit (see usb-nfs-live.nix and the bring-up note above), so the
+  # store mount rides the AIC8800 over the LAN instead. USB stays on
+  # for console + debug shell + kexec control. The NFS export is
+  # trex's /export/nix-store, already served to 192.168.23.0/24.
+  (picoclaw "mainline" [ "live" "wifi" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-picoclaw-mainline";
+    mixins = [
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, rootWpaConf ? null, ... }: {
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        # NFS root over the LAN, served by trex. Runtime override:
+        # NANOKVM_NFS_SERVER env → nanokvm.nfs_server= cmdline arg.
+        nanokvm.nfsLive.server = "192.168.23.8";
+      })
+    ];
+  })
 ]

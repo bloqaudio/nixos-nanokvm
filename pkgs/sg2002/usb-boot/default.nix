@@ -2,8 +2,9 @@
 #   usb-boot          — push a FIP through the ROM, enter Sipeed
 #                        vendor U-Boot's cvi_utask gadget, stage a FIT,
 #                        bootm. Requires vendor FIP.
-#   usb-boot-mainline — push a FIP through the ROM, wait for mainline
-#                        U-Boot's fastboot gadget (18d1:d00d), stage a
+#   usb-boot-mainline — push a fastboot-only FIP through the ROM, wait
+#                        for mainline U-Boot's fastboot gadget
+#                        (18d1:d00d), stage a
 #                        FIT via `fastboot stage` + `fastboot oem run`.
 #                        Requires mainline FIP + android-tools.
 { python3

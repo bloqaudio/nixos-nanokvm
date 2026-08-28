@@ -43,10 +43,6 @@ let
       patch = ./patches/0003-dmaengine-cv1800b-dmamux-fix-channel-allocation-order.patch;
     })
     (patch {
-      name = "dmaengine-dw-axi-dmac-add-cv1800b-support";
-      patch = ./patches/0004-dmaengine-dw-axi-dmac-Add-support-for-CV1800B-DMA.patch;
-    })
-    (patch {
       name = "asoc-cv1800b-sound-adc-init-analog-stage";
       patch = ./patches/0005-ASoC-cv1800b-sound-adc-init-analog-stage.patch;
     })
@@ -81,6 +77,162 @@ let
     (patch {
       name = "net-stmmac-dwmac-sophgo-add-cv1800b-internal-ephy";
       patch = ./patches/0013-net-stmmac-dwmac-sophgo-add-cv1800b-internal-EPHY.patch;
+    })
+    (patch {
+      name = "media-i2c-lt6911uxe-add-devicetree-probe-support";
+      patch = ./patches/0014-media-i2c-lt6911uxe-add-devicetree-probe-support.patch;
+    })
+    (patch {
+      name = "media-platform-add-sg2002-csi-capture-bring-up";
+      patch = ./patches/0015-media-platform-add-SG2002-CSI-capture-bring-up.patch;
+    })
+    (patch {
+      name = "pinctrl-sophgo-allow-fixed-io-pin-power-source";
+      patch = ./patches/0016-pinctrl-sophgo-allow-fixed-io-pin-power-source.patch;
+    })
+    (patch {
+      name = "dt-bindings-media-coda-add-sg2002-coda980";
+      patch = ./patches/0017-dt-bindings-media-coda-add-sg2002-coda980.patch;
+    })
+    (patch {
+      name = "media-coda-add-sg2002-coda980-h264";
+      patch = ./patches/0018-media-coda-add-sg2002-coda980-h264.patch;
+    })
+    (patch {
+      name = "media-coda-keep-coda980-firmware-id-out-of-abi-enum";
+      patch = ./patches/0019-media-coda-keep-coda980-firmware-id-out-of-abi-enum.patch;
+    })
+    (patch {
+      name = "media-coda-constrain-sg2002-staging-and-contexts";
+      patch = ./patches/0020-media-coda-constrain-sg2002-staging-and-contexts.patch;
+    })
+    (patch {
+      name = "media-coda-boot-sg2002-firmware-from-common-arena";
+      patch = ./patches/0021-media-coda-boot-sg2002-firmware-from-common-arena.patch;
+    })
+    (patch {
+      name = "riscv-dts-sophgo-describe-sg2002-coda980";
+      patch = ./patches/0022-riscv-dts-sophgo-describe-sg2002-coda980.patch;
+    })
+    (patch {
+      name = "media-coda-support-sg2002-nv12-and-dma-buf-input";
+      patch = ./patches/0023-media-coda-support-sg2002-nv12-and-dma-buf-input.patch;
+    })
+    (patch {
+      name = "media-coda-handle-sg2002-h264-reset";
+      patch = ./patches/0024-media-coda-handle-SG2002-H264-reset.patch;
+    })
+    (patch {
+      name = "media-coda-download-sg2002-firmware-into-bit-sram";
+      patch = ./patches/0025-media-coda-download-SG2002-firmware-into-BIT-SRAM.patch;
+    })
+    (patch {
+      name = "media-coda-read-sg2002-product-code-from-gdi";
+      patch = ./patches/0026-media-coda-read-SG2002-product-code-from-GDI.patch;
+    })
+    (patch {
+      name = "media-coda-configure-sg2002-h264-headers";
+      patch = ./patches/0027-media-coda-configure-SG2002-H264-headers.patch;
+    })
+    (patch {
+      name = "media-coda-configure-sg2002-coda980-encoder-abi";
+      patch = ./patches/0028-media-coda-configure-SG2002-Coda980-encoder-ABI.patch;
+    })
+    (patch {
+      name = "media-coda-restore-coda980-frame-memory-default";
+      patch = ./patches/0029-media-coda-restore-Coda980-frame-memory-default.patch;
+    })
+    (patch {
+      name = "media-coda-preserve-coda980-sps-setup-with-crop";
+      patch = ./patches/0030-media-coda-preserve-Coda980-SPS-setup-with-crop.patch;
+    })
+    (patch {
+      name = "media-sophgo-tighten-sg2002-csi-interrupt-handling";
+      patch = ./patches/0031-media-sophgo-tighten-SG2002-CSI-interrupt-handling.patch;
+    })
+    (patch {
+      name = "media-i2c-refresh-lt6911uxc-state-on-timing-queries";
+      patch = ./patches/0032-media-i2c-refresh-LT6911UXC-state-on-timing-queries.patch;
+    })
+    (patch {
+      name = "media-sophgo-validate-sg2002-capture-source-format";
+      patch = ./patches/0033-media-sophgo-validate-SG2002-capture-source-format.patch;
+    })
+    (patch {
+      name = "media-sophgo-remove-sg2002-capture-bring-up-controls";
+      patch = ./patches/0034-media-sophgo-remove-SG2002-capture-bring-up-controls.patch;
+    })
+    (patch {
+      name = "dt-bindings-reset-add-sg2002-csi-phy-resets";
+      patch = ./patches/0035-dt-bindings-reset-add-SG2002-CSI-PHY-resets.patch;
+    })
+    (patch {
+      name = "dt-bindings-media-document-sg2002-csi-capture";
+      patch = ./patches/0036-dt-bindings-media-document-SG2002-CSI-capture.patch;
+    })
+    (patch {
+      name = "media-sophgo-harden-sg2002-csi-stream-teardown";
+      patch = ./patches/0037-media-sophgo-harden-SG2002-CSI-stream-teardown.patch;
+    })
+    (patch {
+      name = "media-i2c-lt6911uxe-poll-uxc-while-streaming";
+      patch = ./patches/0038-media-i2c-lt6911uxe-poll-UXC-while-streaming.patch;
+    })
+    (patch {
+      name = "media-coda-use-two-coda980-reconstruction-buffers";
+      patch = ./patches/0039-media-coda-use-two-Coda980-reconstruction-buffers.patch;
+    })
+    (patch {
+      name = "media-coda-use-linear-gdi-map-for-coda980-nv12";
+      patch = ./patches/0041-media-coda-use-linear-GDI-map-for-Coda980-NV12.patch;
+    })
+    (patch {
+      name = "dt-bindings-media-document-sg2002-vpss-scaler";
+      patch = ./patches/0044-dt-bindings-media-document-SG2002-VPSS-scaler.patch;
+    })
+    (patch {
+      name = "media-sophgo-add-sg2002-vpss-scaler-driver";
+      patch = ./patches/0045-media-sophgo-add-SG2002-VPSS-scaler-driver.patch;
+    })
+    (patch {
+      name = "riscv-dts-sophgo-add-sg2002-vpss-node";
+      patch = ./patches/0046-riscv-dts-sophgo-add-SG2002-VPSS-node.patch;
+    })
+    (patch {
+      name = "media-bind-reserved-memory-pools-to-sg2002-media-devices";
+      patch = ./patches/0047-media-bind-reserved-memory-pools-to-SG2002-media-devices.patch;
+    })
+    (patch {
+      name = "media-sophgo-unbind-sg2002-vpss-from-reserved-pool";
+      patch = ./patches/0048-media-sophgo-unbind-SG2002-VPSS-from-reserved-pool.patch;
+    })
+    (patch {
+      name = "media-coda-release-reserved-pool-after-teardown";
+      patch = ./patches/0049-media-coda-release-reserved-pool-after-teardown.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-capture-crop";
+      patch = ./patches/0050-media-sophgo-SG2002-VPSS-capture-crop.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-session-clocking";
+      patch = ./patches/0051-media-sophgo-SG2002-VPSS-session-clocking.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-vpss-fabric-clocks";
+      patch = ./patches/0052-media-sophgo-SG2002-VPSS-fabric-clocks.patch;
+    })
+    (patch {
+      name = "media-i2c-galaxycore-gc4653";
+      patch = ./patches/0053-media-i2c-add-GalaxyCore-GC4653-sensor-driver.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-csi-capture-raw-sources";
+      patch = ./patches/0054-media-sophgo-SG2002-CSI-capture-RAW-sources.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-csi-vendor-deskew-codes";
+      patch = ./patches/0057-media-sophgo-SG2002-CSI-vendor-deskew-codes.patch;
     })
   ];
 
@@ -118,8 +270,8 @@ let
     "dmaengine-dw-axi-dmac-add-cv1800b-support" = {
       origin = "linux-next";
       upstreamStatus = "merged";
-      dropWhen = "nixpkgs linux >= the kernel that includes this";
-      notes = "Pair with 0003 — required for I2S capture to function.";
+      dropWhen = "already present in nixpkgs linux 7.1";
+      notes = "Pair with 0003 — required for I2S capture to function. Kept as metadata only because Linux 7.1 already contains this patch.";
     };
     "asoc-cv1800b-sound-adc-init-analog-stage" = {
       origin = "local";
@@ -233,6 +385,329 @@ let
         do both via MMIO at 0x03009000 from the cv1800b init hook, using
         non-efuse default trims and the CV181X "mars" LPF/HPF. (Per-chip
         efuse trimming is skipped — it only tightens signal margins.)
+      '';
+    };
+    "media-i2c-lt6911uxe-add-devicetree-probe-support" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = ''
+        lt6911uxe grows upstream OF bindings/probe support and NanoKVM's
+        LT6911-family bridge ID / no-HPD wiring is handled upstream.
+      '';
+      notes = ''
+        Lets the mainline LT6911UXE V4L2 subdev driver bind on NanoKVM-PCIe
+        devicetree, tolerate the board's currently undocumented HPD line,
+        and accept the LT6911 ID the vendor sensor driver reports.
+      '';
+    };
+    "media-platform-add-sg2002-csi-capture-bring-up" = {
+      origin = "local";
+      upstreamStatus = "local-only";
+      dropWhen = ''
+        a complete upstream SG2002 CSI receiver and VI capture pipeline
+        supports NanoKVM's four-lane LT6911UXC route.
+      '';
+      notes = ''
+        Narrow NanoKVM bring-up driver for CSI MAC0 -> CSIBDG0 -> DMA6.
+        It exposes the factory 1920x1080 UYVY path as a V4L2 capture node;
+        the register recipe and physical lane mapping come from the vendor
+        sensor configuration and VI/CIF drivers.
+      '';
+    };
+    "pinctrl-sophgo-allow-fixed-io-pin-power-source" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Sophgo CV18xx pinctrl accepts fixed-domain pin groups upstream";
+      notes = ''
+        The binding and DT parser require power-source on every group, but
+        ETH/AUDIO pads have no configurable pinconf register and were rejected
+        unconditionally. PicoClaw's LCD is wired to SPI1 on the fixed 1.8 V
+        Ethernet pads, so accept a power-source-only group without touching a
+        nonexistent configuration register.
+      '';
+    };
+    "dt-bindings-media-coda-add-sg2002-coda980" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Binding for the SG2002 Coda980 H.264 core.";
+    };
+    "media-coda-add-sg2002-coda980-h264" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Coda980 platform resources, firmware bring-up, and H.264 encoder path.";
+    };
+    "media-coda-keep-coda980-firmware-id-out-of-abi-enum" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps Coda9 command dispatch tied to the existing Coda960 ABI enum.";
+    };
+    "media-coda-constrain-sg2002-staging-and-contexts" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Limits the SG2002 encoder to one context and keeps its common-arena aliases out of per-context frees.";
+    };
+    "media-coda-boot-sg2002-firmware-from-common-arena" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Uses the SG2002 common-arena CODE/TEMP/PARA layout instead of the legacy code-download path.";
+    };
+    "riscv-dts-sophgo-describe-sg2002-coda980" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 Coda980 support is accepted upstream";
+      notes = "Adds the disabled SoC Coda980 node; board overlays enable it only where tested.";
+    };
+    "media-coda-support-sg2002-nv12-and-dma-buf-input" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Accepts direct NV12 DMA-BUF input and safely CPU-maps NV21 imports for staging.";
+    };
+    "media-coda-handle-sg2002-h264-reset" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Uses level assert/deassert with SG2002's simple-reset provider, which has no pulse duration.";
+    };
+    "media-coda-download-sg2002-firmware-into-bit-sram" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Retains the Coda9 BIT SRAM download in addition to SG2002's common-arena firmware copy.";
+    };
+    "media-coda-read-sg2002-product-code-from-gdi" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Reads Coda980's hardware product code separately from its customer-coded firmware version word.";
+    };
+    "media-coda-configure-sg2002-h264-headers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Initializes the extended Coda9 SPS/PPS registers used by Coda980 firmware.";
+    };
+    "media-coda-configure-sg2002-coda980-encoder-abi" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Programs the Coda980 sequence, Maverick-II cache, and per-picture H.264 ABI without applying Coda960-only semantics.";
+    };
+    "media-coda-restore-coda980-frame-memory-default" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps Coda980's interleaved-chroma, 128-bit little-endian frame-memory default across command-time rewrites.";
+    };
+    "media-coda-preserve-coda980-sps-setup-with-crop" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = "Keeps 1080p frame-crop flags from bypassing the Coda980 extended SPS register setup.";
+    };
+    "media-sophgo-tighten-sg2002-csi-interrupt-handling" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Enables only the VI completion interrupt consumed by the driver,
+        exposes the five documented CSI MAC error causes, clears sticky CSI
+        bridge status between streams, and names the direct-YUV route bits.
+      '';
+    };
+    "media-i2c-refresh-lt6911uxc-state-on-timing-queries" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the LT6911UXC support series before submission";
+      notes = ''
+        Polls the non-interrupt-driven LT6911UXC timing state when userspace
+        queries it, updates the active media-bus format and pixel rate, and
+        emits source-change events without holding the register/state mutex.
+      '';
+    };
+    "media-sophgo-validate-sg2002-capture-source-format" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Validates the fixed 1080p UYVY source link before starting DMA and
+        forwards source-change events to capture userspace, failing an active
+        queue when the HDMI bridge changes mode underneath it.
+      '';
+    };
+    "media-sophgo-remove-sg2002-capture-bring-up-controls" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Removes diagnostic partial-stage module parameters and the one-shot
+        MMIO dump now that the full CSI-to-DMA6 path is hardware-tested.
+      '';
+    };
+    "media-sophgo-harden-sg2002-csi-stream-teardown" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Quiesces DMA and wakes VB2 on fatal link errors or source changes,
+        serializes async source lifetime against stream teardown, and releases
+        active queues before notifier and device resources disappear.
+      '';
+    };
+    "media-i2c-lt6911uxe-poll-uxc-while-streaming" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the LT6911UXC support series before submission";
+      notes = ''
+        Polls the HPD-less UXC once per second only while streaming, emits one
+        event for each detected transition, and preserves ENOLINK plus safe
+        work, runtime-PM, active-state, and stream lifetime ordering.
+      '';
+    };
+    "media-coda-use-two-coda980-reconstruction-buffers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = ''
+        Matches the two reconstruction buffers registered with Coda980
+        firmware and avoids two unused 1080p coherent allocations.
+      '';
+    };
+    "media-coda-use-linear-gdi-map-for-coda980-nv12" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = ''
+        coda_s_fmt picks GDI_TILED_FRAME_MB_RASTER_MAP for NV12 on anything
+        reporting CODA_960; the SG2002 Coda980 reports CODA_960 but is fed
+        linear-raster buffers, so the tile walker scrambled the source fetch
+        (12.6 dB PSNR, vertical stripes). Linear map measures 43.2 dB direct,
+        matching the staged NV21 control. Replaces the 0040 NV12 withdrawal.
+      '';
+    };
+    "media-bind-reserved-memory-pools-to-sg2002-media-devices" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the respective driver submissions upstream";
+      notes = ''
+        of_dma_configure() only binds "restricted-dma-pool" on this path, so
+        the board's shared-dma-pool was never assigned and all three media
+        devices kept hitting the colonized default CMA. Probe/remove calls
+        bind video-pool@86800000 to coda, sg2002-capture and sg2002-vpss.
+      '';
+    };
+    "dt-bindings-media-document-sg2002-csi-capture" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 CSI capture binding is accepted upstream";
+      notes = ''
+        Documents the current monolithic CSI MAC, wrapper, VI and VIP system
+        resource contract, including the NanoKVM four-lane D-PHY endpoint and
+        named CSI PHY reset lines.
+      '';
+    };
+    "dt-bindings-media-document-sg2002-vpss-scaler" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 VPSS scaler binding is accepted upstream";
+      notes = ''
+        Documents the mem2mem subset of the VIP scaler/CSC block: one
+        register window, the shared PLIC interrupt, and the six clocks
+        for IMG_IN_V + SC_TOP + SC_V1.
+      '';
+    };
+    "media-sophgo-add-sg2002-vpss-scaler-driver" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The SG2002 VPSS mem2mem driver is accepted upstream";
+      notes = ''
+        UYVY/YUYV/NV12/NV21 in, NV12/NV21 out, 1:1 or up to 4x downscale
+        via IMG_IN_V + SC_V1. Programming sequence implemented from the
+        vendor register map (see vpss-driver-20260810 archaeology); no
+        vendor driver code reused. Bicubic coefficients generated from
+        the standard Keys kernel (a=-0.5), identity set used at 1:1.
+      '';
+    };
+    "riscv-dts-sophgo-add-sg2002-vpss-node" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "An SG2002 VPSS node is accepted upstream";
+      notes = ''
+        VPSS window 0x0a080000, PLIC 25 (SOC_PERIPHERAL_IRQ(9)), VIP sys
+        muxes + IMG_IN_V/SC_TOP/SC_V1 gates. Disabled by default.
+      '';
+    };
+    "media-sophgo-unbind-sg2002-vpss-from-reserved-pool" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        rmem_dma_ops cannot map imported dma-bufs, which a zero-copy
+        capture->VPSS->encoder chain needs in both directions; VPSS is
+        import-only and gains nothing from the pool. Also takes 0047's
+        of_reserved_mem_device_release() out of vpss_remove while the
+        rmmod wedge is being chased on hardware.
+      '';
+    };
+    "media-coda-release-reserved-pool-after-teardown" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the Coda980 support patch before submission";
+      notes = ''
+        0047 released the rmem dma_ops first in coda_remove, while vb2
+        queues and the firmware arena still free through them —
+        "modprobe -r coda-vpu" faulted (rc=139) on hardware. Release
+        now runs after the last coherent free.
+      '';
+    };
+    "media-sophgo-sg2002-vpss-capture-crop" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        CAPTURE-side V4L2_SEL_TGT_CROP marks the visible image inside a
+        macroblock-padded CAPTURE surface (e.g. 1080 lines in a 1088-line
+        buffer, chroma plane at the padded offset) so the scaler feeds
+        Coda980's expected layout without a CPU padding pass. Hardware
+        validated 2026-08-18 (one-shot + live bridge).
+      '';
+    };
+    "media-sophgo-sg2002-vpss-session-clocking" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        Hold the VPSS clocks for the whole streaming session instead of
+        per-job pm_runtime get/put: gating right after frame-end, while
+        the ODMA may still be draining AXI, wedges the bus silently on
+        hardware (watchdog reset). Also clear the full raw interrupt
+        status in the ISR, per the vendor sclr_intr_clr.
+      '';
+    };
+    "media-sophgo-sg2002-vpss-fabric-clocks" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver patch before submission";
+      notes = ''
+        The VPSS register window needs the VIP fabric clocks, which the
+        CSI capture driver gates at stream stop; a VPSS write with them
+        off stalls the bus silently (hardware-verified). Claimed as
+        optional DT clocks so the driver still probes against the older
+        6-clock board description.
+      '';
+    };
+    "dt-bindings-reset-add-sg2002-csi-phy-resets" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The named SG2002 CSI PHY resets are accepted upstream";
+      notes = ''
+        Names the existing reset-controller ABI IDs used by CSI PHY0 and its
+        APB interface, kept separate from the media binding for submission.
       '';
     };
   };

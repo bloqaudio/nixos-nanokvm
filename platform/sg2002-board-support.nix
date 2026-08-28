@@ -17,6 +17,10 @@
   cfg = config.sg2002;
 
   kernelPkg = pkgs."sg2002-kernel-${cfg.kernel}";
+  fipPkg =
+    if cfg.uboot == "mainline"
+    then pkgs.sg2002-fip-mainline-uboot
+    else pkgs.sg2002-fip;
 
   aic8800Pkg =
     if !cfg.wifi.enable
@@ -60,6 +64,18 @@ in {
       type = types.enum ["mainline" "vendor"];
       default = "mainline";
       description = "Which U-Boot/FIP to install on the firmware partition.";
+    };
+
+    uart1Rescue.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Whether this carrier exposes UART1 as a physical rescue console.";
+    };
+
+    consoleDevice = mkOption {
+      type = types.enum ["ttyS0" "ttyS1" "ttyGS0" "tty0"];
+      default = "ttyS0";
+      description = "Final kernel console device used as /dev/console.";
     };
 
     fdt = mkOption {
@@ -120,6 +136,27 @@ in {
     tuning.enable =
       mkEnableOption "SD-longevity and low-RAM defaults (noatime, zram in stage-2, journald volatile, no disk swap, docs off)"
       // {default = true;};
+
+    initrd = {
+      pruneKernelModules =
+        mkEnableOption "Use the SG2002-pruned initrd kernel module lists";
+      availableKernelModules = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = ''
+          Kernel modules to include in SG2002 initrds when
+          sg2002.initrd.pruneKernelModules is enabled.
+        '';
+      };
+      kernelModules = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = ''
+          Kernel modules to load in SG2002 initrds when
+          sg2002.initrd.pruneKernelModules is enabled.
+        '';
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -151,13 +188,34 @@ in {
       hardware.enableAllHardware = lib.mkForce false;
 
       boot.kernelPackages = pkgs.linuxPackagesFor kernelPkg;
+      system.build.fip = fipPkg;
 
       boot.extraModulePackages = lib.optional (aic8800Pkg != null) aic8800Pkg;
-      boot.kernelModules = lib.optionals (aic8800Pkg != null) [
-        "aic8800_bsp"
-        "aic8800_fdrv"
-        "aic8800_btlpm"
-      ];
+      boot.kernelModules =
+        lib.optional (cfg.kernel == "mainline" && cfg.wifi.enable) "rfkill"
+        ++ lib.optionals (aic8800Pkg != null) [
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
+      # systemd-modules-load remains active across switch-root and therefore
+      # does not replay boot.kernelModules in stage 2.  A pruned SD initrd must
+      # carry and load the WiFi stack itself; otherwise /dev/rfkill and wlan0
+      # never appear and the hardened wpa_supplicant unit cannot start.
+      sg2002.initrd.availableKernelModules = lib.optionals
+        (cfg.kernel == "mainline" && cfg.wifi.enable) [
+          "rfkill"
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
+      sg2002.initrd.kernelModules = lib.optionals
+        (cfg.kernel == "mainline" && cfg.wifi.enable) [
+          "rfkill"
+          "aic8800_bsp"
+          "aic8800_fdrv"
+          "aic8800_btlpm"
+        ];
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
 
       # The aicbsp driver opens /lib/firmware/... directly via
@@ -178,10 +236,30 @@ in {
       networking.firewall.enable = false;
     }
 
+    (lib.mkIf cfg.initrd.pruneKernelModules {
+      boot.initrd.availableKernelModules =
+        lib.mkForce (lib.unique cfg.initrd.availableKernelModules);
+      boot.initrd.kernelModules =
+        lib.mkForce (lib.unique cfg.initrd.kernelModules);
+    })
+
+    (lib.mkIf (cfg.kernel == "mainline" && cfg.wifi.enable) {
+      # AIC8800 opens its blobs through literal /lib/firmware paths rather
+      # than request_firmware().  systemd-modules-load runs before tmpfiles,
+      # so the firmware must be part of the initrd's /lib tree at build time.
+      boot.initrd.systemd.contents."/lib".source = lib.mkForce (
+        pkgs.runCommand "sg2002-initrd-lib" {} ''
+          mkdir -p $out
+          ln -s ${config.system.build.modulesClosure}/lib/modules $out/modules
+          ln -s ${config.hardware.firmware}/lib/firmware $out/firmware
+        ''
+      );
+    })
+
     (lib.mkIf cfg.tuning.enable {
-      # noatime kills per-read timestamp writes; commit=600 extends
-      # ext4 journal commits from 5 s → 10 min. Trade-off: 10-min-
-      # window data loss on hard reset, acceptable on a dev board.
+      # noatime kills per-read timestamp writes; commit=600 extends Btrfs
+      # transaction commits to 10 min. Trade-off: a longer window of recent
+      # data loss on hard reset, acceptable on a development SD card.
       fileSystems."/".options = ["noatime" "commit=600"];
       boot.tmp.useTmpfs = true;
 

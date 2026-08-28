@@ -1,0 +1,29 @@
+From fdbf5a93f34d8a0c1cbd892eaa83538833685842 Mon Sep 17 00:00:00 2001
+From: georgewhewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 18:54:13 +0200
+Subject: [PATCH] dt-bindings: reset: add SG2002 CSI PHY resets
+
+Name the CSI PHY0 and PHY0 APB reset lines used by the SG2002 capture
+pipeline. The numeric IDs match the existing CV18xx reset controller ABI.
+
+Signed-off-by: georgewhewell <georgerw@gmail.com>
+---
+ arch/riscv/boot/dts/sophgo/cv18xx-reset.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/sophgo/cv18xx-reset.h b/arch/riscv/boot/dts/sophgo/cv18xx-reset.h
+index 7e7c5ca2d..433d3d466 100644
+--- a/arch/riscv/boot/dts/sophgo/cv18xx-reset.h
++++ b/arch/riscv/boot/dts/sophgo/cv18xx-reset.h
+@@ -54,6 +54,8 @@
+ #define RST_COMBO_PHY0			58
+ #define RST_SPI_NAND			61
+ #define RST_SE				62
++#define RST_CSI_PHY0			70
++#define RST_CSI_PHY0_APB			71
+ #define RST_UART4			74
+ #define RST_GPIO3			75
+ #define RST_SYSTEM			76
+-- 
+2.54.0
+

@@ -1,0 +1,59 @@
+From 4fb231e50a2e9f5f1b9f15dc9478f419218c22f8 Mon Sep 17 00:00:00 2001
+From: Local NixOS bring-up <local@example.invalid>
+Date: Sat, 1 Aug 2026 22:48:00 +0200
+Subject: [PATCH] pinctrl: sophgo: allow power source on fixed I/O pins
+
+The CV18xx devicetree parser requires every pin group to specify a valid
+power-source.  ETH and AUDIO pins have fixed power domains and no pinconf
+register, however, so cv1800_pinconf_compute_config() rejects their groups
+unconditionally.
+
+Accept power-source as the sole configuration for these fixed I/O types.
+Return a zero mask, and avoid accessing the absent pinconf register when a
+configuration has no writable bits.  Continue rejecting pull, drive and
+other unsupported settings.
+
+This permits legitimate alternate functions on fixed-domain pads, such as
+SG2002 SPI1 on the Ethernet pins.
+
+Signed-off-by: Local NixOS bring-up <local@example.invalid>
+---
+ drivers/pinctrl/sophgo/pinctrl-cv18xx.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pinctrl/sophgo/pinctrl-cv18xx.c b/drivers/pinctrl/sophgo/pinctrl-cv18xx.c
+index d0163f0e92ac..4348f9de4ac2 100644
+--- a/drivers/pinctrl/sophgo/pinctrl-cv18xx.c
++++ b/drivers/pinctrl/sophgo/pinctrl-cv18xx.c
+@@ -324,8 +324,17 @@ static int cv1800_pinconf_compute_config(struct sophgo_pinctrl *pctrl,
+ 		return -EINVAL;
+ 
+ 	type = cv1800_pin_io_type(pin);
+-	if (type == IO_TYPE_ETH || type == IO_TYPE_AUDIO)
+-		return -ENOTSUPP;
++	if (type == IO_TYPE_ETH || type == IO_TYPE_AUDIO) {
++		for (i = 0; i < num_configs; i++) {
++			if (pinconf_to_config_param(configs[i]) !=
++			    PIN_CONFIG_POWER_SOURCE)
++				return -ENOTSUPP;
++		}
++
++		*value = 0;
++		*mask = 0;
++		return 0;
++	}
+ 
+ 	for (i = 0; i < num_configs; i++) {
+ 		int param = pinconf_to_config_param(configs[i]);
+@@ -393,6 +402,9 @@ static int cv1800_set_pinconf_config(struct sophgo_pinctrl *pctrl,
+ 	void __iomem *addr;
+ 	u32 reg;
+ 
++	if (!mask)
++		return 0;
++
+ 	addr = cv1800_pinctrl_get_component_addr(priv, &pin->conf);
+ 
+ 	reg = readl(addr);
+-- 
+2.50.1

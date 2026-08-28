@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Tue, 18 Aug 2026 10:00:00 +0200
+Subject: [PATCH 0048] media: sophgo: unbind SG2002 VPSS from the reserved pool
+
+Partially reverts 0047 for the VPSS driver only; CSI capture and
+Coda980 keep their pool binding.
+
+Two reasons:
+
+* rmem_dma_ops has no imported-dmabuf mapping, so a pool-bound device
+  rejects every V4L2_MEMORY_DMABUF QBUF with ENOMEM. The VPSS node is
+  the middle of a zero-copy chain (CSI capture expbuf in, NV12 out to
+  buffers the encoder imports), i.e. it is import-only and gets no use
+  out of the pool at all. With the default dma_ops both import
+  directions work.
+
+* A bare "rmmod sg2002_vpss" wedges the SoC silently on hardware, and
+  0047's of_reserved_mem_device_release() — called first, before any
+  vb2/v4l2 teardown — is the prime suspect. Not binding the pool takes
+  that whole path out of the driver while the run-time stall is being
+  chased (see vpss-driver-20260810 campaign notes).
+
+The VPSS block needs no coherent memory of its own: its queues are
+driven by imported buffers, and small MMAP-queue test allocations fit
+the default CMA.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+diff --git a/drivers/media/platform/sophgo/sg2002-vpss.c b/drivers/media/platform/sophgo/sg2002-vpss.c
+index ddffae6..35165fb 100644
+--- a/drivers/media/platform/sophgo/sg2002-vpss.c
++++ b/drivers/media/platform/sophgo/sg2002-vpss.c
+@@ -26,7 +26,6 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+-#include <linux/of_reserved_mem.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+@@ -935,11 +934,6 @@ static int vpss_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_m2m;
+ 
+-	ret = of_reserved_mem_device_init(&pdev->dev);
+-	if (ret && ret != -ENODEV)
+-		dev_warn(&pdev->dev, "failed to initialize reserved memory: %d\n",
+-			 ret);
+-
+ 	pm_runtime_enable(&pdev->dev);
+ 
+ 	dev_info(&pdev->dev, "registered as /dev/video%d\n", vfd->num);
+@@ -956,8 +950,6 @@ static void vpss_remove(struct platform_device *pdev)
+ {
+ 	struct vpss_dev *vpss = platform_get_drvdata(pdev);
+ 
+-	of_reserved_mem_device_release(&pdev->dev);
+-
+ 	pm_runtime_disable(&pdev->dev);
+ 	video_unregister_device(&vpss->vfd);
+ 	v4l2_m2m_release(vpss->m2m_dev);

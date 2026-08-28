@@ -1,0 +1,114 @@
+From 70f845dbb92e1768e1f58e639d06c131a0bdcea1 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 15:55:39 +0200
+Subject: [PATCH] media: coda: configure SG2002 H.264 headers
+
+Coda980 extends the Coda9 ENC_HEADER register window with six words
+past the Coda960 frame-crop registers: H.264 profile, chroma format,
+field flag, and the PPS CABAC mode, CABAC init idc, and 8x8 transform
+flags. The SG2002 firmware consumes them when it generates SPS and
+PPS; left unprogrammed, they hold whatever the previous command
+sequence left behind and the emitted headers are not deterministic.
+
+Select the extension through a new has_extended_h264_header devtype
+flag. For SPS, program the profile derived from h264_profile_idc
+(baseline, main, or high) and the fixed 4:2:0 progressive values; for
+PPS, program the CAVLC defaults with the 8x8 transform disabled,
+matching the baseline streams this encoder path produces.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ .../platform/chips-media/coda/coda-bit.c      | 33 +++++++++++++++++++
+ .../platform/chips-media/coda/coda-common.c   |  1 +
+ .../media/platform/chips-media/coda/coda.h    |  1 +
+ .../platform/chips-media/coda/coda_regs.h     |  6 ++++
+ 4 files changed, 41 insertions(+)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index 0f5d122b1..c21b3de18 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -671,6 +671,39 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 			header_code |= CODA9_HEADER_FRAME_CROP;
+ 		}
+ 	}
++	if (dev->devtype->has_extended_h264_header &&
++	    ctx->codec->dst_fourcc == V4L2_PIX_FMT_H264) {
++		if (header_code == CODA_HEADER_H264_SPS) {
++			u32 profile;
++
++			switch (ctx->params.h264_profile_idc) {
++			case 66:
++				profile = 0;
++				break;
++			case 77:
++				profile = 1;
++				break;
++			case 100:
++			default:
++				profile = 2;
++				break;
++			}
++
++			coda_write(dev, profile,
++				   CODA9_CMD_ENC_HEADER_PROFILE);
++			coda_write(dev, 0,
++				   CODA9_CMD_ENC_HEADER_CHROMA_FORMAT);
++			coda_write(dev, 0,
++				   CODA9_CMD_ENC_HEADER_FIELD_FLAG);
++		} else if (header_code == CODA_HEADER_H264_PPS) {
++			coda_write(dev, 0,
++				   CODA9_CMD_ENC_HEADER_CABAC_MODE);
++			coda_write(dev, 0,
++				   CODA9_CMD_ENC_HEADER_CABAC_INIT_IDC);
++			coda_write(dev, 0,
++				   CODA9_CMD_ENC_HEADER_TRANSFORM_8X8);
++		}
++	}
+ 	coda_write(dev, header_code, CODA_CMD_ENC_HEADER_CODE);
+ 	ret = coda_command_sync(ctx, CODA_COMMAND_ENCODE_HEADER);
+ 	if (ret < 0) {
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index e002c5d68..29c927cee 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -3365,6 +3365,7 @@ static const struct coda_devtype sg2002_coda980_devdata = {
+ 	.nv21_to_nv12		= true,
+ 	.rstc_assert_deassert	= true,
+ 	.has_software_reset	= true,
++	.has_extended_h264_header = true,
+ };
+ 
+ static const struct of_device_id coda_dt_ids[] = {
+diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
+index 82e9e0c9a..c217a27ff 100644
+--- a/drivers/media/platform/chips-media/coda/coda.h
++++ b/drivers/media/platform/chips-media/coda/coda.h
+@@ -91,6 +91,7 @@ struct coda_devtype {
+ 	bool			has_software_reset;
+ 	bool			rstc_assert_deassert;
+ 	bool			skip_code_download;
++	bool			has_extended_h264_header;
+ };
+ 
+ struct coda_aux_buf {
+diff --git a/drivers/media/platform/chips-media/coda/coda_regs.h b/drivers/media/platform/chips-media/coda/coda_regs.h
+index 3caebf848..6383baf82 100644
+--- a/drivers/media/platform/chips-media/coda/coda_regs.h
++++ b/drivers/media/platform/chips-media/coda/coda_regs.h
+@@ -438,6 +438,12 @@
+ #define CODA_CMD_ENC_HEADER_BB_SIZE	0x188
+ #define CODA9_CMD_ENC_HEADER_FRAME_CROP_H	0x18c
+ #define CODA9_CMD_ENC_HEADER_FRAME_CROP_V	0x190
++#define CODA9_CMD_ENC_HEADER_CABAC_MODE		0x194
++#define CODA9_CMD_ENC_HEADER_CABAC_INIT_IDC	0x198
++#define CODA9_CMD_ENC_HEADER_TRANSFORM_8X8	0x19c
++#define CODA9_CMD_ENC_HEADER_CHROMA_FORMAT	0x1a0
++#define CODA9_CMD_ENC_HEADER_FIELD_FLAG		0x1a4
++#define CODA9_CMD_ENC_HEADER_PROFILE		0x1a8
+ 
+ /* Get Version */
+ #define CODA_CMD_FIRMWARE_VERNUM		0x1c0
+-- 
+2.54.0
+

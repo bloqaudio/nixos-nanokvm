@@ -1,0 +1,98 @@
+From 37b86d2c66643377c54c042897c66df9f54a79b6 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 14:58:22 +0200
+Subject: [PATCH] media: coda: boot SG2002 firmware from common arena
+
+The SG2002 Coda980 firmware is loaded in the DMA common arena and expects its code, temporary, and parameter addresses before CODE_RUN. Keep the legacy CODE_DOWN path for i.MX Coda instances, but skip it for SG2002 and program the common parameter slice during hardware initialization.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ .../platform/chips-media/coda/coda-common.c   | 45 +++++++++++--------
+ .../media/platform/chips-media/coda/coda.h    |  1 +
+ 2 files changed, 27 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 028a0c9e0..e15185341 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -2883,25 +2883,27 @@ static int coda_hw_init(struct coda_dev *dev)
+ 		writel(dev->devtype->sram_ctrl_value,
+ 		       dev->sram_ctrl + dev->devtype->sram_ctrl_offset);
+ 
+-	/*
+-	 * Copy the first CODA_ISRAM_SIZE in the internal SRAM.
+-	 * The 16-bit chars in the code buffer are in memory access
+-	 * order, re-sort them to CODA order for register download.
+-	 * Data in this SRAM survives a reboot.
+-	 */
+-	p = (u16 *)dev->codebuf.vaddr;
+-	if (dev->devtype->product == CODA_DX6) {
+-		for (i = 0; i < (CODA_ISRAM_SIZE / 2); i++)  {
+-			data = CODA_DOWN_ADDRESS_SET(i) |
+-				CODA_DOWN_DATA_SET(p[i ^ 1]);
+-			coda_write(dev, data, CODA_REG_BIT_CODE_DOWN);
+-		}
+-	} else {
+-		for (i = 0; i < (CODA_ISRAM_SIZE / 2); i++) {
+-			data = CODA_DOWN_ADDRESS_SET(i) |
+-				CODA_DOWN_DATA_SET(p[round_down(i, 4) +
+-							3 - (i % 4)]);
+-			coda_write(dev, data, CODA_REG_BIT_CODE_DOWN);
++	if (!dev->devtype->skip_code_download) {
++		/*
++		 * Copy the first CODA_ISRAM_SIZE in the internal SRAM.
++		 * The 16-bit chars in the code buffer are in memory access
++		 * order, re-sort them to CODA order for register download.
++		 * Data in this SRAM survives a reboot.
++		 */
++		p = (u16 *)dev->codebuf.vaddr;
++		if (dev->devtype->product == CODA_DX6) {
++			for (i = 0; i < (CODA_ISRAM_SIZE / 2); i++)  {
++				data = CODA_DOWN_ADDRESS_SET(i) |
++					CODA_DOWN_DATA_SET(p[i ^ 1]);
++				coda_write(dev, data, CODA_REG_BIT_CODE_DOWN);
++			}
++		} else {
++			for (i = 0; i < (CODA_ISRAM_SIZE / 2); i++) {
++				data = CODA_DOWN_ADDRESS_SET(i) |
++					CODA_DOWN_DATA_SET(p[round_down(i, 4) +
++								3 - (i % 4)]);
++				coda_write(dev, data, CODA_REG_BIT_CODE_DOWN);
++			}
+ 		}
+ 	}
+ 
+@@ -2919,6 +2921,10 @@ static int coda_hw_init(struct coda_dev *dev)
+ 	    dev->devtype->product == CODA_HX4) {
+ 		coda_write(dev, tempbuf,
+ 				CODA_REG_BIT_TEMP_BUF_ADDR);
++		if (dev->devtype->commonbuf_size)
++			coda_write(dev, dev->codebuf.paddr +
++				   dev->devtype->parabuf_offset,
++				   CODA_REG_BIT_PARA_BUF_ADDR);
+ 		coda_write(dev, 0, CODA_REG_BIT_BIT_STREAM_PARAM);
+ 	} else {
+ 		coda_write(dev, dev->workbuf.paddr,
+@@ -3340,6 +3346,7 @@ static const struct coda_devtype sg2002_coda980_devdata = {
+ 	.requires_firmware_name	= true,
+ 	.nv21_to_nv12		= true,
+ 	.has_software_reset	= true,
++	.skip_code_download	= true,
+ };
+ 
+ static const struct of_device_id coda_dt_ids[] = {
+diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
+index ad34a3d76..13cf3c773 100644
+--- a/drivers/media/platform/chips-media/coda/coda.h
++++ b/drivers/media/platform/chips-media/coda/coda.h
+@@ -87,6 +87,7 @@ struct coda_devtype {
+ 	bool			nv21_to_nv12;
+ 	bool			has_coda9_bus_reset;
+ 	bool			has_software_reset;
++	bool			skip_code_download;
+ };
+ 
+ struct coda_aux_buf {
+-- 
+2.54.0
+

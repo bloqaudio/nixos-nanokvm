@@ -1,0 +1,68 @@
+/* PicoClaw 240x240 ST7789 panel.
+ *
+ * Sipeed's rvclaw application uses SPI1.0 plus GPIOA28 (D/C), GPIOA27
+ * (reset), and active-low GPIOA19 (backlight).  Its original hardware
+ * bring-up programs the four Ethernet pads directly to function 6:
+ * TXP=SDO, TXM=SDI, RXP=SCK, RXM=CS.  These are the PicoClaw's physical
+ * LCD nets; the MIPI pads provide another valid SPI1 route but are not
+ * wired to this panel.
+ *
+ * The panel is intentionally exposed through spidev.  Mainline's generic
+ * DRM MIPI-DBI panel would require enabling the otherwise-pruned DRM stack
+ * for every SG2002 image; the dedicated PicoClaw service instead performs
+ * the small ST7789 init and visible self-test in userspace.
+ */
+
+/ {
+	model = "Sipeed LicheeRV Nano PicoClaw";
+	compatible = "sipeed,licheerv-nano-picoclaw",
+		     "sipeed,licheerv-nano-bw",
+		     "sipeed,licheerv-nano-b",
+		     "sipeed,licheerv-nano",
+		     "sophgo,sg2002";
+
+	aliases {
+		/* Keep the userspace ABI stable even though SPI0 is disabled. */
+		spi1 = &spi1;
+	};
+};
+
+&pinctrl {
+	picoclaw_lcd_cfg: picoclaw-lcd-cfg {
+		spi1-pins {
+			pinmux = <PINMUX(PIN_ETH_TXP, 6)>,
+				 <PINMUX(PIN_ETH_TXM, 6)>,
+				 <PINMUX(PIN_ETH_RXP, 6)>,
+				 <PINMUX(PIN_ETH_RXM, 6)>;
+			power-source = <1800>;
+		};
+
+		control-pins {
+			/* GPIOA19 = backlight, A27 = reset, A28 = D/C. */
+			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 3)>,
+				 <PINMUX(PIN_EMMC_DAT3, 3)>,
+				 <PINMUX(PIN_IIC0_SCL, 3)>;
+			power-source = <3300>;
+		};
+	};
+};
+
+/* GPIOA28 shares the IIC0_SCL pad, so this panel variant cannot expose
+ * I2C0 at the same time.  The proven headless nowifi DTB remains unchanged. */
+&i2c0 {
+	status = "disabled";
+};
+
+&spi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&picoclaw_lcd_cfg>;
+	num-cs = <1>;
+	status = "okay";
+
+	lcd@0 {
+		/* Same spidev-compatible ID used by Sipeed's released image. */
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
+};

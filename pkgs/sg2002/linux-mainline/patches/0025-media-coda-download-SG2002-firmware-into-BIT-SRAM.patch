@@ -1,0 +1,29 @@
+From 99e49e71fd7fe94f067e5e30a786724e470f6801 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 15:35:44 +0200
+Subject: [PATCH] media: coda: download SG2002 firmware into BIT SRAM
+
+The SG2002 firmware uses the common DMA arena as its backing store, but the Coda BIT processor still requires the normal 4 KiB register download before CODE_RUN.
+
+Use the existing Coda9 download path, whose four-word reorder matches the factory Coda9VpuInit sequence.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/chips-media/coda/coda-common.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index f01119953..e61e1d2a7 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -3364,7 +3364,6 @@ static const struct coda_devtype sg2002_coda980_devdata = {
+ 	.nv21_to_nv12		= true,
+ 	.rstc_assert_deassert	= true,
+ 	.has_software_reset	= true,
+-	.skip_code_download	= true,
+ };
+ 
+ static const struct of_device_id coda_dt_ids[] = {
+-- 
+2.54.0
+

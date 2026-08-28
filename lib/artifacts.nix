@@ -61,12 +61,17 @@ let
   mkKexecBootargs =
     { prefix ? [ ]
     , extra ? [ ]
+    , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     lib.concatStringsSep " " (prefix
+      ++ lib.optional (uartConsole != null) "console=${uartConsole},115200"
+      # ttyGS0 LAST when enabled: /dev/console is the last console= entry.
+      # Full NFS boots may disable it because closing an unopened gadget
+      # console can block PID 1 in gs_close() during switch-root.
+      ++ lib.optional usbConsole "console=ttyGS0,115200"
       ++ [
-      "console=ttyGS0,115200"
-      "console=ttyS0,115200"
       "earlycon=sbi"
       "ignore_loglevel"
       "panic=10"
@@ -83,6 +88,8 @@ let
     , rootfsCfg ? cfg
     , oled ? false
     , extraBootargs ? [ ]
+    , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     let
@@ -100,6 +107,7 @@ let
         then sg2002OledOverlayDtbo
         else null;
       cmdline = mkKexecBootargs {
+        inherit uartConsole usbConsole;
         extra = extraBootargs ++ featureBootargs;
       };
     };
@@ -109,6 +117,7 @@ let
   mkRootfsRuntimeSetup =
     { label
     , rootfsBindIp ? null
+    , requireRootfsHostOverride ? false
     ,
     }:
     let
@@ -122,6 +131,13 @@ let
         else rootfsBindIp;
     in
     ''
+      ${lib.optionalString requireRootfsHostOverride ''
+        if [ -z "''${NANOKVM_NBD_ROOTFS_HOST:-}" ]; then
+          echo "[${label}] NANOKVM_NBD_ROOTFS_HOST is required for this variant; set it to the host address reachable from the target network" >&2
+          echo "[${label}] optionally set NANOKVM_NBD_ROOTFS_BIND to the local address nbd-server should bind" >&2
+          exit 1
+        fi
+      ''}
       rootfs_host="''${NANOKVM_NBD_ROOTFS_HOST:-${rootfsHostDefault}}"
       rootfs_bind="''${NANOKVM_NBD_ROOTFS_BIND:-${rootfsBindDefault}}"
       rootfs_port_request="''${NANOKVM_NBD_ROOTFS_PORT:-auto}"
@@ -136,6 +152,7 @@ let
     , payload
     , rootfs ? null
     , rootfsBindIp ? null
+    , requireRootfsHostOverride ? false
     , useRunningDtb ? false
     , applyDtbOverlay ? false
     , loadOnly ? false
@@ -253,7 +270,7 @@ let
 
         ${lib.optionalString (rootfs != null) (mkRootfsRuntimeSetup {
           label = "usb-kexec";
-          inherit rootfsBindIp;
+          inherit rootfsBindIp requireRootfsHostOverride;
         })}
 
         configure_host_iface usb-kexec >/dev/null || exit 1
@@ -294,6 +311,7 @@ let
     , rootfs ? null
     , bootargs
     , rootfsBindIp ? null
+    , requireRootfsHostOverride ? false
     , attachPicocom ? false
     , waitForSsh ? false
     , onShellDetachCommand ? null
@@ -347,101 +365,6 @@ let
         }
 
         start_rootfs_nbd || exit 1
-      '';
-      # Host-side host-key handling. Only relevant when the variant
-      # actually runs stage 2 sshd (waitForSsh path). Keeps personal
-      # pubkeys out of the nix store AND skips the SG2002's ~60 s
-      # wall-clock sshd-keygen by pre-installing keys into the
-      # initrd's /etc-overlay upperdir.
-      #
-      # Storage: $PWD/.ssh_host_{ed25519,rsa}_key (gitignored).
-      # Reuses on subsequent boots so SSH known_hosts stays stable.
-      # Env knobs:
-      #   NANOKVM_HOST_KEY_DIR — override default ($PWD)
-      #   NANOKVM_HOST_KEY_GENERATE=0 — skip the whole step
-      #   NANOKVM_HOST_KEY_PERSIST=0 — generated keys not written back
-      hostKeysInject = lib.optionalString waitForSsh ''
-        if [ "''${NANOKVM_HOST_KEY_GENERATE:-1}" = 0 ]; then
-          echo "[usb-boot] NANOKVM_HOST_KEY_GENERATE=0, skipping host-key push"
-        else
-          host_key_dir="''${NANOKVM_HOST_KEY_DIR:-$PWD}"
-          host_key_ed="$host_key_dir/.ssh_host_ed25519_key"
-          host_key_rsa="$host_key_dir/.ssh_host_rsa_key"
-          generated_any=0
-          for kt in ed25519 rsa; do
-            kf="$host_key_dir/.ssh_host_''${kt}_key"
-            if [ ! -s "$kf" ] || [ ! -s "$kf.pub" ]; then
-              echo "[usb-boot] generating new host-$kt key at $kf"
-              generated_any=1
-              # ssh-keygen exits before printing newline on -q sometimes;
-              # force file create and capture errors.
-              rm -f "$kf" "$kf.pub"
-              ssh-keygen -t "$kt" -N "" -C "nanokvm-host-key" -f "$kf" -q
-              # The runner is usually invoked via `sudo` (for fastboot
-              # USB access), so newly created files end up owned by
-              # root. If $SUDO_USER is set, hand them back so the dev
-              # can manage them normally.
-              if [ -n "''${SUDO_USER:-}" ] && [ "$(id -u)" = 0 ]; then
-                chown "$SUDO_USER" "$kf" "$kf.pub" 2>/dev/null || true
-              fi
-            fi
-          done
-          host_key_cleanup=()
-          if [ "$generated_any" = 1 ] \
-              && [ "''${NANOKVM_HOST_KEY_PERSIST:-1}" = 0 ]; then
-            echo "[usb-boot] NANOKVM_HOST_KEY_PERSIST=0; cleaning up generated keys"
-            # Defer cleanup until end of script. Use a bash array (not a
-            # space-joined string) so paths containing spaces don't get
-            # word-split into something like `rm -f /home/grw/my src/...`.
-            host_key_cleanup=("$host_key_ed" "$host_key_ed.pub" "$host_key_rsa" "$host_key_rsa.pub")
-          fi
-
-          echo "[usb-boot] waiting for initrd debug shell on :$nanokvm_port_shell..."
-          shell_ready=0
-          for _ in $(seq 1 120); do
-            if timeout 1 bash -c ":</dev/tcp/$nanokvm_target_ip/$nanokvm_port_shell" 2>/dev/null; then
-              shell_ready=1
-              break
-            fi
-            sleep 0.5
-          done
-          if [ "$shell_ready" != 1 ]; then
-            echo "[usb-boot] WARN: debug shell never opened; skipping host-key push (sshd will keygen on device, ~60 s)"
-          else
-            echo "[usb-boot] pushing host keys via telnet :$nanokvm_port_shell"
-            # The receiver runs as busybox sh in initrd, scripted to wait
-            # for /sysroot/.rw-etc/upper (created by nixos rw-etc.service
-            # before initrd-fs.target) and then drop the keys there. Uses
-            # heredocs with unique markers since keys are multi-line.
-            {
-              printf '%s\n' "for i in \$(seq 1 120); do [ -d /sysroot/.rw-etc/upper ] && break; sleep 0.5; done"
-              printf '%s\n' "if [ ! -d /sysroot/.rw-etc/upper ]; then echo HOSTKEY_NO_UPPER; exit 1; fi"
-              printf '%s\n' "mkdir -p /sysroot/.rw-etc/upper/ssh"
-              printf '%s\n' "umask 077"
-              for spec in "ed25519:$host_key_ed:__NANOKVM_KEY_ED__" \
-                          "ed25519.pub:$host_key_ed.pub:__NANOKVM_KEY_EDPUB__" \
-                          "rsa:$host_key_rsa:__NANOKVM_KEY_RSA__" \
-                          "rsa.pub:$host_key_rsa.pub:__NANOKVM_KEY_RSAPUB__"; do
-                IFS=: read -r suffix src tag <<<"$spec"
-                base="ssh_host_$(echo "$suffix" | sed 's/\.pub/_key.pub/; t; s/$/_key/')"
-                printf '%s\n' "cat > /sysroot/.rw-etc/upper/ssh/$base <<'$tag'"
-                cat "$src"
-                printf '%s\n' "$tag"
-              done
-              printf '%s\n' "chmod 600 /sysroot/.rw-etc/upper/ssh/ssh_host_ed25519_key /sysroot/.rw-etc/upper/ssh/ssh_host_rsa_key"
-              printf '%s\n' "chmod 644 /sysroot/.rw-etc/upper/ssh/ssh_host_ed25519_key.pub /sysroot/.rw-etc/upper/ssh/ssh_host_rsa_key.pub"
-              printf '%s\n' "echo HOSTKEYS_INSTALLED"
-              printf '%s\n' "exit"
-            } | nc -w 20 "$nanokvm_target_ip" "$nanokvm_port_shell" 2>&1 \
-              | sed -u 's/^/[host-keys] /' \
-              | tee /tmp/nanokvm-hostkeys.log >/dev/null
-            if grep -q HOSTKEYS_INSTALLED /tmp/nanokvm-hostkeys.log; then
-              echo "[usb-boot] host keys installed; sshd-keygen will skip on device"
-            else
-              echo "[usb-boot] WARN: host-key push didn't confirm; check /tmp/nanokvm-hostkeys.log"
-            fi
-          fi
-        fi
       '';
       sshWait = lib.optionalString waitForSsh ''
         echo "[usb-boot] waiting for SSH on root@$nanokvm_target_ip..."
@@ -544,7 +467,6 @@ let
         iproute2
         nbd
         netcat-openbsd
-        openssh # ssh-keygen for the host-key generation step
         picocom
         systemd # networkctl for host-side networkd runtime overrides
       ];
@@ -577,7 +499,7 @@ let
         ${lib.optionalString (rootfs != null) ''
           ${mkRootfsRuntimeSetup {
             label = "usb-boot";
-            inherit rootfsBindIp;
+            inherit rootfsBindIp requireRootfsHostOverride;
           }}
           ${rootfsService}
 
@@ -592,29 +514,341 @@ let
 
         start_status_sink usb-boot
 
-        ${hostKeysInject}
-
         ${sshWait}
 
         ${attachTail}
 
-        ${lib.optionalString waitForSsh ''
-          if [ "''${#host_key_cleanup[@]}" -gt 0 ]; then
-            rm -f "''${host_key_cleanup[@]}"
-          fi
-        ''}
       '';
     };
 
   kernelTestBootargs = mkKexecBootargs { };
 
+  # ---------------------------------------------------------------------
+  # NFS-live host-side pieces.
+  #
+  # The NBD runners above ship a prebuilt erofs rootfs per generation;
+  # the NFS runners rely on the dev host's *kernel* nfsd instead: it
+  # exports /nix/store read-only (on trex via /export/nix-store — see
+  # the netboot-server profile in ../nixos-config; the USB-link CIDR
+  # 10.55.0.0/24 must be in the export). The target mounts it
+  # kernel-direct from its initrd and puts a tmpfs overlay on top, so
+  # a rebuild on the host is bootable immediately with no image step
+  # in between, the target stays completely stateless, and the runner
+  # has no server process to babysit.
+  # ---------------------------------------------------------------------
+
+  # Check the local NFSv4 pseudo-root before touching the board. A listener on
+  # port 2049 is not enough: the USB CIDR needs both the fsid=0 pseudo-root and
+  # the requested child export, read-only. This catches the exact failure mode
+  # where PUTROOTFH is denied even though /export/nix-store is exported.
+  nfsLocalExportCheck = label: ''
+    check_local_nfs_exports() {
+      [ "$nfs_server" = "$nanokvm_host_ip" ] || return 0
+
+      local exports physical_export
+      exports="$(as_root exportfs -v 2>/dev/null)" || {
+        echo "[${label}] ERROR: unable to inspect the local NFS exports" >&2
+        return 1
+      }
+      physical_export="/export''${nfs_export%/}"
+      [ "$physical_export" != "/export" ] || physical_export=/export
+
+      export_allows_usb_ro() {
+        local wanted="$1" require_fsid="$2"
+        printf '%s\n' "$exports" | awk \
+          -v wanted="$wanted" \
+          -v client="10.55.0.0/24" \
+          -v require_fsid="$require_fsid" '
+            /^\// { current = $1 }
+            current == wanted && index($0, client) > 0 &&
+              $0 ~ /(^|[,(])ro([,)])/ &&
+              (!require_fsid || index($0, "fsid=0") > 0) { found = 1 }
+            END { exit(found ? 0 : 1) }
+          '
+      }
+
+      if ! export_allows_usb_ro /export 1; then
+        echo "[${label}] ERROR: 10.55.0.0/24 lacks a read-only fsid=0 /export pseudo-root" >&2
+        return 1
+      fi
+      if ! export_allows_usb_ro "$physical_export" 0; then
+        echo "[${label}] ERROR: 10.55.0.0/24 lacks read-only export $physical_export" >&2
+        return 1
+      fi
+      echo "[${label}] verified local NFSv4 exports for 10.55.0.0/24 ($physical_export)"
+    }
+
+    check_local_nfs_exports || exit 1
+  '';
+
+  # Soft reachability check run once the USB link is up: the host nfsd should
+  # answer on 2049. Remote servers cannot be exportfs-inspected, so the target's
+  # initrd mount remains authoritative there.
+  nfsServerCheck = label: ''
+    # $1 belongs to the child bash; keeping this single-quoted prevents the
+    # server value from being reparsed as shell code.
+    # shellcheck disable=SC2016
+    if timeout 2 bash -c ':</dev/tcp/$1/2049' bash "$nfs_server" 2>/dev/null; then
+      echo "[${label}] NFS server answers on $nfs_server:2049"
+    else
+      echo "[${label}] WARNING: nothing on $nfs_server:2049 — the target will hang mounting /nix/store." >&2
+      if [ "$nfs_server" = "$nanokvm_host_ip" ]; then
+        echo "[${label}] The USB client needs both 10.55.0.0/24:/export (fsid=0) and 10.55.0.0/24:/export/nix-store exported read-only." >&2
+      fi
+    fi
+  '';
+
+  mkNfsUsbBootRunner =
+    { name
+    , fit
+    , bootargs
+    , nfsServer
+    , nfsExport
+    , waitForSsh ? false
+    , onShellDetachCommand ? null
+    ,
+    }:
+    let
+      sshWait = lib.optionalString waitForSsh ''
+        echo "[usb-boot] waiting for SSH on root@$nanokvm_target_ip..."
+        ssh_ready=0
+        for _ in $(seq 1 180); do
+          if timeout 1 bash -c ":</dev/tcp/$nanokvm_target_ip/22" 2>/dev/null; then
+            ssh_ready=1
+            break
+          fi
+          sleep 1
+        done
+        if [ "$ssh_ready" = 1 ]; then
+          echo "[usb-boot] SSH is up: ssh -o StrictHostKeyChecking=accept-new root@$nanokvm_target_ip (password: nixos)"
+        else
+          echo "[usb-boot] SSH did not answer yet"
+        fi
+      '';
+      # Nothing to babysit after detach: the store is served by the
+      # host's kernel nfsd, independent of this process.
+      detachNote = ''
+        echo "[usb-boot] shell detached; the board keeps running (host kernel nfsd serves /nix/store). This runner exits."
+      '';
+    in
+    pkgs.writeShellApplication {
+      inherit name;
+      runtimeInputs = with pkgs; [
+        android-tools
+        bash
+        coreutils
+        gawk # nfsLocalExportCheck parses exportfs output
+        gnugrep
+        inetutils # telnet client for the target busybox telnetd
+        iproute2
+        netcat-openbsd
+        nfs-utils
+        systemd # networkctl for host-side networkd runtime overrides
+      ];
+      text = ''
+        ${hostShellPrelude}
+
+        status_pid=
+
+        cleanup() {
+          if [ -n "$status_pid" ] && kill -0 "$status_pid" 2>/dev/null; then
+            kill_process_tree "$status_pid"
+          fi
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+
+        bootargs=${lib.escapeShellArg bootargs}
+        nfs_server=${lib.escapeShellArg nfsServer}
+        nfs_export=${lib.escapeShellArg nfsExport}
+
+        if [ -n "''${NANOKVM_NFS_SERVER:-}" ]; then
+          case "$NANOKVM_NFS_SERVER" in
+            *[[:space:]]*)
+              echo "[usb-boot] NANOKVM_NFS_SERVER must not contain whitespace" >&2
+              exit 1
+              ;;
+          esac
+          nfs_server="$NANOKVM_NFS_SERVER"
+          bootargs="$bootargs nanokvm.nfs_server=$nfs_server"
+        fi
+        if [ -n "''${NANOKVM_NFS_EXPORT:-}" ]; then
+          case "$NANOKVM_NFS_EXPORT" in
+            /*) ;;
+            *)
+              echo "[usb-boot] NANOKVM_NFS_EXPORT must be an absolute NFSv4 pseudo-path" >&2
+              exit 1
+              ;;
+          esac
+          case "$NANOKVM_NFS_EXPORT" in
+            *[[:space:]]*)
+              echo "[usb-boot] NANOKVM_NFS_EXPORT must not contain whitespace" >&2
+              exit 1
+              ;;
+          esac
+          nfs_export="$NANOKVM_NFS_EXPORT"
+          bootargs="$bootargs nanokvm.nfs_export=$nfs_export"
+        fi
+        if [ "''${NANOKVM_ON_DETACH:-hold}" = kexec ] \
+            && { [ -n "''${NANOKVM_NFS_SERVER:-}" ] || [ -n "''${NANOKVM_NFS_EXPORT:-}" ]; }; then
+          echo "[usb-boot] runtime NFS overrides do not survive detach-to-kexec; bake the values into the board config or choose NANOKVM_ON_DETACH=hold" >&2
+          exit 1
+        fi
+        case "''${1:-}" in
+          -h|--help)
+            exec ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+              --bootargs "$bootargs" \
+              ${fit} "$@"
+            ;;
+        esac
+
+        ${nfsLocalExportCheck "usb-boot"}
+
+        ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+          --bootargs "$bootargs" \
+          ${fit} "$@"
+
+        configure_host_iface usb-boot >/dev/null || exit 1
+
+        ${nfsServerCheck "usb-boot"}
+
+        start_status_sink usb-boot
+
+        ${sshWait}
+
+        case "''${NANOKVM_ATTACH:-shell}" in
+          shell|"")
+            attach_debug_shell usb-boot 240 || true
+            case "''${NANOKVM_ON_DETACH:-hold}" in
+              hold|"")
+                ${detachNote}
+                ;;
+              kexec)
+                ${if onShellDetachCommand != null then ''
+                  echo "[usb-boot] shell detached; kexecing target to the next image..."
+                  ${onShellDetachCommand}
+                '' else ''
+                  echo "[usb-boot] NANOKVM_ON_DETACH=kexec is not available for this runner" >&2
+                  exit 1
+                ''}
+                ;;
+              exit)
+                echo "[usb-boot] shell detached; exiting"
+                ;;
+              *)
+                echo "[usb-boot] invalid NANOKVM_ON_DETACH=''${NANOKVM_ON_DETACH}; expected hold, kexec, or exit" >&2
+                exit 1
+                ;;
+            esac
+            ;;
+          none)
+            ;;
+          *)
+            echo "[usb-boot] invalid NANOKVM_ATTACH=''${NANOKVM_ATTACH}; expected shell or none" >&2
+            exit 1
+            ;;
+        esac
+      '';
+    };
+
+  # Payload-only kexec runner for the NFS live profile: the store is
+  # served by the host's kernel nfsd (independent of any runner), so
+  # this is mkKexecRunner minus the rootfs NBD dance. The payload
+  # itself still travels over NBD — it's tiny and the target agent
+  # already speaks it.
+  mkNfsKexecRunner =
+    { name
+    , payload
+    , nfsServer
+    , nfsExport
+    , useRunningDtb ? true
+    ,
+    }:
+    pkgs.writeShellApplication {
+      inherit name;
+      runtimeInputs = with pkgs; [
+        bash
+        coreutils
+        gawk # nfsLocalExportCheck parses exportfs output
+        gnugrep
+        inetutils
+        iproute2
+        nbd
+        netcat-openbsd
+        nfs-utils
+        systemd
+      ];
+      text = ''
+        ${hostShellPrelude}
+
+        payload_nbd_pid=
+        status_pid=
+
+        cleanup() {
+          for pid in "$status_pid" "$payload_nbd_pid"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              kill_process_tree "$pid"
+            fi
+          done
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+
+        nfs_server=${lib.escapeShellArg nfsServer}
+        nfs_export=${lib.escapeShellArg nfsExport}
+
+        ${nfsLocalExportCheck "usb-kexec"}
+
+        configure_host_iface usb-kexec >/dev/null || exit 1
+
+        ${nfsServerCheck "usb-kexec"}
+
+        start_status_sink usb-kexec
+
+        payload_nbd_log="$(mktemp -t nanokvm-payload-nbd-XXXXXX.log)"
+        echo "[usb-kexec] serving kexec payload ${payload} on $nanokvm_host_ip:$nanokvm_port_nbd_payload"
+        nbd-server "$nanokvm_host_ip:$nanokvm_port_nbd_payload" ${payload} -r -n >"$payload_nbd_log" 2>&1 &
+        payload_nbd_pid=$!
+        sleep 0.5
+        if ! kill -0 "$payload_nbd_pid" 2>/dev/null; then
+          echo "[usb-kexec] payload nbd-server exited early" >&2
+          sed -u 's/^/[nbd-payload] /' "$payload_nbd_log" >&2 || true
+          wait "$payload_nbd_pid"
+        fi
+
+        target_request="payload_host=$nanokvm_host_ip payload_port=$nanokvm_port_nbd_payload use_running_dtb=${if useRunningDtb then "1" else "0"} apply_dtb_overlay=0 load_only=0"
+
+        echo "[usb-kexec] sending request to $nanokvm_target_ip:$nanokvm_port_kexec"
+        kexec_send_request "$target_request" || {
+          echo "[usb-kexec] failed to start target kexec agent" >&2
+          exit 1
+        }
+
+        echo "[usb-kexec] command sent"
+        case "''${NANOKVM_ATTACH:-shell}" in
+          shell|"") attach_debug_shell_after_reconnect usb-kexec 45 240 || true ;;
+          none) sleep 90 ;;
+          *)
+            echo "[usb-kexec] invalid NANOKVM_ATTACH=''${NANOKVM_ATTACH}; expected shell or none" >&2
+            exit 1
+            ;;
+        esac
+      '';
+    };
+
+
   mkLiveBootargs =
     { cfg
     , extra ? [ ]
     , oled ? false
+    , usbConsole ? true
+    , uartConsole ? "ttyS0"
     ,
     }:
     mkKexecBootargs {
+      inherit uartConsole usbConsole;
       extra =
         [ "init=${cfg.config.system.build.toplevel}/init" ]
         ++ extra
@@ -628,10 +862,13 @@ in
     mkLiveRootfs
     mkKexecRunner
     mkUsbBootRunner
+    mkNfsUsbBootRunner
+    mkNfsKexecRunner
     sg2002OledOverlayDtbo
     mkFeatureBootargs
     oledBootargs
     kernelTestBootargs
+    mkKexecBootargs
     mkLiveBootargs
     ;
 }

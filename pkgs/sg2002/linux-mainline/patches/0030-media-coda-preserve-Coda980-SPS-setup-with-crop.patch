@@ -1,0 +1,59 @@
+From 38f90e02a16cc334e1562e09e4c6bca113179358 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 16:23:11 +0200
+Subject: [PATCH] media: coda: preserve Coda980 SPS setup with crop
+
+coda_encode_header() ORs CODA9_HEADER_FRAME_CROP into header_code for
+frames whose height is not a multiple of 16 -- including 1080p. The
+Coda980 extended-header setup compares the resulting word against
+CODA_HEADER_H264_SPS, so with crop active the comparison fails and
+the Coda980 SPS registers are never programmed: the firmware emits
+SPS from stale state at exactly the resolutions that need the
+extended setup most.
+
+Keep the header type in a separate variable for the ABI selection and
+pass the full command word, crop flag included, to the firmware.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/chips-media/coda/coda-bit.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index 2c5bd7ae8..b648786c6 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -637,6 +637,7 @@ static int coda_alloc_context_buffers(struct coda_ctx *ctx,
+ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 			      int header_code, u8 *header, int *size)
+ {
++	int header_type = header_code;
+ 	struct vb2_buffer *vb = &buf->vb2_buf;
+ 	struct coda_dev *dev = ctx->dev;
+ 	struct coda_q_data *q_data_src;
+@@ -673,7 +674,12 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 	}
+ 	if (dev->devtype->has_coda980_h264_abi &&
+ 	    ctx->codec->dst_fourcc == V4L2_PIX_FMT_H264) {
+-		if (header_code == CODA_HEADER_H264_SPS) {
++		/*
++		 * header_code can carry Coda9 command flags, such as the
++		 * non-aligned-frame crop flag above.  Keep the header type
++		 * separate so those flags cannot suppress the Coda980 ABI setup.
++		 */
++		if (header_type == CODA_HEADER_H264_SPS) {
+ 			u32 profile;
+ 
+ 			switch (ctx->params.h264_profile_idc) {
+@@ -695,7 +701,7 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 				   CODA9_CMD_ENC_HEADER_CHROMA_FORMAT);
+ 			coda_write(dev, 0,
+ 				   CODA9_CMD_ENC_HEADER_FIELD_FLAG);
+-		} else if (header_code == CODA_HEADER_H264_PPS) {
++		} else if (header_type == CODA_HEADER_H264_PPS) {
+ 			coda_write(dev, 0,
+ 				   CODA9_CMD_ENC_HEADER_CABAC_MODE);
+ 			coda_write(dev, 0,
+-- 
+2.54.0
+

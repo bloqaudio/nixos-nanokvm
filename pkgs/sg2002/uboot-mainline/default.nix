@@ -1,17 +1,24 @@
-# Mainline U-Boot 2026.04 for the Sipeed LicheeRV Nano (sg2002).
+# nixpkgs' mainline U-Boot for the Sipeed LicheeRV Nano (SG2002).
 # Layered on top of the upstream `sipeed_licheerv_nano_defconfig`:
 #   - extraConfig enables USB gadget + fastboot so distro_bootcmd can
 #     fall through to "fastboot usb 0" as a recovery channel
 #   - 4 local patches (see ./patches/) fix missing ramdisk_addr_r,
 #     add an -u-boot.dtsi for the dwc2 gadget, and let the dwc2_udc_otg
 #     driver build on RISC-V
-{buildUBoot}:
+{
+  buildUBoot,
+  bootCommand ? "sysboot mmc 0:2 any 0x80c00000 /boot/extlinux/extlinux.conf; run distro_bootcmd; fastboot usb 0",
+}:
 buildUBoot {
   defconfig = "sipeed_licheerv_nano_defconfig";
   extraMeta.platforms = ["riscv64-linux"];
   filesToInstall = ["u-boot.bin" "u-boot.dtb"];
 
   extraConfig = ''
+    # extlinux lives on the Btrfs root partition.  The generic filesystem
+    # layer used by `sysboot ... any` needs the Btrfs reader compiled in.
+    CONFIG_FS_BTRFS=y
+
     CONFIG_USB=y
     CONFIG_DM_USB=y
     CONFIG_DM_USB_GADGET=y
@@ -33,13 +40,29 @@ buildUBoot {
     # Console ring buffer readable via `fastboot oem console`; captures
     # the pre-fastboot FSBL/OpenSBI/U-Boot output for post-mortem.
     CONFIG_CONSOLE_RECORD=y
-    CONFIG_CONSOLE_RECORD_OUT_SIZE=0x2000
+    # MMC tracing and a complete extlinux attempt easily exceed 8 KiB. Keep
+    # enough history for `fastboot oem console` to remain useful after a
+    # failed kernel, initrd and FDT load sequence.
+    CONFIG_CONSOLE_RECORD_OUT_SIZE=0x40000
     CONFIG_CONSOLE_RECORD_IN_SIZE=0x800
     CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
-    # If distro_bootcmd fails to find extlinux/boot.scr, fall through to
-    # fastboot. A successful SD boot never reaches it; a dead SD boot
-    # lands in fastboot gadget mode (18d1:d00d) — recovery without UART.
-    CONFIG_BOOTCOMMAND="run distro_bootcmd; fastboot usb 0"
+    # The upstream board defconfig fixes SYS_CBSIZE at 512 bytes. NixOS
+    # extlinux APPEND lines routinely exceed that once an init store path and
+    # fleet kernel parameters are included; pxe_utils otherwise abandons the
+    # label with "bootarg overflow" after loading its kernel and initrd.
+    CONFIG_SYS_CBSIZE=2048
+    CONFIG_SYS_PBSIZE=2080
+    # SG2002/Sipeed SD images need partition 1 marked active for fip.bin,
+    # while NixOS extlinux lives on the Btrfs root partition. U-Boot's distro
+    # scan can stop at the active firmware partition, so try the known NixOS
+    # root partition explicitly before falling back to the generic scan and
+    # then fastboot.
+    CONFIG_BOOTCOMMAND="${bootCommand}"
+    # MMC command-level tracing into the console record; pr_info/pr_debug
+    # on the mmc init failure paths only compile in at LOGLEVEL>=7, so
+    # without these a failed `mmc dev 0` is completely silent.
+    CONFIG_LOGLEVEL=8
+    CONFIG_MMC_TRACE=y
   '';
 
   # buildUBoot's default is `cat extras >> .config`; olddefconfig then

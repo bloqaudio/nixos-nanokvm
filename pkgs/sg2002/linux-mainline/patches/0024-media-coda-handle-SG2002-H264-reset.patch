@@ -1,0 +1,95 @@
+From 3b6ed804fd36394f5e78934573bc2602c984386d Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 9 Aug 2026 15:26:41 +0200
+Subject: [PATCH] media: coda: handle SG2002 H.264 reset
+
+The SG2002 simple-reset controller has no pulse duration, so its reset operation returns -ENOTSUPP. The H.264 reset line still supports explicit assertion and deassertion.
+
+Use those level operations for SG2002 during initial firmware boot and runtime recovery. Keep the existing pulse-reset operation for every other Coda platform.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ .../media/platform/chips-media/coda/coda-bit.c |  2 +-
+ .../platform/chips-media/coda/coda-common.c    | 18 +++++++++++++++++-
+ drivers/media/platform/chips-media/coda/coda.h |  2 ++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index b320a36b4..55480652e 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -134,7 +134,7 @@ int coda_hw_reset(struct coda_ctx *ctx)
+ 	}
+ 
+ 	if (dev->rstc) {
+-		ret = reset_control_reset(dev->rstc);
++		ret = coda_reset(dev);
+ 		if (ret < 0)
+ 			return ret;
+ 	} else if (dev->devtype->has_software_reset) {
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index ac460644b..f01119953 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -124,6 +124,21 @@ void coda_disable_clocks(struct coda_dev *dev)
+ 	clk_disable_unprepare(dev->clk_per);
+ }
+ 
++int coda_reset(struct coda_dev *dev)
++{
++	int ret;
++
++	if (!dev->devtype->rstc_assert_deassert)
++		return reset_control_reset(dev->rstc);
++
++	/* SG2002's active-low H264 reset has no reset pulse duration. */
++	ret = reset_control_assert(dev->rstc);
++	if (ret)
++		return ret;
++
++	return reset_control_deassert(dev->rstc);
++}
++
+ void coda_write_base(struct coda_ctx *ctx, struct coda_q_data *q_data,
+ 		     struct vb2_v4l2_buffer *buf, unsigned int reg_y)
+ {
+@@ -2876,7 +2891,7 @@ static int coda_hw_init(struct coda_dev *dev)
+ 		return ret;
+ 
+ 	if (dev->rstc) {
+-		ret = reset_control_reset(dev->rstc);
++		ret = coda_reset(dev);
+ 		if (ret)
+ 			goto err_disable_clocks;
+ 	}
+@@ -3347,6 +3362,7 @@ static const struct coda_devtype sg2002_coda980_devdata = {
+ 	.uses_bulk_clocks	= true,
+ 	.requires_firmware_name	= true,
+ 	.nv21_to_nv12		= true,
++	.rstc_assert_deassert	= true,
+ 	.has_software_reset	= true,
+ 	.skip_code_download	= true,
+ };
+diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
+index 13cf3c773..d1882779d 100644
+--- a/drivers/media/platform/chips-media/coda/coda.h
++++ b/drivers/media/platform/chips-media/coda/coda.h
+@@ -87,6 +87,7 @@ struct coda_devtype {
+ 	bool			nv21_to_nv12;
+ 	bool			has_coda9_bus_reset;
+ 	bool			has_software_reset;
++	bool			rstc_assert_deassert;
+ 	bool			skip_code_download;
+ };
+ 
+@@ -347,6 +348,7 @@ int coda_decoder_queue_init(void *priv, struct vb2_queue *src_vq,
+ 			    struct vb2_queue *dst_vq);
+ 
+ int coda_hw_reset(struct coda_ctx *ctx);
++int coda_reset(struct coda_dev *dev);
+ 
+ void coda_fill_bitstream(struct coda_ctx *ctx, struct list_head *buffer_list);
+ 
+-- 
+2.54.0
+

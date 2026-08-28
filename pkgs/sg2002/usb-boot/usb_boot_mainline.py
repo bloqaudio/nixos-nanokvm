@@ -3,23 +3,23 @@
 
 Mainline U-Boot has no cvi_utask (that's a Cvitek vendor command). We use
 its built-in `fastboot` gadget instead, and rely on the fact that the
-U-Boot we build (see flake.nix: `uboot-mainline.extraConfig`) has:
+USB-loaded U-Boot FIP uses:
 
-    CONFIG_BOOTCOMMAND="run distro_bootcmd; fastboot usb 0"
+    CONFIG_BOOTCOMMAND="fastboot usb 0"
 
-So once U-Boot starts and distro_bootcmd finds no bootable SD partition
-(or we're running from ROM USB download and there's no SD at all), it
-falls straight into the fastboot gadget — no UART required. Flow:
+So once U-Boot starts it falls straight into the fastboot gadget, even
+with a bootable SD card inserted — no UART required. Flow:
 
   1. Push FIP via cv181x-rom-dl (no UART interaction — ROM USB download
      only uses the CVITEK USB Com Port, not the board's debug UART).
-  2. FSBL → OpenSBI → U-Boot runs; distro_bootcmd fails; fastboot usb 0
-     enumerates on the host as VID 18d1:d00d.
-  3. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
-  4. Host: `fastboot oem run "bootm <addr>"` — U-Boot bootms the staged
-     FIT. If bootm hands off to the kernel, the oem-run reply never
-     comes back and the host-side fastboot call returns a timeout
-     error — that's expected and harmless.
+  2. FSBL → OpenSBI → U-Boot runs; fastboot usb 0 enumerates on the
+     host as VID 18d1:d00d.
+  3. Optional diagnostic stop: `--uboot-only` leaves U-Boot in fastboot
+     so the host can issue `fastboot oem run:<cmd>` commands.
+  4. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
+  5. Host: soft-disconnect U-Boot's DWC2 gadget, then run
+     `bootm <addr>`. The disconnect is explicit because a successful
+     bootm never returns to fastboot's normal gadget teardown.
 
 Requires `fastboot` on PATH (android-tools).
 """
@@ -31,6 +31,12 @@ import time
 
 
 FASTBOOT_BUF_ADDR = 0x82000000
+
+# SG2002 DWC2 device-control register.  A successful `bootm` from inside a
+# fastboot OEM command never returns through U-Boot's normal gadget cleanup,
+# so leave the bus electrically detached until Linux binds its own gadget.
+DWC2_DCTL_ADDR = 0x04340804
+DWC2_DCTL_SFTDISCON = 1 << 1
 
 # U-Boot's built-in fastboot gadget uses Google's reference VID:PID.
 # Same IDs as Android phones in bootloader mode — without a filter,
@@ -78,7 +84,18 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument('fit', help='path to FIT image to push and boot')
+    p.add_argument('fit', nargs='?',
+                   help='path to FIT image to push and boot; optional with '
+                        '--uboot-only')
+    p.add_argument('--uboot-only', action='store_true',
+                   help='stop after U-Boot fastboot enumerates, leaving the '
+                        'board in U-Boot instead of staging/booting a FIT')
+    p.add_argument('--oem-console', action='store_true',
+                   help='with --uboot-only, dump U-Boot console record once '
+                        'after fastboot is online')
+    p.add_argument('--oem-run', action='append', default=[],
+                   help='with --uboot-only, run a U-Boot command via '
+                        '`fastboot oem run:<cmd>`; may be repeated')
     p.add_argument('--skip-fip', action='store_true',
                    help='skip ROM FIP push; assume U-Boot already in fastboot')
     p.add_argument('--fip', help='path to directory containing fip.bin')
@@ -109,6 +126,12 @@ def main():
                    help='kernel command line; when set, sent to U-Boot via '
                         '`setenv bootargs "<str>"` before bootm. Overrides '
                         'whatever /chosen/bootargs the FIT fdt carries.')
+    p.add_argument('--no-handoff-soft-disconnect',
+                   dest='handoff_soft_disconnect', action='store_false',
+                   default=True,
+                   help='skip the SG2002 DWC2 soft-disconnect before bootm '
+                        '(diagnostic A/B only; normally this prevents a '
+                        'ghost USB device during Linux startup)')
     p.add_argument('--fastboot-serial',
                    help='fastboot SERIAL or device path to target. If '
                         'omitted, auto-detect from /sys/bus/usb by '
@@ -118,7 +141,10 @@ def main():
                         'be explicit.')
     a = p.parse_args()
 
-    fit_size = os.path.getsize(a.fit)
+    if not a.uboot_only and not a.fit:
+        p.error('fit is required unless --uboot-only is set')
+
+    fit_size = os.path.getsize(a.fit) if a.fit else 0
 
     def log(m):
         print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
@@ -236,6 +262,29 @@ def main():
             f"{FASTBOOT_VENDOR_ID:04x}:{FASTBOOT_PRODUCT_ID:04x}.)")
         sys.exit(1)
 
+    if a.uboot_only:
+        if a.oem_console:
+            log("dumping U-Boot console record...")
+            r = subprocess.run(fastboot_cmd('oem', 'console'),
+                               capture_output=True, text=True)
+            sys.stdout.write(r.stdout)
+            sys.stderr.write(r.stderr)
+            if r.returncode != 0:
+                log(f"oem console failed with exit code {r.returncode}")
+
+        for cmd in a.oem_run:
+            log(f"issuing: oem run:{cmd}")
+            r = subprocess.run(fastboot_cmd('oem', f'run:{cmd}'),
+                               capture_output=True, text=True)
+            sys.stdout.write(r.stdout)
+            sys.stderr.write(r.stderr)
+            if r.returncode != 0:
+                log(f"oem run failed with exit code {r.returncode}")
+                sys.exit(r.returncode)
+
+        log("U-Boot fastboot is online; leaving board in U-Boot")
+        return
+
     log(f"staging {a.fit} ({fit_size} bytes)...")
     t0 = time.time()
     r = subprocess.run(fastboot_cmd('stage', a.fit),
@@ -258,7 +307,14 @@ def main():
     bootargs_cmd = (
         f'setenv bootargs "{a.bootargs}"; ' if a.bootargs else ''
     )
+    handoff_cmd = ''
+    if a.handoff_soft_disconnect:
+        handoff_cmd = (
+            f'mw.l 0x{DWC2_DCTL_ADDR:08x} '
+            f'0x{DWC2_DCTL_SFTDISCON:08x}; sleep 1; '
+        )
     bootm_cmd = (
+        f'{handoff_cmd}'
         f'{bootargs_cmd}'
         f'setenv fdt_high 0xffffffff; '
         f'setenv initrd_high 0xffffffff; '

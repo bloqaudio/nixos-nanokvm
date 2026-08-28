@@ -56,10 +56,65 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # LicheeRV-Nano with the RJ45 wired: gmac0 + internal EPHY on.
+  dtbEth = buildDtb "sg2002-licheerv-nano-bw-eth" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-eth.dtsi
+  ];
+
+  # Experimental USB handoff A/Bs.  The high-speed override is always
+  # concatenated last, leaving the full-speed production DTBs untouched.
+  dtbHighSpeed = buildDtb "sg2002-licheerv-nano-bw-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
+  dtbNoWifiHighSpeed = buildDtb "sg2002-licheerv-nano-bw-nowifi-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
+  # PicoClaw: keep the proven no-WiFi USB/NFS base, then add the onboard
+  # ST7789 SPI panel and its three GPIO control lines.
+  dtbPicoClawLcd = buildDtb "sg2002-licheerv-nano-picoclaw-lcd" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+  ];
+
+  dtbPicoClawLcdHighSpeed = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+    ./sg2002-usb-high-speed.dtsi
+  ];
+
   # NanoKVM-PCIe: bw.dtsi (WiFi/SDIO1 on) + ethernet enable overlay.
   dtbPcie = buildDtb "sg2002-nanokvm-pcie" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
+  ];
+
+  # LicheeRV-Nano with the GC4653 camera FFC: ethernet + camera overlay
+  # (IIC4 on PWR_WAKEUP0/PWR_BUTTON1, CAM_MCLK1 on MIPIRX0N, sensor reset
+  # on GPIOE1, 2-lane CSI capture).
+  dtbCam = buildDtb "sg2002-licheerv-nano-bw-cam" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-eth.dtsi
+    ./sg2002-licheerv-camera-gc4653.dtsi
+  ];
+
+  dtbPcieNoWifi = buildDtb "sg2002-nanokvm-pcie-nowifi" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
+  ];
+
+  dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-usb-high-speed.dtsi
   ];
 
   dtbs = runCommand "sg2002-dtbs" { } ''
@@ -69,7 +124,15 @@ let
 in
 {
   inherit dtb dtbs;
+  high-speed = dtbHighSpeed;
+  eth = dtbEth;
   oled = dtbOled;
   nowifi = dtbNoWifi;
+  nowifi-high-speed = dtbNoWifiHighSpeed;
+  picoclaw-lcd = dtbPicoClawLcd;
+  picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
+  pcie-nowifi = dtbPcieNoWifi;
+  pcie-high-speed = dtbPcieHighSpeed;
+  cam = dtbCam;
 }
