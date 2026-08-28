@@ -64,8 +64,8 @@
 	 * dma_alloc_from_coherent() rounds each 5.5 MiB frame buffer to an
 	 * order-11 (8 MiB) 8 MiB-aligned region, so budget 8 MiB per queued
 	 * buffer plus the scratch. The 32 MiB pool covers a shallow three-buffer
-	 * queue plus scratch. Coda980's 640x360 firmware and reconstruction
-	 * arena fit in the remaining 16 MiB.
+	 * queue plus scratch. Coda980's small 640x360 arena gets first claim on
+	 * the same pool; vb2 may reduce the requested CSI queue if necessary.
 	 * Its base matches the NanoKVM-PCIe media-pool placement. */
 	reserved-memory {
 		#address-cells = <1>;
@@ -75,8 +75,7 @@
 		video_pool: video-pool@86800000 {
 			compatible = "shared-dma-pool";
 			no-map;
-			/* End exactly where the default-CMA window begins. */
-			reg = <0x86800000 0x3000000>;
+			reg = <0x86800000 0x2000000>;
 		};
 	};
 
