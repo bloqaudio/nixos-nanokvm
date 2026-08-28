@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Fri, 28 Aug 2026 16:45:00 +0200
+Subject: [PATCH 0058] media: sophgo: SG2002 CSI: complete lane permutation
+
+The four-lane PHY data selector is a permutation, not merely a list of
+the active lanes.  The vendor CIF driver fills every logical data slot,
+including the unused slots of a two-lane sensor, with the remaining
+physical lanes.  The RAW-source adaptation stopped after the active
+lanes and consequently programmed duplicate physical lane zero entries.
+
+Track the clock and active data lanes, then populate the unused logical
+data slots from the remaining physical lanes.  The LicheeRV Nano beta
+mapping (clock 4, data 3/2) now produces 0x1023, matching the vendor
+sequence, instead of 0x0023.
+---
+ drivers/media/platform/sophgo/sg2002-capture.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+index 1e6e05f..1ef6a11 100644
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -481,13 +481,29 @@ static void sg2002_configure_lanes(struct sg2002_capture *cap)
+ 	const struct v4l2_mbus_config_mipi_csi2 *bus = &cap->bus;
+ 	u32 data_sel = 0;
+ 	u32 swaps = 0;
++	bool used[SG2002_NUM_PHYS_LANES] = {};
+ 	u32 route;
+ 	unsigned int i;
++	unsigned int logical_lane;
+ 
++	used[bus->clock_lane] = true;
+ 	for (i = 0; i < bus->num_data_lanes; i++) {
+ 		data_sel |= (u32)bus->data_lanes[i] << (i * 4);
+ 		if (bus->lane_polarities[i + 1])
+ 			swaps |= BIT(8 + i);
++		used[bus->data_lanes[i]] = true;
++	}
++
++	/* The selector is a full four-entry permutation.  Match the vendor
++	 * CIF driver by assigning otherwise-unused physical lanes to the
++	 * inactive logical slots instead of leaving duplicate lane zeroes. */
++	logical_lane = bus->num_data_lanes;
++	for (i = 0; i < SG2002_NUM_PHYS_LANES &&
++	     logical_lane < SG2002_NUM_DATA_LANES; i++) {
++		if (used[i])
++			continue;
++		data_sel |= (u32)i << (logical_lane * 4);
++		logical_lane++;
+ 	}
+ 
+ 	writel(data_sel, cap->wrap + WRAP_PHY4_DATA_SEL);
+-- 
+2.51.0

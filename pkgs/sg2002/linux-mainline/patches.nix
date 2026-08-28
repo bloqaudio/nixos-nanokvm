@@ -234,6 +234,10 @@ let
       name = "media-sophgo-sg2002-csi-vendor-deskew-codes";
       patch = ./patches/0057-media-sophgo-SG2002-CSI-vendor-deskew-codes.patch;
     })
+    (patch {
+      name = "media-sophgo-sg2002-csi-complete-lane-permutation";
+      patch = ./patches/0058-media-sophgo-SG2002-CSI-complete-lane-permutation.patch;
+    })
   ];
 
   meta = {
@@ -708,6 +712,16 @@ let
       notes = ''
         Names the existing reset-controller ABI IDs used by CSI PHY0 and its
         APB interface, kept separate from the media binding for submission.
+      '';
+    };
+    "media-sophgo-sg2002-csi-complete-lane-permutation" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Completes the PHY data-lane selector permutation for sensors with
+        fewer than four active lanes, matching the vendor CIF driver's fill
+        of unused logical slots and avoiding duplicate physical selectors.
       '';
     };
   };
