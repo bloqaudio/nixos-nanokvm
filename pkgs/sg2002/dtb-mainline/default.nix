@@ -101,6 +101,7 @@ let
   # on GPIOE1, 2-lane CSI capture).
   dtbCam = buildDtb "sg2002-licheerv-nano-bw-cam" [
     ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-bw-nowifi.dtsi
     ./sg2002-licheerv-eth.dtsi
     ./sg2002-licheerv-camera-gc4653.dtsi
   ];

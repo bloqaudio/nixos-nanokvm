@@ -9,7 +9,7 @@ all — it programs the sensor from userspace (freertos sensor library);
 this is a minimal mainline V4L2 subdev with the vendor 1440p30 linear
 register program transcribed from
 freertos/cvitek/driver/sensor/src/gcore_gc4653/gc4653_sensor_ctl.c
-(gc4653_linear_1440p30_init, 143 writes, ending in 0x0100=0x09 which
+(gc4653_linear_1440p30_init, 144 writes, ending in 0x0100=0x09 which
 starts streaming).
 
 Single fixed mode 2560x1440p30 SRGGB10; power is xvclk + reset GPIO
@@ -56,7 +56,7 @@ new file mode 100644
 index 000000000..f774dddef
 --- /dev/null
 +++ b/drivers/media/i2c/gc4653.c
-@@ -0,0 +1,442 @@
+@@ -0,0 +1,443 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * GalaxyCore GC4653 4MP RAW10 MIPI CSI-2 sensor driver.
@@ -176,6 +176,7 @@ index 000000000..f774dddef
 +	{ CCI_REG8(0x02a5), 0x02 },
 +	{ CCI_REG8(0x0260), 0x0b },
 +	{ CCI_REG8(0x0216), 0x04 },
++	{ CCI_REG8(0x0299), 0x1c },
 +	{ CCI_REG8(0x02bb), 0x0d },
 +	{ CCI_REG8(0x02a3), 0x02 },
 +	{ CCI_REG8(0x02a4), 0x02 },
