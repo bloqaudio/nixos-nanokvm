@@ -12,8 +12,9 @@
  *  - sg2002_licheervnano_sd.dts: &mipi_rx snsr-reset = GPIOE1 active low.
  *
  * Fixed mode 2560x1440p30 SRGGB10 over two data lanes. Power-up is xvclk
- * (CAM_MCLK1, 27 MHz) + reset deassert, both owned by the gc4653 driver's
- * power-on path — nothing here keeps the sensor powered at boot.
+ * (CAM_MCLK1, 24 MHz) + reset deassert, both owned by the gc4653 driver's
+ * power-on path; the driver keeps the sensor clocked after probe so capture
+ * can take ownership of stream on/off.
  */
 
 #include <dt-bindings/clock/sophgo,cv1800.h>
@@ -158,10 +159,10 @@
 };
 
 &clk {
-	/* GC4653 reference clock: 27 MHz on CAM_MCLK1 (mipimpll_d3 300 MHz
-	 * / 11 = 27.27 MHz is the closest reachable rate). */
+	/* The beta-board middleware receiver profile selects CAM_MCLK1 while
+	 * retaining the GC4653 mode's 24 MHz reference-clock frequency. */
 	assigned-clocks = <&clk CLK_CAM1>;
-	assigned-clock-rates = <27000000>;
+	assigned-clock-rates = <24000000>;
 };
 
 &i2c4 {
