@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """postPatch for sg2002-cv181x-usb-dl.
 
-Four fixes against the upstream Sipeed package:
+Six fixes against the upstream Sipeed package:
 
 1. `cv_usb_pyserial.py` opens the serial device with `timeout=10000`
    (ten THOUSAND seconds). When the CV181x ROM disconnects mid-read
@@ -24,6 +24,16 @@ Four fixes against the upstream Sipeed package:
    coarse timeout kills the child. Limit each packet to three attempts
    and raise an error so the outer loop can retry promptly.
 
+5. A short or late acknowledgement remains in pyserial's input buffer.
+   Retrying without draining it splices the old acknowledgement onto the
+   new one, producing the same CRC mismatch forever. Drain stale input
+   immediately before each request.
+
+6. The 2nd-stage loop tests `pid != 0x1000` before `pid == TIMEOUT`, even
+   though TIMEOUT is -1. Consequently a timeout is announced as a live
+   `cvi_utask` device and the downloader exits successfully. Test timeout
+   first and fail the attempt instead.
+
 Idempotent — all fixes are skipped if their marker text is present.
 """
 import re
@@ -35,6 +45,8 @@ TIMEOUT_MARKER = "# patched timeout: short read so disconnect doesn't deadlock"
 FAST_OPEN_MARKER = "# patched fast-open: skip the 100ms pre-open sleep"
 FLUSH_DRAIN_MARKER = "# patched flush: drain queued bytes instead of discarding them"
 BOUNDED_RETRY_MARKER = "# patched retry: bound a dead USB packet"
+STALE_INPUT_MARKER = "# patched input: discard a stale partial ACK before request"
+STAGE_TIMEOUT_MARKER = "# patched stage timeout: never report TIMEOUT as cvi_utask"
 
 
 def main():
@@ -49,7 +61,9 @@ def main():
     patch_pyserial_timeout(pyserial_path)
     patch_pyserial_fast_open(pyserial_path)
     patch_pyserial_flush(pyserial_path)
+    patch_pyserial_stale_input(pyserial_path)
     patch_pyserial_bounded_retry(pyserial_path)
+    patch_rom_dl_stage_timeout(rom_dl_path)
     # NOTE: skip_2nd_stage is intentionally disabled. After BREAK the
     # chip transitions to FSBL which presents `cvi_utask` at 3346:1001
     # — FSBL uses that to pull the REST of FIP from the host (only
@@ -188,6 +202,45 @@ def patch_pyserial_flush(path):
     print(f"patched (flush-drain + broadened serial excepts): {path}")
 
 
+def patch_pyserial_stale_input(path):
+    """Do not combine a late partial acknowledgement with a retry.
+
+    `read(16)` may time out after returning only part of an ACK. Without
+    clearing those bytes, the next read begins with that stale tail and its
+    CRC can never match the newly transmitted request.
+    """
+    with open(path) as f:
+        src = f.read()
+    if STALE_INPUT_MARKER in src:
+        print(f"already patched (stale input): {path}")
+        return
+
+    function_start = src.find("    def serial_write(")
+    function_end = src.find("\n    def ", function_start + 1)
+    if function_start == -1 or function_end == -1:
+        sys.exit("FAILED to locate serial_write() for stale-input drain")
+
+    prefix = src[:function_start]
+    body = src[function_start:function_end]
+    suffix = src[function_end:]
+    anchor = "        try:\n            # time.sleep(0.001 * delay_ms)\n"
+    replacement = (
+        "        try:\n"
+        f"            try:  {STALE_INPUT_MARKER}\n"
+        "                self.device.reset_input_buffer()\n"
+        "            except Exception:\n"
+        "                pass\n"
+        "            # time.sleep(0.001 * delay_ms)\n"
+    )
+    if body.count(anchor) != 1:
+        sys.exit("FAILED to locate serial_write() request anchor for stale-input drain")
+    body = body.replace(anchor, replacement, 1)
+
+    with open(path, "w") as f:
+        f.write(prefix + body + suffix)
+    print(f"patched (stale input): {path}")
+
+
 def patch_pyserial_bounded_retry(path):
     """Let the outer process-level retry recover from a dead ACM session.
 
@@ -252,6 +305,39 @@ def patch_pyserial_bounded_retry(path):
     with open(path, "w") as f:
         f.write(new_src)
     print(f"patched (bounded retry): {path}")
+
+
+def patch_rom_dl_stage_timeout(path):
+    """Check the second-stage timeout before classifying its PID.
+
+    Upstream's TIMEOUT is -1, which also satisfies `pid != 0x1000` and was
+    therefore printed as a successful `cvi_utask` connection.
+    """
+    with open(path) as f:
+        src = f.read()
+    if STAGE_TIMEOUT_MARKER in src:
+        print(f"already patched (stage timeout): {path}")
+        return
+
+    old = (
+        "        if pid != 0x1000:\n"
+        "            print(\"Connected to u-boot cvi_utask by pyserial\")\n"
+        "            break\n"
+        "        elif pid == pkt.TIMEOUT:\n"
+        "            break\n"
+    )
+    new = (
+        f"        if pid == pkt.TIMEOUT:  {STAGE_TIMEOUT_MARKER}\n"
+        "            raise RuntimeError(\"2nd-stage USB device did not enumerate\")\n"
+        "        elif pid != 0x1000:\n"
+        "            print(\"Connected to u-boot cvi_utask by pyserial\")\n"
+        "            break\n"
+    )
+    if src.count(old) != 1:
+        sys.exit("FAILED to locate the 2nd-stage PID/timeout branch")
+    with open(path, "w") as f:
+        f.write(src.replace(old, new, 1))
+    print(f"patched (stage timeout): {path}")
 
 
 def patch_skip_2nd_stage(path):
