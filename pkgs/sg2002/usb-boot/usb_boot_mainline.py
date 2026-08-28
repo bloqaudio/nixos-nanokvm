@@ -24,7 +24,9 @@ with a bootable SD card inserted — no UART required. Flow:
 Requires `fastboot` on PATH (android-tools).
 """
 import argparse
+import errno
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -47,6 +49,26 @@ FASTBOOT_PRODUCT_ID = 0xd00d
 
 
 _SERIAL_AUTO = "<auto>"  # sentinel: device present but iSerial empty
+
+# cv181x-rom-dl scans for the first CVITEK ROM gadget and has no usable
+# physical-port selector.  Two launchers on one host therefore cannot safely
+# program different boards (or the same board): whichever process wins each
+# re-enumeration advances the ROM state underneath the other.  An abstract
+# Unix socket gives the complete mainline handoff a host-wide, crash-released
+# claim without leaving a stale lock file behind.
+_ROM_LOCK_ADDRESS = "\0nanokvm-sg2002-usb-boot-mainline"
+
+
+def acquire_rom_downloader_lock():
+    lock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        lock.bind(_ROM_LOCK_ADDRESS)
+    except OSError as exc:
+        lock.close()
+        if exc.errno == errno.EADDRINUSE:
+            return None
+        raise
+    return lock
 
 
 def find_nanokvm_fastboot_serial():
@@ -148,6 +170,14 @@ def main():
 
     def log(m):
         print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
+
+    # Keep this object referenced until main() returns.  Closing it releases
+    # the abstract socket automatically, including on SIGTERM/process death.
+    rom_downloader_lock = acquire_rom_downloader_lock()
+    if rom_downloader_lock is None:
+        log("ERROR: another SG2002 mainline USB boot is already active on "
+            "this host; refusing to race its ROM/fastboot handoff")
+        sys.exit(75)
 
     def fastboot_cmd(*args):
         cmd = [a.fastboot]
