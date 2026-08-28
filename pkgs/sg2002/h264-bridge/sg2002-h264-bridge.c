@@ -54,7 +54,7 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#define CAPTURE_BUFFERS 4
+#define CAPTURE_BUFFERS 2
 #define ENCODER_OUT_BUFFERS 4
 #define ENCODER_CAP_BUFFERS 3
 #define SCALER_MID_BUFFERS 4
@@ -345,7 +345,8 @@ static int uyvy_to_nvxx_half(const uint8_t *src, unsigned int src_width,
  * reports black near code 256 in its 12-bit range, so remove that pedestal
  * before scaling to 8 bits. */
 #define RAW12_BLACK_LEVEL 256U
-#define RAW12_WHITE_LEVEL 4095U
+#define RAW12_MAX_LEVEL 4095U
+#define RAW12_MIN_WHITE_LEVEL 512U
 
 static unsigned int raw12_get(const uint8_t *line, unsigned int x)
 {
@@ -355,16 +356,79 @@ static unsigned int raw12_get(const uint8_t *line, unsigned int x)
 	return ((unsigned int)p[x & 1] << 4) | low;
 }
 
-static unsigned int raw12_level8(unsigned int value)
+static unsigned int isqrt32(unsigned int value)
 {
-	const unsigned int range = RAW12_WHITE_LEVEL - RAW12_BLACK_LEVEL;
+	unsigned int result = 0;
+	unsigned int bit = 1U << 30;
 
-	if (value <= RAW12_BLACK_LEVEL)
-		return 0;
-	if (value >= RAW12_WHITE_LEVEL)
-		return 255;
-	value -= RAW12_BLACK_LEVEL;
-	return (value * 255U + range / 2U) / range;
+	while (bit > value)
+		bit >>= 2;
+	while (bit) {
+		if (value >= result + bit) {
+			value -= result + bit;
+			result = (result >> 1) + bit;
+		} else {
+			result >>= 1;
+		}
+		bit >>= 2;
+	}
+	return result;
+}
+
+/* Estimate a robust per-frame white point from a sparse 99.9th percentile.
+ * The floor avoids turning sensor startup noise into a white frame in very
+ * low light.  Sampling one pixel per 8x8 cell adds 6.25 percent to the RAW12
+ * sample reads performed by the four-source-read 4x demosaic below. */
+static unsigned int raw12_white_level(const uint8_t *src,
+				      unsigned int width, unsigned int height,
+				      unsigned int stride)
+{
+	unsigned int histogram[RAW12_MAX_LEVEL + 1] = { 0 };
+	unsigned int samples = 0, target, total = 0, value, x, y;
+
+	for (y = 0; y < height; y += 8) {
+		const uint8_t *line = src + (size_t)y * stride;
+
+		for (x = 0; x < width; x += 8) {
+			histogram[raw12_get(line, x)]++;
+			samples++;
+		}
+	}
+	target = samples - samples / 1000U;
+	for (value = 0; value <= RAW12_MAX_LEVEL; value++) {
+		total += histogram[value];
+		if (total >= target)
+			break;
+	}
+	if (value < RAW12_MIN_WHITE_LEVEL)
+		value = RAW12_MIN_WHITE_LEVEL;
+	return value;
+}
+
+/* A square-root transfer gives useful shadow detail without another pass over
+ * the 5.5 MiB frame.  Build the small lookup once per frame, then keep the
+ * hot demosaic loop to one indexed load per sample. */
+static void raw12_level_lut(uint8_t levels[RAW12_MAX_LEVEL + 1],
+			    unsigned int white)
+{
+	const unsigned int range = white - RAW12_BLACK_LEVEL;
+	unsigned int value;
+
+	for (value = 0; value <= RAW12_MAX_LEVEL; value++) {
+		unsigned int scaled;
+
+		if (value <= RAW12_BLACK_LEVEL) {
+			levels[value] = 0;
+			continue;
+		}
+		if (value >= white) {
+			levels[value] = 255;
+			continue;
+		}
+		scaled = ((value - RAW12_BLACK_LEVEL) * 65025U + range / 2U) /
+			range;
+		levels[value] = (uint8_t)isqrt32(scaled);
+	}
 }
 
 /* Subsample one aligned 2x2 Bayer cell.  For 2x this is the complete source
@@ -373,6 +437,7 @@ static unsigned int raw12_level8(unsigned int value)
  * frame-sized intermediate or a 16-sample 4x box walk. */
 static void raw12_cell_rgb(const uint8_t *src, unsigned int src_stride,
 			   unsigned int sx, unsigned int sy,
+			   const uint8_t levels[RAW12_MAX_LEVEL + 1],
 			   unsigned int *red, unsigned int *green, unsigned int *blue)
 {
 	unsigned int r = 0, g = 0, b = 0;
@@ -383,7 +448,7 @@ static void raw12_cell_rgb(const uint8_t *src, unsigned int src_stride,
 		const uint8_t *line = src + (size_t)(sy + y) * src_stride;
 
 		for (x = 0; x < 2; x++) {
-			unsigned int value = raw12_level8(raw12_get(line, sx + x));
+			unsigned int value = levels[raw12_get(line, sx + x)];
 
 			/* SRGGB: row 0 is R G, row 1 is G B. */
 			switch (((sy + y) & 1) * 2 + ((sx + x) & 1)) {
@@ -431,6 +496,8 @@ static int raw12_to_nv12(const uint8_t *src, unsigned int src_width,
 {
 	uint8_t *y_plane = dst;
 	uint8_t *uv_plane;
+	uint8_t levels[RAW12_MAX_LEVEL + 1];
+	unsigned int white;
 	unsigned int scale_x, scale_y, scale, cell_offset, y, x;
 
 	if (!src || !dst || !src_width || !src_height || !dst_width ||
@@ -448,6 +515,8 @@ static int raw12_to_nv12(const uint8_t *src, unsigned int src_width,
 	scale = scale_x;
 	cell_offset = scale == 4 ? 1 : 0;
 	uv_plane = dst + (size_t)dst_stride * dst_height;
+	white = raw12_white_level(src, src_width, src_height, src_stride);
+	raw12_level_lut(levels, white);
 
 	/* Work in 2x2 output groups so chroma is the average of the same four
 	 * RGB values whose luma was written above.  This also avoids any temporary
@@ -462,19 +531,23 @@ static int raw12_to_nv12(const uint8_t *src, unsigned int src_width,
 			unsigned int n, rsum = 0, gsum = 0, bsum = 0;
 
 			raw12_cell_rgb(src, src_stride, x * scale + cell_offset,
-				       y * scale + cell_offset, &r[0], &g[0], &b[0]);
+				       y * scale + cell_offset, levels,
+				       &r[0], &g[0], &b[0]);
 			raw12_cell_rgb(src, src_stride, (x + 1) * scale + cell_offset,
-				       y * scale + cell_offset, &r[1], &g[1], &b[1]);
+				       y * scale + cell_offset, levels,
+				       &r[1], &g[1], &b[1]);
 			raw12_cell_rgb(src, src_stride, x * scale + cell_offset,
 				       (y + 1) * scale + cell_offset,
+				       levels,
 				       &r[2], &g[2], &b[2]);
 			raw12_cell_rgb(src, src_stride,
 				       (x + 1) * scale + cell_offset,
 				       (y + 1) * scale + cell_offset,
+				       levels,
 				       &r[3], &g[3], &b[3]);
 			for (n = 0; n < 4; n++) {
-				int yy = (77 * (int)r[n] + 150 * (int)g[n] +
-					  29 * (int)b[n] + 128) >> 8;
+				int yy = ((66 * (int)r[n] + 129 * (int)g[n] +
+					   25 * (int)b[n] + 128) >> 8) + 16;
 
 				yy = (int)clamp_u8(yy);
 				if (!n)
@@ -489,15 +562,15 @@ static int raw12_to_nv12(const uint8_t *src, unsigned int src_width,
 				gsum += g[n];
 				bsum += b[n];
 			}
-			/* BT.601 full-range chroma, rounded and clamped. */
+			/* BT.601 limited-range chroma. */
 			{
 				int ravg = (int)((rsum + 2) / 4);
 				int gavg = (int)((gsum + 2) / 4);
 				int bavg = (int)((bsum + 2) / 4);
-				int uu = ((-43 * ravg - 85 * gavg + 128 * bavg +
-					   32768) >> 8);
-				int vv = ((128 * ravg - 107 * gavg - 21 * bavg +
-					   32768) >> 8);
+				int uu = ((-38 * ravg - 74 * gavg + 112 * bavg +
+					   128) >> 8) + 128;
+				int vv = ((112 * ravg - 94 * gavg - 18 * bavg +
+					   128) >> 8) + 128;
 
 				uv[x] = (uint8_t)clamp_u8(uu);
 				uv[x + 1] = (uint8_t)clamp_u8(vv);
@@ -2304,7 +2377,7 @@ static void usage(const char *program)
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
-		"  --capture-buffers N  CSI queue depth (default 4; 2 fits the camera's\n"
+		"  --capture-buffers N  CSI queue depth (default 2 for the camera's\n"
 		"                       shared capture/Coda media-pool budget)\n"
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
 		"  --gop N              encoder GOP size (default 30)\n",
