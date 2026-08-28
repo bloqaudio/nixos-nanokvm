@@ -5,6 +5,9 @@
 let
   cfg = config.sg2002.watchdogKeeper;
   busybox = pkgs.pkgsStatic.busybox;
+  startupProbeCount = lib.max 1 (builtins.div
+    (cfg.healthStartupGraceSec + cfg.healthCheckIntervalSec - 1)
+    cfg.healthCheckIntervalSec);
   keeper = pkgs.writeShellScript "sg2002-watchdog-keeper" ''
     set -u
     BB=${lib.escapeShellArg "${busybox}/bin/busybox"}
@@ -20,6 +23,7 @@ let
 
     armed=0
     failures=0
+    startup_failures=0
     probe_seq=0
     while "$BB" kill -0 "$watchdog_pid" 2>/dev/null; do
       probe_seq=$((probe_seq + 1))
@@ -43,12 +47,18 @@ let
         continue
       fi
 
-      # Do not punish a slow initrd before the private USB route has worked
-      # once. After it has, persistent loss means the target can no longer
-      # use its NFS root and keeping the watchdog alive preserves a corpse.
+      # Give a slow initrd a bounded grace period. A working route arms
+      # health immediately above; a route which never works must eventually
+      # arm too, otherwise keeping the watchdog alive preserves a corpse.
       if [ "$armed" != 1 ]; then
-        "$BB" sleep ${toString (lib.max 1 (cfg.healthCheckIntervalSec - 2))}
-        continue
+        startup_failures=$((startup_failures + 1))
+        if [ "$startup_failures" -lt ${toString startupProbeCount} ]; then
+          "$BB" sleep ${toString (lib.max 1 (cfg.healthCheckIntervalSec - 2))}
+          continue
+        fi
+        echo "sg2002-watchdog-keeper: startup grace expired for $health_host; enforcing health" > /dev/kmsg
+        armed=1
+        failures=0
       fi
       failures=$((failures + 1))
       echo "sg2002-watchdog-keeper: health failed $failures/${toString cfg.healthFailureCount} for $health_host" > /dev/kmsg
@@ -96,8 +106,17 @@ in
       default = null;
       description = ''
         Optional host whose loss releases the nowayout watchdog. Health does
-        not arm until the host has answered once, so slow initrd networking is
-        safe. USB/NFS live targets set this to their private host endpoint.
+        not arm until the host has answered once or the bounded startup grace
+        expires, so slow initrd networking is safe without preserving a route
+        which never worked. USB/NFS live targets set this to their host.
+      '';
+    };
+    healthStartupGraceSec = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default = 120;
+      description = ''
+        Maximum startup grace before failed probes begin enforcing health,
+        even if the host has never answered.
       '';
     };
     healthCheckIntervalSec = lib.mkOption {

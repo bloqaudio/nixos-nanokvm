@@ -348,7 +348,7 @@ in
     (lib.mkIf (cfg.initrd.enable && cfg.stage2.enable) {
       sg2002.watchdogKeeper.initrd.enable = true;
       sg2002.watchdogKeeper.stage2.enable = true;
-      sg2002.watchdogKeeper.healthHost = protocol.hostIp;
+      sg2002.watchdogKeeper.healthHost = lib.mkDefault protocol.hostIp;
     })
   ];
 }
