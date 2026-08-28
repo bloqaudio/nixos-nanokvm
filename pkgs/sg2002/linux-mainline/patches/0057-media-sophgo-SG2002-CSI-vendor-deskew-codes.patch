@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Thu, 27 Aug 2026 01:40:00 +0200
+Subject: [PATCH 0057] media: sophgo: SG2002 CSI capture: tune RAW deskew
+
+With the GC4653 streaming and the whole pipeline programmed correctly,
+the CSI MAC decoded nothing: DECODE_STATUS and the PHY debug registers
+stayed at zero, so the lane front end never locked.  Diffing against
+the vendor freertos cif driver (cif.c/cif_drv.c) shows three deltas in
+how the wrap deskew block is set up:
+
+- the vendor applies its uniform lane_phase of 0x10 to the clock lane
+  and every data lane (we used 0x00 on the clock lane and 0x03/0x08
+  depending on which analogue port side a data lane sits);
+- the vendor leaves the REG_80 clock-invert bits clear (they are only
+  flipped through its output-clk-edge ioctl; we set all six);
+- the vendor enables only (1 << lane_num) - 1 deskew lanes at stream
+  start (we enabled all four).
+
+Use those vendor values for RAW sensors, while leaving the proven
+four-lane LT6911 HDMI programming byte-identical.  These registers are
+clocked only while capture is active; touching them after stream-off can
+hang the interconnect, so select the complete setup at stream-on time.
+---
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -505,19 +505,21 @@
+ 		route |= WRAP_TOP_CLK_P1_TO_P0;
+ 	writel(route, cap->wrap + WRAP_TOP_ROUTE);
+ 
+-	/* A 4-lane topology crosses the two three-wire analogue ports. */
++	/* RAW sensors use the vendor cif driver's uniform lane_phase of
++	 * 0x10. Keep the established port-dependent HDMI phases. */
+ 	for (i = 0; i < SG2002_NUM_PHYS_LANES; i++) {
+ 		u8 phase = 0;
+ 		unsigned int j;
+ 
+ 		if (i == bus->clock_lane) {
+-			phase = 0x00;
++			phase = cap->yuv_input ? 0x00 : 0x10;
+ 		} else {
+ 			for (j = 0; j < bus->num_data_lanes; j++) {
+ 				if (i != bus->data_lanes[j])
+ 					continue;
+-				phase = (i < 3) == (bus->clock_lane < 3) ?
+-					0x03 : 0x08;
++				phase = cap->yuv_input ?
++					((i < 3) == (bus->clock_lane < 3) ?
++					 0x03 : 0x08) : 0x10;
+ 				break;
+ 			}
+ 		}
+@@ -525,14 +527,16 @@
+ 		sg2002_set_deskew(cap, i, phase);
+ 	}
+ 
+-	/* D-PHY mode, fixed settle time, no automatic deskew. */
++	/* The RAW path follows the vendor driver's clear clock-invert bits;
++	 * preserve the established HDMI value. */
+ 	sg2002_update_bits(cap->wrap, WRAP_PHY4_MODE, GENMASK(1, 0), 0);
+ 	sg2002_update_bits(cap->wrap, WRAP_PHY4_HS_SETTLE,
+ 			    WRAP_PHY4_SETTLE | WRAP_PHY4_AUTO_IGNORE |
+ 			    WRAP_PHY4_AUTO_SYNC,
+ 			    FIELD_PREP(WRAP_PHY4_SETTLE, SG2002_HS_SETTLE));
+-	sg2002_update_bits(cap->wrap, WRAP_TOP_DESKEW_FORCE,
+-			    WRAP_TOP_CLOCK_INVERT, WRAP_TOP_CLOCK_INVERT);
++	sg2002_update_bits(cap->wrap, WRAP_TOP_DESKEW_FORCE,
++			    WRAP_TOP_CLOCK_INVERT,
++			    cap->yuv_input ? WRAP_TOP_CLOCK_INVERT : 0);
+ }
+ 
+ static void sg2002_csi_enable(struct sg2002_capture *cap, bool enable)
+@@ -578,9 +582,12 @@
+ 			    WRAP_PHY4_DESKEW_LANES, 0);
+ 	sg2002_update_bits(cap->wrap, WRAP_TOP_POWER, WRAP_TOP_PD_RXLP, 0);
+ 	udelay(20);
++	/* RAW follows vendor cif_stream_enable(); HDMI keeps all four. */
+ 	sg2002_update_bits(cap->wrap, WRAP_PHY4_LANE_ENABLE,
+ 			    WRAP_PHY4_DESKEW_LANES,
+-			    FIELD_PREP(WRAP_PHY4_DESKEW_LANES, 0xf));
++			    FIELD_PREP(WRAP_PHY4_DESKEW_LANES,
++				       cap->yuv_input ? 0xf :
++				       (1 << cap->bus.num_data_lanes) - 1));
+ }
+ 
+ static void sg2002_dma_set_addr(struct sg2002_capture *cap, dma_addr_t addr)

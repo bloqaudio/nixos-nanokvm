@@ -380,6 +380,8 @@ with lib.kernel; {
   V4L2_CCI_I2C = yes;
   VIDEO_LT6911UXE = yes;
   VIDEO_SOPHGO_SG2002_CSI = yes;
+  # LicheeRV Nano camera module (RAW10 Bayer sensor, see patch 0053).
+  VIDEO_GC4653 = module;
   VIDEOBUF2_DMA_CONTIG = yes;
   # Coda980 is a stateful mem2mem H.264 encoder. The SG2002 path accepts
   # direct linear NV12 input (the corruption was the CODA_960 tiled GDI

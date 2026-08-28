@@ -31,6 +31,8 @@
 # don't exist.
 { lib }:
 let
+  protocol = import ./protocol.nix;
+
   lichee =
     kernel: pathTail: attrs:
     {
@@ -240,11 +242,74 @@ in
   (live "mainline" "usb" "live-mainline" { })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
+  # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder
+  # stalls sustained NBD pulls; HS also matches U-Boot's fastboot gadget.
+  (live "mainline" "usb-hs" "live-mainline-hs" {
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-high-speed;
+        sg2002.usbGadget.network.transport = "ncm";
+      })
+    ];
+  })
+  # Rootfs NBD over wired LAN: the initrd DHCPs eth0 and nbd-client
+  # connects to the host's LAN address (NANOKVM_NBD_ROOTFS_HOST at run
+  # time), leaving the USB gadget for console/control only. For boards
+  # whose USB data path is compromised (e.g. usbip through a weak AP).
+  (live "mainline" "eth" "live-mainline-eth" {
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-eth;
+        nanokvm.nbdLive.staticIface = null;
+
+        boot.kernelModules = [ "dwmac-sophgo" ];
+        sg2002.initrd.availableKernelModules = [ "dwmac-sophgo" ];
+        sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
+
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig.DHCP = "yes";
+          linkConfig.RequiredForOnline = "no";
+        };
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            IPv6AcceptRA = true;
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
   (live "mainline" "usb-g-multi" "live-mainline-g-multi" gMulti)
   (live "mainline" "usb-oled" "live-mainline-oled" oled)
   # Historical kink: tag is "live-wifi-<kernel>" not "live-<kernel>-wifi".
   # Kept stable so kexec_target diagnostics don't change.
   (live "mainline" "wifi" "live-wifi-mainline" wifi)
+
+  # ===== licheerv-nano-w / mainline / SD =====
+  # Self-contained extlinux SD image for units with the RJ45 wired:
+  # eth0 DHCPs in stage 2, console stays on ttyS0 (never ttyGS0 — a
+  # gadget console with no host reader wedges the boot), USB gadget
+  # remains for control/debug.
+  (lichee "mainline" [ "sd" ] {
+    profile = "sd-image-mainline";
+    artifact = "sd";
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-eth;
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            IPv6AcceptRA = true;
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
 
   # ===== licheerv-nano-w / vendor =====
   (kernelTest "vendor")
@@ -320,6 +385,121 @@ in
       ({ lib, rootWpaConf ? null, ... }: {
         sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
         nanokvm.nfsLive.server = "192.168.23.8";
+      })
+    ];
+  })
+
+  # ===== licheerv-nano-w / mainline / NFS over ethernet =====
+  # Same data path as the pcie NFS entry, for LicheeRV units with the
+  # RJ45 wired: initrd DHCPs eth0, store mounts from the host over LAN.
+  # USB carries the boot chain + console only.
+  (lichee "mainline" [ "live" "eth-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-eth-nfs-mainline";
+    # No console=ttyGS0: when the USB host can't drain the ACM port (e.g.
+    # the console is only reachable through a flaky forwarder), ttyGS
+    # writes back up and wedge the kernel mid-boot. uartConsole stays.
+    artifactArgs.usbConsole = false;
+    modules = [
+      ({ lib, pkgs, ... }:
+        let
+          # Boot-eye for headless bring-up: the kernel console stays on
+          # ttyS0 (a ttyGS0 console with no host reader wedges the boot),
+          # so this dumps the initrd's network/driver state onto the ACM
+          # gadget instead, where a host-side `cat` (directly attached,
+          # NOT through usbip — its ACM path drops data) can read it.
+          ttygsDebug = pkgs.writeShellScript "nanokvm-ttygs-debug" ''
+            export PATH=${lib.makeBinPath [ pkgs.busybox ]}
+            for _ in $(seq 1 60); do
+              [ -e /dev/ttyGS0 ] && break
+              sleep 1
+            done
+            while :; do
+              {
+                echo "===== ttyGS debug $(cat /proc/uptime) ====="
+                echo "--- links"
+                ip -br link
+                echo "--- addrs"
+                ip -br addr
+                echo "--- routes"
+                ip route
+                echo "--- dmesg tail"
+                dmesg | tail -25
+                echo "===== end ====="
+              } > /dev/ttyGS0 2>/dev/null
+              sleep 15
+            done
+          '';
+        in
+        {
+          sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-eth;
+          nanokvm.nfsLive.server = "192.168.23.8";
+          boot.initrd.systemd.network.networks."20-eth0" = {
+            matchConfig.Name = "eth0";
+            networkConfig.DHCP = "yes";
+            linkConfig.RequiredForOnline = "no";
+          };
+          systemd.network.networks."20-eth0" = {
+            matchConfig.Name = "eth0";
+            networkConfig = {
+              DHCP = "yes";
+              IPv6AcceptRA = true;
+            };
+            linkConfig.RequiredForOnline = "no";
+          };
+
+          boot.initrd.systemd.storePaths = [ ttygsDebug ];
+          boot.initrd.systemd.services.ttygs-debug = {
+            description = "Dump initrd state to the USB ACM gadget";
+            wantedBy = [ "initrd.target" ];
+            after = [ "usb-gadget.service" ];
+            wants = [ "usb-gadget.service" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "simple";
+              ExecStart = ttygsDebug;
+              Restart = "always";
+              RestartSec = "5s";
+            };
+          };
+        })
+    ];
+  })
+
+  # ===== licheerv-nano-w / mainline / NFS over USB gadget =====
+  # Board on the NFS server's own USB port (trex): the store mount comes
+  # from the host's gadget address directly (server == hostIp, so the
+  # dwc2 usb-rx-guard is active), no LAN hairpin at all. This is also the
+  # dwmac-RX-stall lifeboat: store traffic rides the USB gadget, eth0
+  # stays idle for bring-up.
+  (lichee "mainline" [ "live" "usb-nfs" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-usb-nfs-mainline";
+    artifactArgs.usbConsole = false;
+    modules = [
+      ({ ... }: {
+        nanokvm.nfsLive.server = protocol.hostIp;
+      })
+    ];
+  })
+
+  # Same USB-gadget NFS lifeboat, plus the GC4653 camera + ethernet DTB.
+  (lichee "mainline" [ "live" "usb-nfs-cam" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-usb-nfs-cam-mainline";
+    artifactArgs.usbConsole = false;
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-cam;
+        nanokvm.nfsLive.server = protocol.hostIp;
+        nanokvm.nfsLive.prefetchStage2Systemd = true;
       })
     ];
   })

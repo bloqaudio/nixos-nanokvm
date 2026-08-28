@@ -1,0 +1,18 @@
+/* Enable the on-board 10/100 ethernet (GMAC + internal EPHY) on
+ * LicheeRV-Nano boards that wire the RJ45. Mirrors the NanoKVM-PCIe
+ * overlay (sg2002-nanokvm-pcie.dtsi): the upstream dtsi ships gmac0
+ * disabled because the stock dev board has no ethernet; the internal
+ * EPHY power-up itself is handled by kernel patch 0013 (dwmac-sophgo).
+ *
+ * The mmioreg mdio-mux that reaches the internal EPHY is also
+ * `status = "disabled"` upstream — without it the dwmac probes but
+ * phy attach fails with -ENODEV ("cannot attach to PHY"). Enable both.
+ */
+
+&mdio {
+	status = "okay";
+};
+
+&gmac0 {
+	status = "okay";
+};

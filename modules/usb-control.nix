@@ -246,7 +246,15 @@ in
               "systemd-networkd.service"
               "usb-gadget.service"
             ];
-            unitConfig.DefaultDependencies = false;
+            unitConfig = {
+              DefaultDependencies = false;
+              # telnetd binds the static usb0 address; if it starts before
+              # usb-debug-network has configured it, the bind fails and the
+              # default start limit (5 in 10s) parks the unit FAILED
+              # forever — which is exactly when you need the shell. Never
+              # give up.
+              StartLimitIntervalSec = 0;
+            };
             serviceConfig = {
               ExecStart = initrdDebugShellExec;
               Restart = "always";
@@ -320,6 +328,12 @@ in
           ++ lib.optional (config.services.userborn.enable && !config.services.userborn.static) "userborn.service";
         wants = [ "network-online.target" ]
           ++ lib.optional (config.services.userborn.enable && !config.services.userborn.static) "userborn.service";
+        unitConfig = {
+          # Same bind-race as the initrd shell: telnetd exits when the
+          # static usb0 address is not configured yet, and the default
+          # start limit would park the unit FAILED. Retry forever.
+          StartLimitIntervalSec = 0;
+        };
         serviceConfig = {
           ExecStart = stage2DebugShellExec;
           Restart = "always";

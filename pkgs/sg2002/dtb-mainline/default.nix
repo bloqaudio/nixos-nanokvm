@@ -56,6 +56,12 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # LicheeRV-Nano with the RJ45 wired: gmac0 + internal EPHY on.
+  dtbEth = buildDtb "sg2002-licheerv-nano-bw-eth" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-eth.dtsi
+  ];
+
   # Experimental USB handoff A/Bs.  The high-speed override is always
   # concatenated last, leaving the full-speed production DTBs untouched.
   dtbHighSpeed = buildDtb "sg2002-licheerv-nano-bw-high-speed" [
@@ -90,6 +96,15 @@ let
     ./sg2002-nanokvm-pcie.dtsi
   ];
 
+  # LicheeRV-Nano with the GC4653 camera FFC: ethernet + camera overlay
+  # (IIC4 on PWR_WAKEUP0/PWR_BUTTON1, CAM_MCLK1 on MIPIRX0N, sensor reset
+  # on GPIOE1, 2-lane CSI capture).
+  dtbCam = buildDtb "sg2002-licheerv-nano-bw-cam" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-eth.dtsi
+    ./sg2002-licheerv-camera-gc4653.dtsi
+  ];
+
   dtbPcieNoWifi = buildDtb "sg2002-nanokvm-pcie-nowifi" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
@@ -110,6 +125,7 @@ in
 {
   inherit dtb dtbs;
   high-speed = dtbHighSpeed;
+  eth = dtbEth;
   oled = dtbOled;
   nowifi = dtbNoWifi;
   nowifi-high-speed = dtbNoWifiHighSpeed;
@@ -118,4 +134,5 @@ in
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
   pcie-high-speed = dtbPcieHighSpeed;
+  cam = dtbCam;
 }

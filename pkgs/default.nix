@@ -323,6 +323,7 @@ in
   sg2002-dtb-mainline = dtbMainline.dtb;
   sg2002-dtbs-mainline = dtbMainline.dtbs;
   sg2002-dtb-mainline-high-speed = dtbMainline.high-speed;
+  sg2002-dtb-mainline-eth = dtbMainline.eth;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
   sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
@@ -331,6 +332,7 @@ in
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
   sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
+  sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;
   sg2002-dtb-vendor-gadget = dtbVendor.gadget;
 

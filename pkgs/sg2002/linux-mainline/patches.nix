@@ -222,6 +222,18 @@ let
       name = "media-sophgo-sg2002-vpss-fabric-clocks";
       patch = ./patches/0052-media-sophgo-SG2002-VPSS-fabric-clocks.patch;
     })
+    (patch {
+      name = "media-i2c-galaxycore-gc4653";
+      patch = ./patches/0053-media-i2c-add-GalaxyCore-GC4653-sensor-driver.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-csi-capture-raw-sources";
+      patch = ./patches/0054-media-sophgo-SG2002-CSI-capture-RAW-sources.patch;
+    })
+    (patch {
+      name = "media-sophgo-sg2002-csi-vendor-deskew-codes";
+      patch = ./patches/0057-media-sophgo-SG2002-CSI-vendor-deskew-codes.patch;
+    })
   ];
 
   meta = {
