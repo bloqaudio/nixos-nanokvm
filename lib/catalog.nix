@@ -505,6 +505,46 @@ in
     ];
   })
 
+  # Same GC4653/Coda target, but keep the live NFS root on the board's RJ45.
+  # USB only delivers FIP/FIT and retains the optional control gadget; camera,
+  # NFS, SSH, and watchdog health use the reliable GMAC data path.
+  (lichee "mainline" [ "live" "eth-nfs-cam" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-eth-nfs-cam-mainline";
+    artifactArgs.usbConsole = false;
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/sg2002-coda.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-cam;
+        nanokvm.nfsLive.server = "192.168.23.8";
+        nanokvm.nfsLive.prefetchStage2Systemd = true;
+        sg2002.watchdogKeeper.healthHost = "192.168.23.8";
+
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
+
   # ===== nanokvm-pcie / mainline / NFS over ethernet =====
   # The cleanest data path of all: the PCIe carrier's RJ45. eth0 does
   # DHCP in the initrd (dwmac-sophgo), the root-nfs service mounts
