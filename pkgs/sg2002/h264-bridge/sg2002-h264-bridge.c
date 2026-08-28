@@ -2,6 +2,8 @@
  * SG2002 V4L2 H.264 bridge:
  *
  *   /dev/video0 (UYVY capture) -> CPU UYVY->NV12/NV21 -> /dev/video1 (Coda)
+ *   /dev/video0 (SRGGB12P capture) -> CPU box demosaic/downsample -> NV12
+ *                                      -> /dev/video1 (Coda)
  * or, with --scaler vpss:
  *   /dev/video0 -> /dev/video2 (VPSS scaler/CSC mem2mem) -> /dev/video1,
  *   a zero-copy dmabuf chain (capture expbuf -> scaler OUTPUT import;
@@ -333,6 +335,187 @@ static int uyvy_to_nvxx_half(const uint8_t *src, unsigned int src_width,
 }
 
 /* ------------------------------------------------------------------ */
+/* Packed SRGGB12P -> NV12 conversion                                 */
+/* ------------------------------------------------------------------ */
+
+/* The SG2002 camera's V4L2_PIX_FMT_SRGGB12P is pRCC nibble-aligned: two
+ * pixels are three bytes, with byte 0/1 holding bits 11:4 and byte 2 holding
+ * pixel 0 bits 3:0 in its low nibble and pixel 1 bits 3:0 in its high nibble.
+ * (This is not the common low-byte-first MIPI RAW12 spelling.)  GC4653
+ * reports black near code 256 in its 12-bit range, so remove that pedestal
+ * before scaling to 8 bits. */
+#define RAW12_BLACK_LEVEL 256U
+#define RAW12_WHITE_LEVEL 4095U
+
+static unsigned int raw12_get(const uint8_t *line, unsigned int x)
+{
+	const uint8_t *p = line + (size_t)(x / 2) * 3;
+	unsigned int low = x & 1 ? p[2] >> 4 : p[2] & 0x0f;
+
+	return ((unsigned int)p[x & 1] << 4) | low;
+}
+
+static unsigned int raw12_level8(unsigned int value)
+{
+	const unsigned int range = RAW12_WHITE_LEVEL - RAW12_BLACK_LEVEL;
+
+	if (value <= RAW12_BLACK_LEVEL)
+		return 0;
+	if (value >= RAW12_WHITE_LEVEL)
+		return 255;
+	value -= RAW12_BLACK_LEVEL;
+	return (value * 255U + range / 2U) / range;
+}
+
+/* Subsample one aligned 2x2 Bayer cell.  For 2x this is the complete source
+ * box; for 4x it is the centred cell in that box.  It is a bounded Bayer
+ * demosaic/downsample with four source reads per output pixel, rather than a
+ * frame-sized intermediate or a 16-sample 4x box walk. */
+static void raw12_cell_rgb(const uint8_t *src, unsigned int src_stride,
+			   unsigned int sx, unsigned int sy,
+			   unsigned int *red, unsigned int *green, unsigned int *blue)
+{
+	unsigned int r = 0, g = 0, b = 0;
+	unsigned int rc = 0, gc = 0, bc = 0;
+	unsigned int y, x;
+
+	for (y = 0; y < 2; y++) {
+		const uint8_t *line = src + (size_t)(sy + y) * src_stride;
+
+		for (x = 0; x < 2; x++) {
+			unsigned int value = raw12_level8(raw12_get(line, sx + x));
+
+			/* SRGGB: row 0 is R G, row 1 is G B. */
+			switch (((sy + y) & 1) * 2 + ((sx + x) & 1)) {
+			case 0:
+				r += value;
+				rc++;
+				break;
+			case 1:
+			case 2:
+				g += value;
+				gc++;
+				break;
+			default:
+				b += value;
+				bc++;
+				break;
+			}
+		}
+	}
+	*red = (r + rc / 2U) / rc;
+	*green = (g + gc / 2U) / gc;
+	*blue = (b + bc / 2U) / bc;
+}
+
+static unsigned int clamp_u8(int value)
+{
+	if (value < 0)
+		return 0;
+	if (value > 255)
+		return 255;
+	return (unsigned int)value;
+}
+
+/* Convert packed SRGGB12P to a tightly packed, progressive NV12 frame.
+ * `visible_height` is the active image height; dst_height may include the
+ * Coda macroblock padding below it.  Only exact 2x and 4x reductions are
+ * accepted.  The restriction is intentional: it keeps all source accesses
+ * bounded, avoids a frame-sized scratch image, and makes the result easy to
+ * reason about at the camera's fixed 2560x1440 mode. */
+static int raw12_to_nv12(const uint8_t *src, unsigned int src_width,
+			 unsigned int src_height, unsigned int src_stride,
+			 uint8_t *dst, unsigned int dst_width,
+			 unsigned int visible_height, unsigned int dst_height,
+			 unsigned int dst_stride)
+{
+	uint8_t *y_plane = dst;
+	uint8_t *uv_plane;
+	unsigned int scale_x, scale_y, scale, cell_offset, y, x;
+
+	if (!src || !dst || !src_width || !src_height || !dst_width ||
+	    !visible_height || (src_width & 1) || (src_height & 1) ||
+	    (dst_width & 1) || (visible_height & 1) || dst_height < visible_height ||
+	    (dst_height & 1) || src_stride < (size_t)src_width * 3 / 2 ||
+	    dst_stride < dst_width)
+		return -1;
+	if (src_width % dst_width || src_height % visible_height)
+		return -1;
+	scale_x = src_width / dst_width;
+	scale_y = src_height / visible_height;
+	if (scale_x != scale_y || (scale_x != 2 && scale_x != 4))
+		return -1;
+	scale = scale_x;
+	cell_offset = scale == 4 ? 1 : 0;
+	uv_plane = dst + (size_t)dst_stride * dst_height;
+
+	/* Work in 2x2 output groups so chroma is the average of the same four
+	 * RGB values whose luma was written above.  This also avoids any temporary
+	 * per-frame or per-line storage. */
+	for (y = 0; y < visible_height; y += 2) {
+		uint8_t *y0 = y_plane + (size_t)y * dst_stride;
+		uint8_t *y1 = y0 + dst_stride;
+		uint8_t *uv = uv_plane + (size_t)(y / 2) * dst_stride;
+
+		for (x = 0; x < dst_width; x += 2) {
+			unsigned int r[4], g[4], b[4];
+			unsigned int n, rsum = 0, gsum = 0, bsum = 0;
+
+			raw12_cell_rgb(src, src_stride, x * scale + cell_offset,
+				       y * scale + cell_offset, &r[0], &g[0], &b[0]);
+			raw12_cell_rgb(src, src_stride, (x + 1) * scale + cell_offset,
+				       y * scale + cell_offset, &r[1], &g[1], &b[1]);
+			raw12_cell_rgb(src, src_stride, x * scale + cell_offset,
+				       (y + 1) * scale + cell_offset,
+				       &r[2], &g[2], &b[2]);
+			raw12_cell_rgb(src, src_stride,
+				       (x + 1) * scale + cell_offset,
+				       (y + 1) * scale + cell_offset,
+				       &r[3], &g[3], &b[3]);
+			for (n = 0; n < 4; n++) {
+				int yy = (77 * (int)r[n] + 150 * (int)g[n] +
+					  29 * (int)b[n] + 128) >> 8;
+
+				yy = (int)clamp_u8(yy);
+				if (!n)
+					y0[x] = (uint8_t)yy;
+				else if (n == 1)
+					y0[x + 1] = (uint8_t)yy;
+				else if (n == 2)
+					y1[x] = (uint8_t)yy;
+				else
+					y1[x + 1] = (uint8_t)yy;
+				rsum += r[n];
+				gsum += g[n];
+				bsum += b[n];
+			}
+			/* BT.601 full-range chroma, rounded and clamped. */
+			{
+				int ravg = (int)((rsum + 2) / 4);
+				int gavg = (int)((gsum + 2) / 4);
+				int bavg = (int)((bsum + 2) / 4);
+				int uu = ((-43 * ravg - 85 * gavg + 128 * bavg +
+					   32768) >> 8);
+				int vv = ((128 * ravg - 107 * gavg - 21 * bavg +
+					   32768) >> 8);
+
+				uv[x] = (uint8_t)clamp_u8(uu);
+				uv[x + 1] = (uint8_t)clamp_u8(vv);
+			}
+		}
+	}
+	for (y = visible_height; y < dst_height; y++)
+		memcpy(y_plane + (size_t)y * dst_stride,
+		       y_plane + (size_t)(visible_height - 1) * dst_stride,
+		       dst_width);
+	for (y = visible_height / 2; y < dst_height / 2; y++)
+		memcpy(uv_plane + (size_t)y * dst_stride,
+		       uv_plane + (size_t)(visible_height / 2 - 1) * dst_stride,
+		       dst_width);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Offline file conversion                                             */
 /* ------------------------------------------------------------------ */
 
@@ -372,6 +555,69 @@ static int uyvy_to_nvxx_file(const char *input_path, const char *output_path,
 	}
 	if (uyvy_to_nvxx(src, width, height, width * 2, dst, width, height,
 			 width, nv21))
+		goto out;
+	if (fwrite(dst, 1, dst_size, output) != dst_size) {
+		die_errno("write raw output");
+		goto out;
+	}
+	ret = 0;
+out:
+	free(dst);
+	free(src);
+	if (output)
+		fclose(output);
+	if (input)
+		fclose(input);
+	return ret;
+}
+
+/* Host-side smoke-test entry point for the pure RAW12 converter.  It uses the
+ * practical 4x mode (2560x1440 -> 640x360), and deliberately has the same
+ * exact-size input contract as a tightly packed camera frame. */
+static int raw12_to_nv12_file(const char *input_path, const char *output_path,
+			      unsigned int width, unsigned int height)
+{
+	FILE *input = NULL, *output = NULL;
+	uint8_t *src = NULL, *dst = NULL;
+	unsigned int dst_width, dst_height;
+	size_t src_stride, src_size, dst_stride, dst_size, got;
+	int ret = -1;
+
+	if (!width || !height || (width & 3) || (height & 3)) {
+		fprintf(stderr, "RAW12 dimensions must be non-zero and divisible by 4\n");
+		return -1;
+	}
+	dst_width = width / 4;
+	dst_height = height / 4;
+	src_stride = (size_t)width * 3 / 2;
+	src_size = src_stride * height;
+	dst_stride = dst_width;
+	dst_size = dst_stride * dst_height * 3 / 2;
+	input = fopen(input_path, "rb");
+	if (!input) {
+		die_errno(input_path);
+		goto out;
+	}
+	output = fopen(output_path, "wb");
+	if (!output) {
+		die_errno(output_path);
+		goto out;
+	}
+	src = malloc(src_size);
+	dst = malloc(dst_size);
+	if (!src || !dst) {
+		fprintf(stderr, "RAW12 conversion allocation failed (%zu + %zu bytes)\n",
+			src_size, dst_size);
+		goto out;
+	}
+	got = fread(src, 1, src_size, input);
+	if (got != src_size || fgetc(input) != EOF) {
+		fprintf(stderr, "%s is not exactly %zu bytes\n", input_path, src_size);
+		goto out;
+	}
+	if (raw12_to_nv12(src, width, height, (unsigned int)src_stride,
+			  dst, dst_width, dst_height, dst_height,
+			  (unsigned int)dst_stride))
 		goto out;
 	if (fwrite(dst, 1, dst_size, output) != dst_size) {
 		die_errno("write raw output");
@@ -1110,7 +1356,8 @@ static int live_bridge(const struct bridge_options *opts)
 	uint64_t start_ms = 0, last_stats_ms = 0, last_stats_frames = 0;
 	int capture_on = 0, encoder_out_on = 0, encoder_cap_on = 0, ret = -1;
 	int use_dmabuf = opts->use_dmabuf;
-	int nv21 = opts->encoder_input_format == V4L2_PIX_FMT_NV21;
+	int raw12 = 0, nv21;
+	uint32_t encoder_input_format;
 	struct rtsp_sink rtsp;
 
 	memset(&rtsp, 0, sizeof(rtsp));
@@ -1145,25 +1392,47 @@ static int live_bridge(const struct bridge_options *opts)
 	}
 	if (get_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, &capture_fmt))
 		goto out_errno;
-	if (capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY ||
+	raw12 = capture_fmt.pixelformat == V4L2_PIX_FMT_SRGGB12P;
+	if ((!raw12 && capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY) ||
 	    capture_fmt.width < 4 || capture_fmt.height < 2 ||
-	    capture_fmt.bytesperline < capture_fmt.width * 2) {
-		fprintf(stderr, "capture must provide packed UYVY with a valid stride\n");
+	    (raw12 ? capture_fmt.bytesperline < (size_t)capture_fmt.width * 3 / 2 :
+	     capture_fmt.bytesperline < (size_t)capture_fmt.width * 2)) {
+		fprintf(stderr, "capture must provide packed UYVY or SRGGB12P with a valid stride\n");
 		goto out;
 	}
-	if ((capture_fmt.width & 3) || (opts->half_scale && (capture_fmt.height & 3))) {
-		fprintf(stderr, "capture width must be a multiple of 4 (half scale: height of 4)\n");
-		goto out;
+	if (raw12) {
+		unsigned int raw_scale = opts->half_scale ? 2 : 4;
+
+		if (opts->use_vpss) {
+			fprintf(stderr, "SRGGB12P capture requires --scaler cpu; VPSS accepts UYVY only\n");
+			goto out;
+		}
+		if (capture_fmt.width % raw_scale || capture_fmt.height % raw_scale) {
+			fprintf(stderr, "SRGGB12P dimensions %ux%u do not support an exact %ux reduction\n",
+				capture_fmt.width, capture_fmt.height, raw_scale);
+			goto out;
+		}
+		visible_width = capture_fmt.width / raw_scale;
+		visible_height = capture_fmt.height / raw_scale;
+	} else {
+		if ((capture_fmt.width & 3) || (opts->half_scale && (capture_fmt.height & 3))) {
+			fprintf(stderr, "capture width must be a multiple of 4 (half scale: height of 4)\n");
+			goto out;
+		}
+		visible_width = opts->half_scale ? capture_fmt.width / 2 : capture_fmt.width;
+		visible_height = opts->half_scale ? capture_fmt.height / 2 : capture_fmt.height;
 	}
-	visible_width = opts->half_scale ? capture_fmt.width / 2 : capture_fmt.width;
-	visible_height = opts->half_scale ? capture_fmt.height / 2 : capture_fmt.height;
+	/* RAW12 is always converted to NV12.  Keep the existing UYVY default and
+	 * --format nv21 behaviour unchanged. */
+	encoder_input_format = raw12 ? V4L2_PIX_FMT_NV12 : opts->encoder_input_format;
+	nv21 = encoder_input_format == V4L2_PIX_FMT_NV21;
 	coded_height = (visible_height + 15U) & ~15U;
 	/* Coda reads a macroblock surface even when the visible frame is 1080
 	 * lines.  Negotiate that padded surface first, crop it to the source
 	 * height, and only then configure CAPTURE.  Doing this in another order can
 	 * leave the firmware with a 1920x1080 stride/height mismatch. */
 	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
-			       opts->encoder_input_format, visible_width,
+			       encoder_input_format, visible_width,
 			       coded_height, &encoder_out_fmt))
 		goto out_errno;
 	if (set_output_crop(encoder_fd, visible_width, visible_height))
@@ -1361,7 +1630,15 @@ static int live_bridge(const struct bridge_options *opts)
 				fprintf(stderr, "no usable free encoder output buffer\n");
 				goto out;
 			}
-			if ((opts->half_scale ?
+			if (raw12 ?
+			     raw12_to_nv12(capture_queue.bufs[source_index].addr,
+				capture_fmt.width, capture_fmt.height,
+				capture_fmt.bytesperline,
+				encoder_out.bufs[output_index].addr,
+				encoder_out_fmt.width, visible_height,
+				encoder_out_fmt.height,
+				encoder_out_fmt.bytesperline) :
+			     (opts->half_scale ?
 			     uyvy_to_nvxx_half(capture_queue.bufs[source_index].addr,
 				capture_fmt.width, capture_fmt.height,
 				capture_fmt.bytesperline,
@@ -1375,7 +1652,9 @@ static int live_bridge(const struct bridge_options *opts)
 				encoder_out.bufs[output_index].addr,
 				encoder_out_fmt.width, encoder_out_fmt.height,
 				encoder_out_fmt.bytesperline, nv21))) {
-				fprintf(stderr, "UYVY->NVxx conversion rejected negotiated geometry\n");
+				fprintf(stderr, raw12 ?
+					"SRGGB12P->NV12 conversion rejected negotiated geometry (only exact 2x/4x reductions are supported)\n" :
+					"UYVY->NVxx conversion rejected negotiated geometry\n");
 				goto out;
 			}
 			memset(&out_buffer, 0, sizeof(out_buffer));
@@ -1981,14 +2260,16 @@ static void usage(const char *program)
 	fprintf(stderr,
 		"usage: %s [capture-node] [encoder-node] [options]\n"
 		"       %s [capture-node] [encoder-node] [h264-output|-] [full|half]   (legacy)\n"
-		"       %s --raw nv12|nv21 width height input.uyvy output.raw\n"
+		"       %s --raw nv12|nv21|srggb12 width height input.raw output.raw\n"
 		"\n"
 		"options:\n"
 		"  --output PATH|-      write the Annex-B stream (repeatable with --rtsp)\n"
 		"  --rtsp URL           publish via RTSP (rtsp://host[:8554]/hdmi)\n"
-		"  --size full|half     half = 2x downscale (default full)\n"
+		"  --size full|half     UYVY: half = 2x downscale (default full);\n"
+		"                       SRGGB12P: default = 4x to 640x360, half = 2x\n"
 		"  --format nv21|nv12   encoder input format (default nv21 staged; nv12\n"
-		"                       needs a kernel with fixed direct input)\n"
+		"                       needs a kernel with fixed direct input; SRGGB12P\n"
+		"                       always uses NV12)\n"
 		"  --io dmabuf|mmap     raw-frame buffers: cached dma-heap (default) or vb2 mmap\n"
 		"  --scaler cpu|vpss    cpu = software UYVY->NVxx (default); vpss = hardware\n"
 		"                       scaler/CSC via the mem2mem node, zero-copy dmabuf chain\n"
@@ -2027,11 +2308,15 @@ int main(int argc, char **argv)
 	int positional = 0;
 
 	if (argc >= 2 && !strcmp(argv[1], "--raw")) {
-		if (argc != 7 || (strcmp(argv[2], "nv12") && strcmp(argv[2], "nv21")) ||
+		if (argc != 7 || (strcmp(argv[2], "nv12") && strcmp(argv[2], "nv21") &&
+			   strcmp(argv[2], "srggb12")) ||
 		    parse_u32(argv[3], &width) || parse_u32(argv[4], &height)) {
 			usage(argv[0]);
 			return EXIT_FAILURE;
 		}
+		if (!strcmp(argv[2], "srggb12"))
+			return raw12_to_nv12_file(argv[5], argv[6], width, height) ?
+				EXIT_FAILURE : EXIT_SUCCESS;
 		nv21 = !strcmp(argv[2], "nv21");
 		return uyvy_to_nvxx_file(argv[5], argv[6], width, height, nv21) ?
 			EXIT_FAILURE : EXIT_SUCCESS;
