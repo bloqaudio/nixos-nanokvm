@@ -691,6 +691,28 @@ in
     ];
   })
 
+  # Full-speed ECM sibling for hosts where NCM aggregation wedges the host TX
+  # queue before the NFS root can reach stage 2. Keep the proven PicoClaw LCD
+  # DTB, clocks, FIFO sizing and bootargs unchanged so this isolates only the
+  # USB network framing (cdc_ether instead of cdc_ncm).
+  (picoclaw "mainline" [ "live" "usb-lcd-ecm" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline-ecm";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd;
+        sg2002.usbGadget.network.transport = "ecm";
+      })
+    ];
+  })
+
   # High-speed sibling of the LCD/NFS system.  This intentionally keeps the
   # production usb-lcd artifact on its proven full-speed DTB until sustained
   # NFS workloads are verified on the other SG2002 boards too.
