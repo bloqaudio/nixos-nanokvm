@@ -37,6 +37,13 @@ in {
     wantedBy = [ "multi-user.target" ];
     after = [ "sys-subsystem-net-devices-wlan0.device" ];
     wants = [ "sys-subsystem-net-devices-wlan0.device" ];
+    # An initrd WiFi instance may already own the association carrying this
+    # stage-2 store. Match its survival policy so systemd adopts the running
+    # process across switch-root instead of creating a transport outage.
+    unitConfig = {
+      IgnoreOnIsolate = true;
+      SurviveFinalKillSignal = true;
+    };
     serviceConfig = {
       ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant-wlan0.conf -D nl80211";
       Restart = "on-failure";

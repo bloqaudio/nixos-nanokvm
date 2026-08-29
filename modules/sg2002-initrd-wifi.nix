@@ -72,6 +72,15 @@ in {
             "sys-subsystem-net-devices-wlan0.device"
           ];
           wants = ["sys-subsystem-net-devices-wlan0.device"];
+          # A remote store carried by wlan0 cannot tolerate the normal
+          # switch-root final kill: stage 2 would have to page in a fresh
+          # wpa_supplicant over the association that was just torn down.
+          # Keep this instance alive so the identically named stage-2 unit
+          # can adopt it without an NFS connectivity gap.
+          unitConfig = {
+            IgnoreOnIsolate = true;
+            SurviveFinalKillSignal = true;
+          };
           serviceConfig = {
             ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf -D nl80211";
             Restart = "on-failure";
