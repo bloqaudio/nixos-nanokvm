@@ -329,6 +329,7 @@ in
   sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
+  sg2002-dtb-mainline-picoclaw-lcd-wifi = dtbMainline.picoclaw-lcd-wifi;
   sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;

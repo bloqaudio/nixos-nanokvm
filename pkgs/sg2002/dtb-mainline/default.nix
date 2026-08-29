@@ -83,6 +83,14 @@ let
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
   ];
 
+  # PicoClaw WiFi-root variant: retain the B-W board's SDIO1/AIC8800
+  # wiring while adding the ST7789 panel. The LCD consumes SPI1/GPIOs,
+  # not the SDIO1 pins, so the overlays can coexist.
+  dtbPicoClawLcdWifi = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-wifi" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+  ];
+
   dtbPicoClawLcdHighSpeed = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
@@ -131,6 +139,7 @@ in
   nowifi = dtbNoWifi;
   nowifi-high-speed = dtbNoWifiHighSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
+  picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;

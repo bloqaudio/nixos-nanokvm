@@ -776,6 +776,38 @@ in
         # NFS root over the LAN, served by trex. Runtime override:
         # NANOKVM_NFS_SERVER env → nanokvm.nfs_server= cmdline arg.
         nanokvm.nfsLive.server = "192.168.23.8";
+        sg2002.watchdogKeeper.healthHost = "192.168.23.8";
+      })
+    ];
+  })
+
+  # PicoClaw LCD sibling of the WiFi-root fallback. USB still performs the
+  # stateless ROM/FIP/FIT handoff and exposes its control gadget, but the
+  # AIC8800 carries NFS and SSH so a wedged dwc2 bulk-OUT path cannot take
+  # the live root down with it.
+  (picoclaw "mainline" [ "live" "usb-lcd-wifi" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-picoclaw-lcd-mainline";
+    artifactArgs = {
+      usbConsole = false;
+      extraBootargs = [
+        "systemd.getty_auto=no"
+        "udev.children_max=2"
+      ];
+    };
+    mixins = [
+      ../modules/picoclaw-lcd.nix
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, pkgs, rootWpaConf ? null, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd-wifi;
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        nanokvm.nfsLive.server = "192.168.23.8";
+        sg2002.watchdogKeeper.healthHost = "192.168.23.8";
       })
     ];
   })
