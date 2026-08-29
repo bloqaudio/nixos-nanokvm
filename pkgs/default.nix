@@ -236,6 +236,14 @@ in
       chmod -R u+w $out/lib/firmware/aic8800_sdio
 
       cd $out/lib/firmware/aic8800_sdio/aic8800DC
+      # The Nano-W radio identifies as AIC8800D80 (SDIO 0xc8a1:0x0082),
+      # while the Radxa driver is deliberately built with this compatibility
+      # directory as CONFIG_AIC_FW_PATH. Expose the complete D80 set here;
+      # keep any DC-specific file that already exists under the same name.
+      for blob in ../aic8800_and_aic8800D80/*; do
+        name="''${blob##*/}"
+        test -e "$name" || ln -s "$blob" "$name"
+      done
       ln -sfn ../aic8800_and_aic8800D80/fw_adid_u03.bin         fw_adid_u03.bin
       ln -sfn ../aic8800_and_aic8800D80/fw_patch_u03.bin        fw_patch_u03.bin
       ln -sfn ../aic8800_and_aic8800D80/fw_patch_table_u03.bin  fw_patch_table_u03.bin
