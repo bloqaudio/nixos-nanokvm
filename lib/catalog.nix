@@ -713,6 +713,28 @@ in
     ];
   })
 
+  # Same full-speed isolation test using the f_rndis/rndis_host data path.
+  # Keep this separate from the ECM and NCM entries: SG2002 USB transport
+  # reliability is empirical, and the three function drivers frame bulk OUT
+  # traffic differently.
+  (picoclaw "mainline" [ "live" "usb-lcd-rndis" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-picoclaw-lcd-mainline-rndis";
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/picoclaw-lcd.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        nanokvm.picoclawLcd.enable = true;
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-picoclaw-lcd;
+        sg2002.usbGadget.network.transport = "rndis";
+      })
+    ];
+  })
+
   # High-speed sibling of the LCD/NFS system.  This intentionally keeps the
   # production usb-lcd artifact on its proven full-speed DTB until sustained
   # NFS workloads are verified on the other SG2002 boards too.
