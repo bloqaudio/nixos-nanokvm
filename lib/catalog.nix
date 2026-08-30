@@ -402,39 +402,20 @@ in
     # writes back up and wedge the kernel mid-boot. uartConsole stays.
     artifactArgs.usbConsole = false;
     modules = [
-      ({ lib, pkgs, ... }:
-        let
-          # Boot-eye for headless bring-up: the kernel console stays on
-          # ttyS0 (a ttyGS0 console with no host reader wedges the boot),
-          # so this dumps the initrd's network/driver state onto the ACM
-          # gadget instead, where a host-side `cat` (directly attached,
-          # NOT through usbip — its ACM path drops data) can read it.
-          ttygsDebug = pkgs.writeShellScript "nanokvm-ttygs-debug" ''
-            export PATH=${lib.makeBinPath [ pkgs.busybox ]}
-            for _ in $(seq 1 60); do
-              [ -e /dev/ttyGS0 ] && break
-              sleep 1
-            done
-            while :; do
-              {
-                echo "===== ttyGS debug $(cat /proc/uptime) ====="
-                echo "--- links"
-                ip -br link
-                echo "--- addrs"
-                ip -br addr
-                echo "--- routes"
-                ip route
-                echo "--- dmesg tail"
-                dmesg | tail -25
-                echo "===== end ====="
-              } > /dev/ttyGS0 2>/dev/null
-              sleep 15
-            done
-          '';
-        in
-        {
+      ({ lib, pkgs, ... }: {
           sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-eth;
           nanokvm.nfsLive.server = "192.168.23.8";
+          # usb-nfs-live intentionally replaces the generic initrd module
+          # list with a small, explicit set.  Include the GMAC glue in that
+          # set as well as stage 2; an enabled ethernet DTB otherwise still
+          # produces no eth0, leaving the root-NFS route wait to time out.
+          boot.kernelModules = [ "dwmac-sophgo" ];
+          sg2002.initrd.availableKernelModules = [
+            "stmmac"
+            "stmmac_platform"
+            "dwmac-sophgo"
+          ];
+          sg2002.initrd.kernelModules = [ "dwmac-sophgo" ];
           boot.initrd.systemd.network.networks."20-eth0" = {
             matchConfig.Name = "eth0";
             networkConfig.DHCP = "yes";
@@ -449,20 +430,6 @@ in
             linkConfig.RequiredForOnline = "no";
           };
 
-          boot.initrd.systemd.storePaths = [ ttygsDebug ];
-          boot.initrd.systemd.services.ttygs-debug = {
-            description = "Dump initrd state to the USB ACM gadget";
-            wantedBy = [ "initrd.target" ];
-            after = [ "usb-gadget.service" ];
-            wants = [ "usb-gadget.service" ];
-            unitConfig.DefaultDependencies = false;
-            serviceConfig = {
-              Type = "simple";
-              ExecStart = ttygsDebug;
-              Restart = "always";
-              RestartSec = "5s";
-            };
-          };
         })
     ];
   })
