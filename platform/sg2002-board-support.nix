@@ -35,7 +35,13 @@
   # disappeared.  Keep this generic systemd fix at the CV181x platform layer:
   # it covers every SG2002 systemd initrd while leaving other architectures
   # and non-initrd switch-root callers untouched.
-  systemdWithOldRootCleanup = pkgs.systemd.overrideAttrs (old: {
+  # The SG2002 cross build has no usable BPF target headers in systemd's
+  # clang invocation (linux/types.h/errno.h are absent), and the board does
+  # not use systemd's optional BPF framework. Disable it for a reproducible
+  # riscv64 cross build while retaining the switch-root cleanup patch.
+  systemdWithOldRootCleanup = (pkgs.systemd.override {
+    withLibBPF = false;
+  }).overrideAttrs (old: {
     patches = (old.patches or []) ++ [
       ../patches/systemd/0001-switch-root-clean-detached-initrd-ramfs.patch
     ];
