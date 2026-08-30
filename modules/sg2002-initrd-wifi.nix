@@ -18,6 +18,11 @@
     if cfg.kernel == "vendor"
     then pkgs.sg2002-aic8800-vendor-for kernelPkg
     else pkgs.sg2002-aic8800-mainline-for kernelPkg;
+  runtimeWpaConf = cfg.wifi.wpaConfRuntimePath;
+  wpaConfPath =
+    if runtimeWpaConf == null
+    then "/etc/wpa_supplicant.conf"
+    else runtimeWpaConf;
 in {
   config = lib.mkMerge [
     {
@@ -25,6 +30,13 @@ in {
         {
           assertion = cfg.wifi.enable;
           message = "initrd-wifi.nix requires sg2002.wifi.enable = true.";
+        }
+        {
+          assertion =
+            runtimeWpaConf == null
+            || (lib.hasPrefix "/run/" runtimeWpaConf
+              && builtins.match "/run/[^/]+" runtimeWpaConf != null);
+          message = "sg2002.wifi.wpaConfRuntimePath must be a direct child of /run.";
         }
       ];
 
@@ -82,7 +94,11 @@ in {
             SurviveFinalKillSignal = true;
           };
           serviceConfig = {
-            ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf -D nl80211";
+            ExecStartPre = lib.optionals (runtimeWpaConf != null) [
+              "${pkgs.busybox}/bin/busybox cp -f /etc/wpa_supplicant.conf ${wpaConfPath}"
+              "${pkgs.busybox}/bin/busybox chmod 0600 ${wpaConfPath}"
+            ];
+            ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c ${wpaConfPath} -D nl80211";
             Restart = "on-failure";
             RestartSec = 5;
           };
@@ -90,7 +106,7 @@ in {
 
         storePaths = [
           "${pkgs.wpa_supplicant}/bin/wpa_supplicant"
-        ];
+        ] ++ lib.optional (runtimeWpaConf != null) pkgs.busybox;
 
         network.networks."40-wlan0" = {
           matchConfig.Name = "wlan0";

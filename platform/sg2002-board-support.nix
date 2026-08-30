@@ -122,6 +122,18 @@ in {
         default = null;
         description = "wpa_supplicant.conf body; null disables the supplicant.";
       };
+      wpaConfRuntimePath = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/run/sg2002-wpa_supplicant.conf";
+        description = ''
+          Optional /run path used by both the initrd and stage-2
+          wpa_supplicant services.  The initrd copies wpaConf there before
+          association and /run survives switch-root.  This permits a USB
+          boot host to replace the initrd copy of wpaConf with a runtime
+          secret while keeping only a harmless placeholder in the Nix store.
+        '';
+      };
     };
 
     authorizedKeys = mkOption {

@@ -12,6 +12,10 @@
   ...
 }: let
   manageStage2 = config.sg2002.wifi.wpaConf != null && !config.networking.wireless.enable;
+  wpaConfPath =
+    if config.sg2002.wifi.wpaConfRuntimePath == null
+    then "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf"
+    else config.sg2002.wifi.wpaConfRuntimePath;
 in {
   # The actual driver/firmware are pulled in by the upstream sg2002
   # module — we just opt-in here.
@@ -45,7 +49,7 @@ in {
       SurviveFinalKillSignal = true;
     };
     serviceConfig = {
-      ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant-wlan0.conf -D nl80211";
+      ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c ${wpaConfPath} -D nl80211";
       Restart = "on-failure";
       RestartSec = 5;
     };
