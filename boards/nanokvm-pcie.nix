@@ -33,9 +33,9 @@
 
   # The SD profile normally keeps its initrd gadget alive across switch-root
   # to avoid a USB management-path interruption.  PCIe has independent wired
-  # Ethernet, while retaining the ramfs leaves about 88 MiB unevictable on a
-  # 256 MiB machine.  Recreate ECM+ACM in stage 2 instead; an explicit normal
-  # assignment can still opt back into preservation for a USB-managed setup.
+  # Ethernet, so let stage 2 own a fresh ECM+ACM gadget instead of making the
+  # USB function the management handoff.  An explicit normal assignment can
+  # still opt back into preservation for a USB-managed setup.
   sg2002.usbGadget.stage2.preserveInitrd = lib.mkOverride 900 false;
 
   # UART1 on the carrier header has never produced usable output on the

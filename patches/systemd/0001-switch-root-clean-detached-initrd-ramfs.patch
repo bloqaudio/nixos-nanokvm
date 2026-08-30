@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NanoKVM lab <nanokvm@example.invalid>
+Date: Sun, 30 Aug 2026 14:00:00 +0200
+Subject: [PATCH] switch-root: clean detached temporary old root after pivot
+
+When switching from a systemd initrd, pivot_root(".", ".") commonly
+succeeds.  The old initramfs root is then detached with umount2(MNT_DETACH),
+but its ramfs superblock remains referenced by open root directory file
+descriptors and can retain every decompressed cpio page as unevictable
+memory.  The success path used to assume pivot+umount was sufficient and
+skipped the temporary-filesystem cleanup performed by the MS_MOVE fallback.
+
+Remove the detached temporary root contents on the successful pivot path as
+well.  rm_rf_children() operates through the root directory fd and stops at
+mount boundaries, so the transferred /dev, /proc, /sys, and /run mounts are
+not recursively removed.
+
+This is intentionally kept as a small upstreamable systemd fix rather than a
+profile service: the switch-root implementation owns the old-root lifetime,
+and all callers benefit when DESTROY_OLD_ROOT is requested.
+
+---
+ src/shared/switch-root.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/shared/switch-root.c b/src/shared/switch-root.c
+--- a/src/shared/switch-root.c
++++ b/src/shared/switch-root.c
+@@ -198,11 +198,24 @@
+                          * it will stop at mount boundaries */
+                         (void) rm_rf_children(TAKE_FD(old_root_fd), 0, &rb); /* takes possession of the dir fd, even on failure */
+                 }
+-        } else
+-                /* NB: we don't bother with emptying the old root superblock here, under the assumption the
+-                 * pivot_root() + umount() sufficiently detached from the superblock to the point we don't
+-                 * need to empty it anymore */
++        } else {
++                /* pivot_root() + umount() detaches the old root mount from the
++                 * namespace, but does not necessarily empty a ramfs/tmpfs
++                 * superblock.  Open root directory fds (including those held
++                 * by the initrd and surviving processes) can keep every
++                 * decompressed initramfs page unevictable.  Use the same
++                 * fd-based cleanup as the MS_MOVE fallback. */
++                if (istmp > 0) {
++                        struct stat rb;
++
++                        if (fstat(old_root_fd, &rb) >= 0)
++                                (void) rm_rf_children(TAKE_FD(old_root_fd), 0, &rb);
++                        else
++                                log_debug_errno(errno, "Failed to stat old root directory after pivot, ignoring: %m");
++                }
++
+                 log_debug("Pivoting root worked.");
++        }
+ 
+         return 0;
+ }

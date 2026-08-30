@@ -28,6 +28,18 @@
     else if cfg.kernel == "vendor"
     then pkgs.sg2002-aic8800-vendor-for kernelPkg
     else pkgs.sg2002-aic8800-mainline-for kernelPkg;
+
+  # systemd's pivot_root success path used to detach the initrd root mount
+  # without emptying its ramfs superblock.  The decompressed cpio then stayed
+  # unevictable (~86 MiB on the SG2002 live image) even though /run/initramfs
+  # disappeared.  Keep this generic systemd fix at the CV181x platform layer:
+  # it covers every SG2002 systemd initrd while leaving other architectures
+  # and non-initrd switch-root callers untouched.
+  systemdWithOldRootCleanup = pkgs.systemd.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [
+      ../patches/systemd/0001-switch-root-clean-detached-initrd-ramfs.patch
+    ];
+  });
 in {
   options.sg2002 = with lib; {
     enable = mkEnableOption "SG2002 / LicheeRV Nano board support";
@@ -188,6 +200,7 @@ in {
       hardware.enableAllHardware = lib.mkForce false;
 
       boot.kernelPackages = pkgs.linuxPackagesFor kernelPkg;
+      systemd.package = lib.mkDefault systemdWithOldRootCleanup;
       system.build.fip = fipPkg;
 
       boot.extraModulePackages = lib.optional (aic8800Pkg != null) aic8800Pkg;
