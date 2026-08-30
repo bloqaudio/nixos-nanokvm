@@ -50,6 +50,20 @@
     ];
   });
 in {
+  # All SG2002 module helpers refer to pkgs.systemd directly (for example
+  # extlinux health checks and USB activation scripts), not only through the
+  # NixOS `systemd.package` option. Override the package set as well so those
+  # helpers cannot pull an unbuildable BPF-enabled cross systemd into the
+  # closure.
+  nixpkgs.overlays = [
+    (final: prev: {
+      systemd = prev.systemd.overrideAttrs (old: {
+        mesonFlags =
+          (lib.filter (flag: !lib.hasPrefix "-Dbpf-framework=" flag) (old.mesonFlags or []))
+          ++ [ "-Dbpf-framework=disabled" ];
+      });
+    })
+  ];
   options.sg2002 = with lib; {
     enable = mkEnableOption "SG2002 / LicheeRV Nano board support";
 
