@@ -254,9 +254,23 @@ let
       name = "media-sophgo-cap-sg2002-csi-capture-buffer-count";
       patch = ./patches/0062-media-sophgo-cap-SG2002-CSI-capture-buffer-count.patch;
     })
+    (patch {
+      name = "media-sophgo-recover-from-sg2002-csi-frame-errors";
+      patch = ./patches/0063-media-sophgo-recover-from-SG2002-CSI-frame-errors.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-recover-from-sg2002-csi-frame-errors" = {
+      origin = "local";
+      upstreamStatus = "local-only";
+      dropWhen = "The upstream capture driver drops recoverable CSI-corrupt frames without failing the VB2 queue";
+      notes = ''
+        Drops a frame affected by recoverable CSI packet errors and retries
+        the same capture buffer.  FIFO overflow remains fatal.  Hardware
+        validation targets repeated GC4653 STREAMOFF/STREAMON transitions.
+      '';
+    };
     "usb-dwc2-cv1800-let-dt-drive-g_dma-host_dma" = {
       origin = "local";
       upstreamStatus = "local-only";

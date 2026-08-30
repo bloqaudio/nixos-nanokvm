@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 30 Aug 2026 21:25:00 +0200
+Subject: [PATCH 0063] media: sophgo: recover from SG2002 CSI frame errors
+
+The GC4653 can emit a malformed packet while its MIPI transmitter settles
+after a rapid power-cycle and mode reload.  The SG2002 driver treated every
+CRC or word-count error as fatal, putting the entire VB2 queue into error and
+tearing down a receiver which had otherwise retained frame synchronization.
+
+Treat packet-level ECC, CRC, header, and word-count events as damage to the
+in-flight frame.  Do not expose that buffer to userspace; leave it active so
+the following complete frame overwrites it, then resume normal completion.
+Keep FIFO overflow fatal because it can lose receiver byte alignment.
+---
+ drivers/media/platform/sophgo/sg2002-capture.c | 27 +++++++++++++++++++++------
+ 1 file changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -60,8 +60,7 @@
+ #define MAC_CSI_IRQ_WC_ERR	BIT(3)
+ #define MAC_CSI_IRQ_FIFO_FULL	BIT(4)
+ #define MAC_CSI_IRQ_ERRORS	GENMASK(4, 0)
+-#define MAC_CSI_IRQ_FATAL	(MAC_CSI_IRQ_CRC_ERR | \
+-				 MAC_CSI_IRQ_WC_ERR | MAC_CSI_IRQ_FIFO_FULL)
++#define MAC_CSI_IRQ_FATAL	MAC_CSI_IRQ_FIFO_FULL
+ #define MAC_CSI_IRQ_RESERVED	GENMASK(7, 5)
+ #define MAC_CSI_VC_MAP		(MAC_CSI_BASE + 0x18)
+ #define MAC_CSI_IRQ_STATUS	(MAC_CSI_BASE + 0x60)
+@@ -226,6 +225,7 @@ struct sg2002_capture {
+ 	bool pipeline_started;
+ 	bool clocks_enabled;
+ 	bool error_pending;
++	bool frame_error;
+ 	bool removing;
+ 	struct work_struct error_work;
+ 
+@@ -577,6 +577,7 @@ static void sg2002_vi_enable(struct sg2002_capture *cap, dma_addr_t addr)
+ 	spin_lock_irqsave(&cap->qlock, flags);
+ 	WRITE_ONCE(cap->streaming, true);
+ 	cap->error_pending = false;
++	cap->frame_error = false;
+ 	spin_unlock_irqrestore(&cap->qlock, flags);
+ 	writel(VI_ISP_FRAME_DONE_FE0_CH0, cap->vi + VI_ISP_INT_EVENT0_EN);
+ 	sg2002_csi_irq_enable(cap, true);
+@@ -747,6 +748,16 @@ static irqreturn_t sg2002_irq(int irq, void *data)
+ 		spin_unlock_irqrestore(&cap->qlock, flags);
+ 		return IRQ_HANDLED;
+ 	}
++	if (cap->frame_error) {
++		/* Keep the damaged buffer private and overwrite it with the next
++		 * frame.  Userspace must never observe packet-corrupt payload. */
++		cap->frame_error = false;
++		sg2002_dma_set_addr(cap, cap->active ? cap->active->dma_addr :
++				    cap->scratch_dma);
++		sg2002_preraw_fe0_trigger(cap);
++		spin_unlock_irqrestore(&cap->qlock, flags);
++		return IRQ_HANDLED;
++	}
+ 	done = cap->active;
+ 	next = sg2002_next_buffer(cap);
+ 	cap->active = next;
+@@ -790,10 +801,15 @@ static irqreturn_t sg2002_csi_irq(int irq, void *data)
+ 		/*
+-		 * A FIFO overrun loses byte alignment, while CRC and word-count
+-		 * failures make the fixed DMA frame geometry untrustworthy. Stop
+-		 * DMA immediately, then do the sleeping source and VB2 teardown in
+-		 * process context.
++		 * A FIFO overrun can lose byte alignment across frames.  Stop DMA,
++		 * then do the sleeping source and VB2 teardown in process context.
+ 		 */
+ 		sg2002_capture_error(cap);
++	} else {
++		unsigned long flags;
++
++		spin_lock_irqsave(&cap->qlock, flags);
++		if (cap->streaming)
++			cap->frame_error = true;
++		spin_unlock_irqrestore(&cap->qlock, flags);
+ 	}
+ 	return IRQ_HANDLED;
+ }
+-- 
+2.54.0
