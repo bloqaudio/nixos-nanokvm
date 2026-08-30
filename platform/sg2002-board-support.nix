@@ -39,9 +39,12 @@
   # clang invocation (linux/types.h/errno.h are absent), and the board does
   # not use systemd's optional BPF framework. Disable it for a reproducible
   # riscv64 cross build while retaining the switch-root cleanup patch.
-  systemdWithOldRootCleanup = (pkgs.systemd.override {
-    withLibBPF = false;
-  }).overrideAttrs (old: {
+  systemdWithOldRootCleanup = pkgs.systemd.overrideAttrs (old: {
+    # Nixpkgs' cross-spliced systemd can re-enable this Meson feature even
+    # when withLibBPF is overridden; force the final flag off explicitly.
+    mesonFlags =
+      (lib.filter (flag: !lib.hasPrefix "-Dbpf-framework=" flag) (old.mesonFlags or []))
+      ++ [ "-Dbpf-framework=disabled" ];
     patches = (old.patches or []) ++ [
       ../patches/systemd/0001-switch-root-clean-detached-initrd-ramfs.patch
     ];
