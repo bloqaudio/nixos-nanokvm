@@ -31,7 +31,9 @@
   # reader, while resetting DWC2 under ttyGS0 can wedge stage-2 sysinit.
   sg2002.usbGadget.initrd.network.enable = true;
   sg2002.usbGadget.stage2.enable = true;
-  sg2002.usbGadget.stage2.preserveInitrd = true;
+  # Boards may prefer to rebuild the gadget in stage 2 when they have an
+  # independent management path and cannot afford to retain the ramfs.
+  sg2002.usbGadget.stage2.preserveInitrd = lib.mkDefault true;
   # A full DWC2 re-probe tears down the active ACM kernel console. On SG2002
   # that teardown can wedge PID 1's console path; a fleet image then correctly
   # stops feeding its systemd-owned hardware watchdog and resets. Wired
