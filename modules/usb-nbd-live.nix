@@ -18,6 +18,9 @@ let
   nbdHost = config.nanokvm.nbdLive.host;
   nbdPort = config.nanokvm.nbdLive.port;
   nbdStaticIface = config.nanokvm.nbdLive.staticIface;
+  # Keep initrd helper binaries on the same systemd package as PID 1. This
+  # matters when a platform supplies a patched switch-root implementation.
+  systemdPackage = config.systemd.package;
 
   # nbd-client-minimal first so its `nbd-client` shadows busybox's stub.
   targetTools = with pkgs; [
@@ -109,7 +112,7 @@ let
 
   runRootNbd = mkTargetScript "nanokvm-run-root-nbd" ''
     pid_file=/run/nanokvm-root-nbd.pid
-    udevadm=${pkgs.systemd}/bin/udevadm
+    udevadm=${systemdPackage}/bin/udevadm
 
     read_live_nbd_pid() {
       [ -r /sys/block/nbd0/pid ] || return 1
@@ -239,7 +242,7 @@ let
     ls=${pkgs.busybox}/bin/ls
     ps=${pkgs.busybox}/bin/ps
     sleep=${pkgs.busybox}/bin/sleep
-    systemctl=${pkgs.systemd}/bin/systemctl
+    systemctl=${systemdPackage}/bin/systemctl
     tr=${pkgs.busybox}/bin/tr
     stage="''${1:-unknown}"
 
@@ -462,7 +465,7 @@ in
         overrideStrategy = "asDropinIfExists";
         serviceConfig.ExecStart = lib.mkForce [
           ""
-          "${pkgs.systemd}/bin/systemctl --no-block start initrd-switch-root.target"
+          "${systemdPackage}/bin/systemctl --no-block start initrd-switch-root.target"
         ];
       };
 

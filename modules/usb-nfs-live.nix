@@ -33,6 +33,10 @@ let
   # make an otherwise-complete handoff look like a 20-second hang. Keep this
   # A/B deliberately narrow: warm only the files ldd reports for systemd
   # itself, never the complete systemd/unit closure.
+  # Use the configured systemd package for every initrd helper as well as
+  # stage 2. Platform overlays (for example the SG2002 old-root cleanup)
+  # replace config.systemd.package; referring to pkgs.systemd here can leave
+  # an unpatched, absent store path in initrd-cleanup.service.
   stage2SystemdPackage = config.systemd.package;
   stage2SystemdMajor = lib.versions.major stage2SystemdPackage.version;
   stage2SystemdPrefetch = pkgs.writeShellScript "nanokvm-prefetch-stage2-systemd" ''
@@ -283,7 +287,7 @@ in
           overrideStrategy = "asDropinIfExists";
           serviceConfig.ExecStart = lib.mkForce [
             ""
-            "${pkgs.systemd}/bin/systemctl --no-block start initrd-switch-root.target"
+            "${stage2SystemdPackage}/bin/systemctl --no-block start initrd-switch-root.target"
           ];
         };
 
