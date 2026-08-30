@@ -194,6 +194,12 @@ in {
               (lib.filter (flag: !lib.hasPrefix "-Dbpf-framework=" flag) (old.mesonFlags or []))
               ++ [ "-Dbpf-framework=disabled" ];
           });
+          # The board uses qemu-img only for the factory/runtime helpers;
+          # retaining its enormous cross-debug source tree is unnecessary on
+          # a 256-MB target and can stall the build during debug-copy.
+          qemu-utils = prev.qemu-utils.overrideAttrs (_old: {
+            separateDebugInfo = false;
+          });
         })
       ];
       assertions = [
