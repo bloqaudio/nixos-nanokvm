@@ -55,7 +55,7 @@ new file mode 100644
 index 000000000..f774dddef
 --- /dev/null
 +++ b/drivers/media/i2c/gc4653.c
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,656 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * GalaxyCore GC4653 4MP RAW10 MIPI CSI-2 sensor driver.
@@ -226,7 +226,7 @@ index 000000000..f774dddef
 +	{ CCI_REG8(0x03fe), 0x10 },
 +	{ CCI_REG8(0x03fe), 0x00 },
 +	{ CCI_REG8(0x000f), 0x00 },
-+	{ CCI_REG8(0x0100), 0x09 },
++	{ CCI_REG8(0x0100), 0x00 },
 +	{ CCI_REG8(0x0080), 0x02 },
 +	{ CCI_REG8(0x0097), 0x0a },
 +	{ CCI_REG8(0x0098), 0x10 },
@@ -504,7 +504,9 @@ index 000000000..f774dddef
 +	if (ret)
 +		goto unlock;
 +
-+	/* The table ends with 0x0100 = 0x09, i.e. streaming starts here. */
++	/* Load the mode table while the sensor remains in standby.  Starting
++	 * before the cached controls are applied can make a large exposure /
++	 * gain transition corrupt the first CSI frame (CRC/word-count). */
 +	ret = cci_multi_reg_write(regmap, gc4653_init_regs,
 +				  ARRAY_SIZE(gc4653_init_regs), NULL);
 +	if (ret) {
@@ -513,16 +515,16 @@ index 000000000..f774dddef
 +	}
 +
 +	gc4653->streaming = true;
-+	mutex_unlock(&gc4653->mutex);
 +
 +	/* Apply cached controls after the vendor mode table is loaded. */
-+	ret = v4l2_ctrl_handler_setup(&gc4653->ctrl_handler);
++	ret = __v4l2_ctrl_handler_setup(&gc4653->ctrl_handler);
++	if (!ret)
++		ret = cci_write(regmap, GC4653_REG_STREAMING, 0x09, NULL);
 +	if (ret) {
-+		mutex_lock(&gc4653->mutex);
 +		gc4653->streaming = false;
 +		gc4653_power_off(gc4653);
-+		mutex_unlock(&gc4653->mutex);
 +	}
++	mutex_unlock(&gc4653->mutex);
 +	return ret;
 +
 +unlock:
