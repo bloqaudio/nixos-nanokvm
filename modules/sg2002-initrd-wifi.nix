@@ -19,6 +19,7 @@
     then pkgs.sg2002-aic8800-vendor-for kernelPkg
     else pkgs.sg2002-aic8800-mainline-for kernelPkg;
   runtimeWpaConf = cfg.wifi.wpaConfRuntimePath;
+  manageInitrd = cfg.wifi.wpaConf != null || runtimeWpaConf != null;
   wpaConfPath =
     if runtimeWpaConf == null
     then "/etc/wpa_supplicant.conf"
@@ -72,9 +73,11 @@ in {
       );
     }
 
-    (lib.mkIf (cfg.wifi.wpaConf != null) {
+    (lib.mkIf manageInitrd {
       boot.initrd.systemd = {
-        contents."/etc/wpa_supplicant.conf".text = cfg.wifi.wpaConf;
+        contents = lib.mkIf (cfg.wifi.wpaConf != null) {
+          "/etc/wpa_supplicant.conf".text = cfg.wifi.wpaConf;
+        };
 
         services."wpa_supplicant-wlan0" = {
           description = "wpa_supplicant on wlan0";
@@ -94,7 +97,7 @@ in {
             SurviveFinalKillSignal = true;
           };
           serviceConfig = {
-            ExecStartPre = lib.optionals (runtimeWpaConf != null) [
+            ExecStartPre = lib.optionals (runtimeWpaConf != null && cfg.wifi.wpaConf != null) [
               "${pkgs.busybox}/bin/busybox cp -f /etc/wpa_supplicant.conf ${wpaConfPath}"
               "${pkgs.busybox}/bin/busybox chmod 0600 ${wpaConfPath}"
             ];

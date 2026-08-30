@@ -19,6 +19,7 @@ protocol: ''
   export nanokvm_port_shell=${toString protocol.ports.debugShell}
   export nanokvm_port_status=${toString protocol.ports.statusSink}
   export nanokvm_port_kexec=${toString protocol.ports.kexecCtrl}
+  export nanokvm_port_wifi_config=${toString protocol.ports.wifiConfig}
   export nanokvm_port_nbd_rootfs=${toString protocol.ports.nbdRootfs}
   export nanokvm_port_nbd_payload=${toString protocol.ports.nbdPayload}
 

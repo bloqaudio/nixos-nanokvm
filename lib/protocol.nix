@@ -21,6 +21,9 @@
     statusSink = 2324;
     # Target listens here for one kexec request per connection.
     kexecCtrl = 2325;
+    # Target listens here for a one-shot runtime WiFi configuration.
+    # The service is opt-in; the USB control link is its trust boundary.
+    wifiConfig = 2326;
     # Default/fallback live-rootfs NBD port. Host runners normally pass
     # a runtime-selected port via nanokvm.nbd_rootfs_port=.
     nbdRootfs = 10809;

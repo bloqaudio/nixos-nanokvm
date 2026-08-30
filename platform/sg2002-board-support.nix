@@ -128,10 +128,11 @@ in {
         example = "/run/sg2002-wpa_supplicant.conf";
         description = ''
           Optional /run path used by both the initrd and stage-2
-          wpa_supplicant services.  The initrd copies wpaConf there before
-          association and /run survives switch-root.  This permits a USB
-          boot host to replace the initrd copy of wpaConf with a runtime
-          secret while keeping only a harmless placeholder in the Nix store.
+          wpa_supplicant services.  When wpaConf is set, the initrd copies it
+          there before association; when wpaConf is null, an earlier initrd
+          service must create the file.  Because /run survives switch-root,
+          a USB boot host can inject a runtime secret without placing it in
+          the Nix store.
         '';
       };
     };

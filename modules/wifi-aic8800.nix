@@ -11,7 +11,9 @@
   pkgs,
   ...
 }: let
-  manageStage2 = config.sg2002.wifi.wpaConf != null && !config.networking.wireless.enable;
+  manageStage2 =
+    (config.sg2002.wifi.wpaConf != null || config.sg2002.wifi.wpaConfRuntimePath != null)
+    && !config.networking.wireless.enable;
   wpaConfPath =
     if config.sg2002.wifi.wpaConfRuntimePath == null
     then "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf"
@@ -33,7 +35,7 @@ in {
   # supplicant in the initrd (before switch-root); a persistent / SD boot
   # that goes straight to stage 2 needs it here too, or wlan0 never
   # associates. Gated on a wpa config being present.
-  environment.etc = lib.mkIf manageStage2 {
+  environment.etc = lib.mkIf (manageStage2 && config.sg2002.wifi.wpaConf != null) {
     "wpa_supplicant/wpa_supplicant-wlan0.conf".text = config.sg2002.wifi.wpaConf;
   };
   systemd.services.wpa_supplicant-wlan0 = lib.mkIf manageStage2 {
