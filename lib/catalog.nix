@@ -406,9 +406,10 @@ in
           sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-eth;
           nanokvm.nfsLive.server = "192.168.23.8";
           # usb-nfs-live intentionally replaces the generic initrd module
-          # list with a small, explicit set.  Include the GMAC glue in that
-          # set as well as stage 2; an enabled ethernet DTB otherwise still
-          # produces no eth0, leaving the root-NFS route wait to time out.
+          # list with a small, explicit set.  The current mainline config
+          # builds this GMAC stack in-kernel, but keep the roots explicit so
+          # the Ethernet profile remains correct if those Kconfig symbols
+          # become modules in a later kernel refresh.
           boot.kernelModules = [ "dwmac-sophgo" ];
           sg2002.initrd.availableKernelModules = [
             "stmmac"
