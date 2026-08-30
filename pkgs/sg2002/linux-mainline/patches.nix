@@ -250,6 +250,10 @@ let
       name = "media-sophgo-allow-double-buffered-sg2002-csi-capture";
       patch = ./patches/0061-media-sophgo-allow-double-buffered-SG2002-CSI-capture.patch;
     })
+    (patch {
+      name = "media-sophgo-cap-sg2002-csi-capture-buffer-count";
+      patch = ./patches/0062-media-sophgo-cap-SG2002-CSI-capture-buffer-count.patch;
+    })
   ];
 
   meta = {
@@ -755,6 +759,17 @@ let
         one active buffer while the second remains queued, and the existing
         scratch buffer absorbs starvation. This keeps the LicheeRV camera's
         capture plus Coda980 state within the proven 32 MiB media pool.
+      '';
+    };
+    "media-sophgo-cap-sg2002-csi-capture-buffer-count" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 CSI capture series before submission";
+      notes = ''
+        Caps REQBUFS and incremental CREATE_BUFS at the proven two-buffer
+        capture queue. Four 2560x1440 RAW10 buffers consume the complete
+        32 MiB private media pool after allocation rounding, leaving no room
+        for the STREAMON scratch buffer and causing a misleading -ENOMEM.
       '';
     };
   };

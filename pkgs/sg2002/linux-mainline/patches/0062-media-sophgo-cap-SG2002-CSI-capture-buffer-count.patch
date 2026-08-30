@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: George Whewell <georgerw@gmail.com>
+Date: Sun, 30 Aug 2026 19:30:00 +0200
+Subject: [PATCH 0062] media: sophgo: cap SG2002 CSI capture buffer count
+
+The SG2002 boards give CSI capture and Coda980 a 32 MiB shared coherent
+pool.  A 2560x1440 packed RAW10 buffer is 5.5 MiB, but the reserved-memory
+allocator rounds it to an 8 MiB order-11 allocation.  Capture also needs an
+8 MiB scratch buffer at STREAMON.  A conventional client requesting four
+MMAP buffers therefore consumes the complete pool before STREAMON and the
+scratch allocation fails with -ENOMEM, even when ordinary RAM and CMA are
+otherwise free.
+
+The DMA engine only needs two capture buffers: one active and one queued,
+with scratch absorbing userspace starvation.  Limit the queue to that
+proven budget.  Account for buffers already present so CREATE_BUFS cannot
+grow the queue past the same limit.  Do this in queue_setup rather than
+vb2_queue.max_num_buffers, since this kernel rejects values below
+VB2_MAX_FRAME during queue initialization.
+
+Signed-off-by: George Whewell <georgerw@gmail.com>
+---
+ drivers/media/platform/sophgo/sg2002-capture.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
+index 2f72a55d1..ec2b4e042 100644
+--- a/drivers/media/platform/sophgo/sg2002-capture.c
++++ b/drivers/media/platform/sophgo/sg2002-capture.c
+@@ -44,6 +44,7 @@
+ #define SG2002_HEIGHT		1080
+ #define SG2002_BYTES_PER_LINE	ALIGN(SG2002_WIDTH * 2, 16)
+ #define SG2002_SIZE_IMAGE	(SG2002_BYTES_PER_LINE * SG2002_HEIGHT)
++#define SG2002_CAPTURE_MAX_BUFFERS	2
+ 
+ /* CSI MAC0 register blocks. */
+ #define MAC_TOP_CTRL		0x000
+@@ -880,7 +881,14 @@ static int sg2002_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
+ 			      struct device *alloc_devs[])
+ {
+ 	struct sg2002_capture *cap = vb2_get_drv_priv(q);
++	unsigned int allocated = vb2_get_num_buffers(q);
+ 
++	/* The private media pool budgets two frame buffers plus scratch. */
++	if (allocated >= SG2002_CAPTURE_MAX_BUFFERS)
++		return -ENOBUFS;
++	*num_buffers = min(*num_buffers,
++			   SG2002_CAPTURE_MAX_BUFFERS - allocated);
++
+ 	if (*num_planes)
+ 		return sizes[0] < cap->sizeimage ? -EINVAL : 0;
+ 
+-- 
+2.54.0
