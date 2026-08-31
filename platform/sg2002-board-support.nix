@@ -260,7 +260,10 @@ in {
       sg2002.initrd.kernelModules = lib.optionals
         (cfg.kernel == "mainline" && cfg.wifi.enable) (
           [ "rfkill" ]
-          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ]
+          # RFCOMM is only consumed by BlueZ after switch-root.  Keep its
+          # module in the pruned initrd closure, but do not perturb the
+          # SDIO/WiFi bring-up order by loading it in stage 1.
+          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ]
           ++ [
             "aic8800_bsp"
             "aic8800_fdrv"

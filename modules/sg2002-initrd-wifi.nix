@@ -57,7 +57,10 @@ in {
         "aic8800_fdrv"
         "aic8800_btlpm"
       ];
-      sg2002.initrd.kernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ] ++ [
+      # RFCOMM is available in the pruned initrd but is needed only by the
+      # stage-2 BlueZ native HFP/HSP backend.  Do not load it during SDIO
+      # WiFi/NFS-root bring-up.
+      sg2002.initrd.kernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ] ++ [
         "aic8800_bsp"
         "aic8800_fdrv"
         "aic8800_btlpm"
