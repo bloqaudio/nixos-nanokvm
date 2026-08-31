@@ -160,6 +160,13 @@ in {
           };
         };
       };
+
+      # The upstream system-wide package units are socket-activated by
+      # default.  That is fine for desktop clients, but leaves a headless
+      # board with neither the ALSA monitor nor BlueZ endpoints registered
+      # until an arbitrary client happens to connect.  Start the native
+      # server at multi-user boot; WirePlumber is already wanted by it.
+      systemd.services.pipewire.wantedBy = [ "multi-user.target" ];
     })
   ];
 }
