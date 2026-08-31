@@ -19,6 +19,7 @@
   lib,
   fetchurl,
   linux_latest,
+  audio ? false,
   bluetooth ? false,
   # nixpkgs re-.override's kernels with `features` / friends; tolerate
   # any extra args callPackage / linuxPackagesFor threads through.
@@ -38,7 +39,22 @@ in
     inherit (source) src version modDirVersion;
     extraMeta.branch = "7.2-rc";
   };
-  structuredExtraConfig = (import ./config.nix {inherit lib;}) // lib.optionalAttrs bluetooth {
+  structuredExtraConfig = (import ./config.nix {inherit lib;})
+    // lib.optionalAttrs audio {
+      # The common Nano carrier DT already describes the internal RXADC on
+      # I2S0 and TXDAC on I2S3 as the sg2002-onboard simple card.  Keep the
+      # complete, lab-proven minimum built in: a diskless initrd must not
+      # depend on broad ALSA codec module discovery.
+      SOUND = lib.kernel.yes;
+      SND = lib.kernel.yes;
+      SND_PCM = lib.kernel.yes;
+      SND_SOC = lib.kernel.yes;
+      SND_SIMPLE_CARD = lib.kernel.yes;
+      SND_SOC_CV1800B_TDM = lib.kernel.yes;
+      SND_SOC_CV1800B_ADC_CODEC = lib.kernel.yes;
+      SND_SOC_CV1800B_DAC_CODEC = lib.kernel.yes;
+    }
+    // lib.optionalAttrs bluetooth {
     # AIC8800 FDRV provides HCI_SDIO itself; the kernel needs only the
     # Bluetooth core and the BR/EDR + LE protocols for BlueZ discovery.
     # BNEP is the kernel data path for BlueZ's Bluetooth PAN profile.

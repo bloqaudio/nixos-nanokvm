@@ -16,7 +16,11 @@
   cfg = config.sg2002;
 
   kernelPkg =
-    if cfg.kernel == "mainline" && cfg.bluetooth.enable
+    if cfg.kernel == "mainline" && cfg.audio.enable && cfg.bluetooth.enable
+    then pkgs.sg2002-kernel-mainline-audio-bluetooth
+    else if cfg.kernel == "mainline" && cfg.audio.enable
+    then pkgs.sg2002-kernel-mainline-audio
+    else if cfg.kernel == "mainline" && cfg.bluetooth.enable
     then pkgs.sg2002-kernel-mainline-bluetooth
     else pkgs."sg2002-kernel-${cfg.kernel}";
   fipPkg =
@@ -54,7 +58,10 @@
     ];
   });
 in {
-  imports = [ ../modules/bluetooth-aic8800.nix ];
+  imports = [
+    ../modules/bluetooth-aic8800.nix
+    ../modules/sg2002-audio.nix
+  ];
 
   options.sg2002 = with lib; {
     enable = mkEnableOption "SG2002 / LicheeRV Nano board support";

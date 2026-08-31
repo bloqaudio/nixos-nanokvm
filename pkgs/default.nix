@@ -326,6 +326,16 @@ in
   sg2002-kernel-mainline-bluetooth = cross.callPackage ./sg2002/linux-mainline {
     bluetooth = true;
   };
+  # The common carrier's onboard RXADC/TXDAC ALSA simple-card path is also
+  # opt-in.  Keep separate variants so a Bluetooth-only consumer does not pay
+  # for sound, while an audio+Bluetooth consumer gets one ABI-consistent tree.
+  sg2002-kernel-mainline-audio = cross.callPackage ./sg2002/linux-mainline {
+    audio = true;
+  };
+  sg2002-kernel-mainline-audio-bluetooth = cross.callPackage ./sg2002/linux-mainline {
+    audio = true;
+    bluetooth = true;
+  };
 
   # Vendor 5.10 tree with NanoKVM extras (NBD, erofs). Built from
   # licheerv-nano-build's vendor kernel tarball; baseExtraConfig is
