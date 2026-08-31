@@ -619,6 +619,10 @@ let
             ssh_ready=1
             break
           fi
+          if cv181x_rom_present; then
+            echo "[usb-boot] target returned to the CV181x BootROM while waiting for SSH" >&2
+            exit 1
+          fi
           sleep 1
         done
         if [ "$ssh_ready" = 1 ]; then

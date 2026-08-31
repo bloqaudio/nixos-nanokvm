@@ -10,7 +10,11 @@
 #     hostShellPrelude = import ./lib/host-prelude.nix protocol;
 #
 # and interpolate `${hostShellPrelude}` at the top of a runner script.
-protocol: ''
+protocol:
+let
+  cv181xRomPresence = import ./cv181x-rom-presence.nix;
+in
+''
   export nanokvm_target_mac=${protocol.targetMac}
   export nanokvm_host_mac=${protocol.hostMac}
   export nanokvm_target_ip=${protocol.targetIp}
@@ -22,6 +26,8 @@ protocol: ''
   export nanokvm_port_wifi_config=${toString protocol.ports.wifiConfig}
   export nanokvm_port_nbd_rootfs=${toString protocol.ports.nbdRootfs}
   export nanokvm_port_nbd_payload=${toString protocol.ports.nbdPayload}
+
+  ${cv181xRomPresence}
 
   as_root() {
     if [ "$(id -u)" -eq 0 ]; then
