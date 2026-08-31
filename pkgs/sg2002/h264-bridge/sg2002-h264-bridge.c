@@ -128,6 +128,14 @@ static uint64_t now_ms(void)
 	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+static uint64_t now_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
 static int write_all(int fd, const void *data, size_t length)
 {
 	const uint8_t *cursor = data;
@@ -446,45 +454,41 @@ static void raw12_level_lut(uint8_t levels[RAW12_MAX_LEVEL + 1],
 }
 
 /* Subsample one aligned 2x2 Bayer cell.  For 2x this is the complete source
- * box; for 4x it is the centred cell in that box.  It is a bounded Bayer
- * demosaic/downsample with four source reads per output pixel, rather than a
- * frame-sized intermediate or a 16-sample 4x box walk. */
+ * box; for 4x it is the centred cell in that box.  raw12_to_nv12() only
+ * calls this with an even/even origin (2x) or odd/odd origin (4x), because
+ * the reduction factor is even and the 4x centre offset is one.  That makes
+ * the Bayer layout known at compile time for every cell:
+ *
+ *   even/even: R G       odd/odd: B G
+ *              G B                 G R
+ *
+ * The old generic loop counted samples and divided by 1/2 after every cell.
+ * It expresses twelve channel-average divisions per 2x2 output group (about
+ * 691,200 per 640x360 frame), despite all the divisors being fixed.  Keep
+ * the exact rounded green average but select the four samples
+ * directly.  This preserves the colour output byte-for-byte while removing
+ * the dominant avoidable CPU work from the RAW camera path. */
 static void raw12_cell_rgb(const uint8_t *src, unsigned int src_stride,
 			   unsigned int sx, unsigned int sy,
 			   const uint8_t levels[RAW12_MAX_LEVEL + 1],
 			   unsigned int *red, unsigned int *green, unsigned int *blue)
 {
-	unsigned int r = 0, g = 0, b = 0;
-	unsigned int rc = 0, gc = 0, bc = 0;
-	unsigned int y, x;
+	const uint8_t *line0 = src + (size_t)sy * src_stride;
+	const uint8_t *line1 = line0 + src_stride;
+	unsigned int p00 = levels[raw12_get(line0, sx)];
+	unsigned int p01 = levels[raw12_get(line0, sx + 1)];
+	unsigned int p10 = levels[raw12_get(line1, sx)];
+	unsigned int p11 = levels[raw12_get(line1, sx + 1)];
 
-	for (y = 0; y < 2; y++) {
-		const uint8_t *line = src + (size_t)(sy + y) * src_stride;
-
-		for (x = 0; x < 2; x++) {
-			unsigned int value = levels[raw12_get(line, sx + x)];
-
-			/* SRGGB: row 0 is R G, row 1 is G B. */
-			switch (((sy + y) & 1) * 2 + ((sx + x) & 1)) {
-			case 0:
-				r += value;
-				rc++;
-				break;
-			case 1:
-			case 2:
-				g += value;
-				gc++;
-				break;
-			default:
-				b += value;
-				bc++;
-				break;
-			}
-		}
+	if ((sx & 1U) == 0) {
+		*red = p00;
+		*green = (p01 + p10 + 1U) >> 1;
+		*blue = p11;
+	} else {
+		*red = p11;
+		*green = (p01 + p10 + 1U) >> 1;
+		*blue = p00;
 	}
-	*red = (r + rc / 2U) / rc;
-	*green = (g + gc / 2U) / gc;
-	*blue = (b + bc / 2U) / bc;
 }
 
 static unsigned int clamp_u8(int value)
@@ -2176,6 +2180,7 @@ struct bridge_options {
 #endif
 	unsigned int bitrate;
 	unsigned int gop;
+	unsigned int max_fps;
 	unsigned int mid_buffers;
 	unsigned int capture_buffers;
 	int half_scale;
@@ -2202,7 +2207,10 @@ static int live_bridge(const struct bridge_options *opts)
 	unsigned int i, free_output = 0, held_capture = UINT32_MAX;
 	unsigned int visible_width, visible_height, coded_height;
 	uint64_t frames = 0, encoded_frames = 0, encoded_bytes = 0;
+	uint64_t skipped_frames = 0;
 	uint64_t start_ms = 0, last_stats_ms = 0, last_stats_frames = 0;
+	uint64_t last_stats_skipped = 0, next_frame_ns = 0;
+	uint64_t frame_interval_ns = 0;
 	int capture_on = 0, encoder_out_on = 0, encoder_cap_on = 0, ret = -1;
 	int use_dmabuf = opts->use_dmabuf;
 	int raw12 = 0, nv21;
@@ -2211,6 +2219,9 @@ static int live_bridge(const struct bridge_options *opts)
 #ifdef ENABLE_PCMA
 	struct audio_source audio = { 0 };
 #endif
+
+	if (opts->max_fps)
+		frame_interval_ns = 1000000000ULL / opts->max_fps;
 
 #ifdef ENABLE_PCMA
 	rtsp_init(&rtsp);
@@ -2495,6 +2506,27 @@ static int live_bridge(const struct bridge_options *opts)
 					encoder_out_fmt.height * 3 / 2;
 			unsigned int source_index = held_capture;
 			unsigned int output_index;
+
+			/* Requeue excess CSI frames before touching their RAW Bayer data.
+			 * Keeping both shallow capture buffers circulating matters more than
+			 * an exact phase: the sensor stays healthy, while max-fps remains a
+			 * ceiling rather than a promise. */
+			if (frame_interval_ns) {
+				uint64_t now = now_ns();
+
+				if (next_frame_ns && now < next_frame_ns) {
+					if (queue_buffer(capture_fd,
+							 V4L2_BUF_TYPE_VIDEO_CAPTURE,
+							 held_capture, 0))
+						goto out_errno;
+					held_capture = UINT32_MAX;
+					skipped_frames++;
+					progress = 1;
+					continue;
+				}
+				next_frame_ns = now + frame_interval_ns;
+			}
+
 			for (output_index = 0; output_index < encoder_out.count;
 			     output_index++)
 				if (!output_queued[output_index])
@@ -2564,15 +2596,17 @@ static int live_bridge(const struct bridge_options *opts)
 			if (now - last_stats_ms >= 5000) {
 				uint64_t delta = now - last_stats_ms;
 				uint64_t df = encoded_frames - last_stats_frames;
+				uint64_t ds = skipped_frames - last_stats_skipped;
 
 				fprintf(stderr, "stats: %.1f fps encoded (%" PRIu64
-					" total, %.1f kB/s)\n",
+					" total, %.1f kB/s, %" PRIu64 " max-fps skips)\n",
 					delta ? (double)df * 1000.0 / (double)delta : 0,
 					encoded_frames,
 					delta ? (double)encoded_bytes / 1024.0 *
-					1000.0 / (double)(now - start_ms) : 0);
+					1000.0 / (double)(now - start_ms) : 0, ds);
 				last_stats_ms = now;
 				last_stats_frames = encoded_frames;
+				last_stats_skipped = skipped_frames;
 			}
 		}
 		if (!progress) {
@@ -2591,8 +2625,9 @@ static int live_bridge(const struct bridge_options *opts)
 		}
 	}
 	fprintf(stderr, "stopped after %" PRIu64 " submitted frames, %" PRIu64
-		" encoded frames, %" PRIu64 " encoded bytes\n",
-		frames, encoded_frames, encoded_bytes);
+		" encoded frames, %" PRIu64 " encoded bytes, %" PRIu64
+		" max-fps skips\n",
+		frames, encoded_frames, encoded_bytes, skipped_frames);
 	ret = 0;
 out_errno:
 	if (ret)
@@ -3190,7 +3225,9 @@ static void usage(const char *program)
 		"  --capture-buffers N  CSI queue depth (default 2 for the camera's\n"
 		"                       shared capture/Coda media-pool budget)\n"
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
-		"  --gop N              encoder GOP size (default 30)\n",
+		"  --gop N              encoder GOP size (default 30)\n"
+		"  --max-fps N          cap CPU conversion/encode rate; requeue excess CSI\n"
+		"                       frames before conversion (default unlimited)\n",
 		program, program, program);
 #ifdef ENABLE_PCMA
 	fputs("  --audio-pcma DEVICE  opt-in ALSA capture: 48 kHz stereo S16_LE to\n"
@@ -3213,6 +3250,7 @@ int main(int argc, char **argv)
 #endif
 		.bitrate = 4000000,
 		.gop = 30,
+		.max_fps = 0,
 		.mid_buffers = SCALER_MID_BUFFERS,
 		.capture_buffers = CAPTURE_BUFFERS,
 		.half_scale = 0,
@@ -3296,6 +3334,10 @@ int main(int argc, char **argv)
 		} else if (!strcmp(arg, "--gop") && i + 1 < argc) {
 			if (parse_u32(argv[++i], &opts.gop))
 				goto bad_usage;
+		} else if (!strcmp(arg, "--max-fps") && i + 1 < argc) {
+			if (parse_u32(argv[++i], &opts.max_fps) ||
+			    opts.max_fps == 0 || opts.max_fps > 120)
+				goto bad_usage;
 		} else if (arg[0] != '-' && positional == 0) {
 			opts.capture_path = arg;
 			positional++;
@@ -3326,6 +3368,10 @@ int main(int argc, char **argv)
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGINT, &action, NULL) ||
 	    sigaction(SIGTERM, &action, NULL))
 		return EXIT_FAILURE;
+	if (opts.use_vpss && opts.max_fps) {
+		fprintf(stderr, "--max-fps is not supported with --scaler vpss\n");
+		goto bad_usage;
+	}
 	if (opts.use_vpss)
 		return live_bridge_vpss(&opts) ? EXIT_FAILURE : EXIT_SUCCESS;
 	return live_bridge(&opts) ? EXIT_FAILURE : EXIT_SUCCESS;
