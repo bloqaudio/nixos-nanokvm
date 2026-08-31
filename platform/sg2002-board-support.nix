@@ -16,7 +16,10 @@
 }: let
   cfg = config.sg2002;
 
-  kernelPkg = pkgs."sg2002-kernel-${cfg.kernel}";
+  kernelPkg =
+    if cfg.kernel == "mainline" && cfg.bluetooth.enable
+    then pkgs.sg2002-kernel-mainline-bluetooth
+    else pkgs."sg2002-kernel-${cfg.kernel}";
   fipPkg =
     if cfg.uboot == "mainline"
     then pkgs.sg2002-fip-mainline-uboot
@@ -27,6 +30,8 @@
     then null
     else if cfg.kernel == "vendor"
     then pkgs.sg2002-aic8800-vendor-for kernelPkg
+    else if cfg.bluetooth.enable
+    then pkgs.sg2002-aic8800-mainline-bluetooth-for kernelPkg
     else pkgs.sg2002-aic8800-mainline-for kernelPkg;
 
   # systemd's pivot_root success path used to detach the initrd root mount
@@ -50,6 +55,8 @@
     ];
   });
 in {
+  imports = [ ../modules/bluetooth-aic8800.nix ];
+
   options.sg2002 = with lib; {
     enable = mkEnableOption "SG2002 / LicheeRV Nano board support";
 
@@ -248,6 +255,7 @@ in {
       boot.extraModulePackages = lib.optional (aic8800Pkg != null) aic8800Pkg;
       boot.kernelModules =
         lib.optional (cfg.kernel == "mainline" && cfg.wifi.enable) "rfkill"
+        ++ lib.optional cfg.bluetooth.enable "bluetooth"
         ++ lib.optionals (aic8800Pkg != null) [
           "aic8800_bsp"
           "aic8800_fdrv"
@@ -258,19 +266,25 @@ in {
       # carry and load the WiFi stack itself; otherwise /dev/rfkill and wlan0
       # never appear and the hardened wpa_supplicant unit cannot start.
       sg2002.initrd.availableKernelModules = lib.optionals
-        (cfg.kernel == "mainline" && cfg.wifi.enable) [
-          "rfkill"
-          "aic8800_bsp"
-          "aic8800_fdrv"
-          "aic8800_btlpm"
-        ];
+        (cfg.kernel == "mainline" && cfg.wifi.enable) (
+          [ "rfkill" ]
+          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" ]
+          ++ [
+            "aic8800_bsp"
+            "aic8800_fdrv"
+            "aic8800_btlpm"
+          ]
+        );
       sg2002.initrd.kernelModules = lib.optionals
-        (cfg.kernel == "mainline" && cfg.wifi.enable) [
-          "rfkill"
-          "aic8800_bsp"
-          "aic8800_fdrv"
-          "aic8800_btlpm"
-        ];
+        (cfg.kernel == "mainline" && cfg.wifi.enable) (
+          [ "rfkill" ]
+          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" ]
+          ++ [
+            "aic8800_bsp"
+            "aic8800_fdrv"
+            "aic8800_btlpm"
+          ]
+        );
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
 
       # The aicbsp driver opens /lib/firmware/... directly via

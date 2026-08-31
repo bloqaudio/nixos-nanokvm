@@ -320,6 +320,12 @@ in
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
   sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline { };
+  # Keep the normal mainline kernel's Bluetooth stack disabled.  The AIC
+  # HCI transport is experimental on this board, so only its explicit
+  # consumer pays for bluetooth.ko and its protocol dependencies.
+  sg2002-kernel-mainline-bluetooth = cross.callPackage ./sg2002/linux-mainline {
+    bluetooth = true;
+  };
 
   # Vendor 5.10 tree with NanoKVM extras (NBD, erofs). Built from
   # licheerv-nano-build's vendor kernel tarball; baseExtraConfig is
@@ -391,6 +397,15 @@ in
     };
   sg2002-aic8800-mainline-for = kernel:
     cross.callPackage ./sg2002/aic8800-mainline {
+      inherit kernel;
+      src = inputs.aic8800-radxa;
+      firmware = final.sg2002-aic8800-firmware;
+    };
+  # Separate derivation so WiFi-only consumers retain their byte-for-byte
+  # existing module configuration.  This one turns on the vendor's shared
+  # SDIO HCI transport in both BSP and FDRV.
+  sg2002-aic8800-mainline-bluetooth-for = kernel:
+    cross.callPackage ./sg2002/aic8800-mainline/bluetooth.nix {
       inherit kernel;
       src = inputs.aic8800-radxa;
       firmware = final.sg2002-aic8800-firmware;

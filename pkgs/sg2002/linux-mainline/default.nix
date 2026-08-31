@@ -19,6 +19,7 @@
   lib,
   fetchurl,
   linux_latest,
+  bluetooth ? false,
   # nixpkgs re-.override's kernels with `features` / friends; tolerate
   # any extra args callPackage / linuxPackagesFor threads through.
   ...
@@ -37,7 +38,13 @@ in
     inherit (source) src version modDirVersion;
     extraMeta.branch = "7.2-rc";
   };
-  structuredExtraConfig = import ./config.nix {inherit lib;};
+  structuredExtraConfig = (import ./config.nix {inherit lib;}) // lib.optionalAttrs bluetooth {
+    # AIC8800 FDRV provides HCI_SDIO itself; the kernel needs only the
+    # Bluetooth core and the BR/EDR + LE protocols for BlueZ discovery.
+    BT = lib.kernel.module;
+    BT_BREDR = lib.kernel.yes;
+    BT_LE = lib.kernel.yes;
+  };
   kernelPatches = (import ./patches.nix).patches;
   # Let olddefconfig drop options whose dependencies are unavailable.
   ignoreConfigErrors = true;

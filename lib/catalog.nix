@@ -749,6 +749,27 @@ in
     ];
   })
 
+  # Bluetooth is an explicit PicoClaw experiment, never an implicit change
+  # to the WiFi-root artifact.  It uses the AIC8800's shared SDIO mailbox;
+  # keep USB debug and the known-good WiFi/NFS transport unchanged.
+  (picoclaw "mainline" [ "live" "wifi-bluetooth" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-wifi-bluetooth-picoclaw-mainline";
+    mixins = [
+      ../modules/sg2002-initrd-wifi.nix
+      ../modules/wifi-aic8800.nix
+    ];
+    modules = [
+      ({ lib, rootWpaConf ? null, ... }: {
+        sg2002.bluetooth.enable = true;
+        sg2002.wifi.wpaConf = lib.mkDefault rootWpaConf;
+        nanokvm.nfsLive.server = "192.168.23.8";
+        sg2002.watchdogKeeper.healthHost = "192.168.23.8";
+      })
+    ];
+  })
+
   # PicoClaw LCD sibling of the WiFi-root fallback. USB still performs the
   # stateless ROM/FIP/FIT handoff and exposes its control gadget, but the
   # AIC8800 carries NFS and SSH so a wedged dwc2 bulk-OUT path cannot take

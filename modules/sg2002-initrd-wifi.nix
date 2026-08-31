@@ -13,10 +13,15 @@
 }: let
   cfg = config.sg2002;
 
-  kernelPkg = pkgs."sg2002-kernel-${cfg.kernel}";
+  kernelPkg =
+    if cfg.kernel == "mainline" && cfg.bluetooth.enable
+    then pkgs.sg2002-kernel-mainline-bluetooth
+    else pkgs."sg2002-kernel-${cfg.kernel}";
   aic8800Pkg =
     if cfg.kernel == "vendor"
     then pkgs.sg2002-aic8800-vendor-for kernelPkg
+    else if cfg.bluetooth.enable
+    then pkgs.sg2002-aic8800-mainline-bluetooth-for kernelPkg
     else pkgs.sg2002-aic8800-mainline-for kernelPkg;
   runtimeWpaConf = cfg.wifi.wpaConfRuntimePath;
   manageInitrd = cfg.wifi.wpaConf != null || runtimeWpaConf != null;
@@ -43,12 +48,12 @@ in {
 
       boot.extraModulePackages = [aic8800Pkg];
       sg2002.initrd.pruneKernelModules = true;
-      sg2002.initrd.availableKernelModules = [
+      sg2002.initrd.availableKernelModules = lib.optional cfg.bluetooth.enable "bluetooth" ++ [
         "aic8800_bsp"
         "aic8800_fdrv"
         "aic8800_btlpm"
       ];
-      sg2002.initrd.kernelModules = [
+      sg2002.initrd.kernelModules = lib.optional cfg.bluetooth.enable "bluetooth" ++ [
         "aic8800_bsp"
         "aic8800_fdrv"
         "aic8800_btlpm"
