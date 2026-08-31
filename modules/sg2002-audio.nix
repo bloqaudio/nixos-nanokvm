@@ -180,9 +180,11 @@ in {
       # server at multi-user boot; WirePlumber is already wanted by it.
       systemd.services.pipewire.wantedBy = [ "multi-user.target" ];
 
-      # On the Nano carrier BlueZ is brought in by the AIC HCI uevent.  Make
-      # the system session manager wait for that service, so it registers
-      # audio endpoints rather than observing a transient absent system bus.
+      # Start BlueZ at multi-user boot as well as from the AIC HCI uevent.
+      # Then make the session manager wait for it, so WirePlumber registers
+      # audio endpoints against a running system BlueZ service rather than a
+      # transient absent system bus. PipeWire itself stays independent.
+      systemd.services.bluetooth.wantedBy = [ "multi-user.target" ];
       systemd.services.wireplumber = {
         after = [ "bluetooth.service" ];
         wants = [ "bluetooth.service" ];
