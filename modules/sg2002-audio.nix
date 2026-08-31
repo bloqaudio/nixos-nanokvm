@@ -148,6 +148,18 @@ in {
           enable = true;
           package = minimalWireplumber;
           extraConfig."10-sg2002-bluez" = {
+            # The generic ACP policy prefers the output-only fallback profile
+            # (priority 5100).  This simple-card has independent DAC and ADC
+            # PCMs, so select its `pro-audio` profile explicitly and expose
+            # both at every boot without a desktop UCM database.
+            "monitor.alsa.rules" = [
+              {
+                matches = [
+                  { "device.name" = "alsa_card.platform-sound"; }
+                ];
+                actions."update-props"."device.profile" = "pro-audio";
+              }
+            ];
             "monitor.bluez.properties" = {
               # SBC is mandatory A2DP and avoids optional AAC/LDAC codec
               # closures.  A2DP source carries board mic media to a receiver;
@@ -167,6 +179,14 @@ in {
       # until an arbitrary client happens to connect.  Start the native
       # server at multi-user boot; WirePlumber is already wanted by it.
       systemd.services.pipewire.wantedBy = [ "multi-user.target" ];
+
+      # On the Nano carrier BlueZ is brought in by the AIC HCI uevent.  Make
+      # the system session manager wait for that service, so it registers
+      # audio endpoints rather than observing a transient absent system bus.
+      systemd.services.wireplumber = {
+        after = [ "bluetooth.service" ];
+        wants = [ "bluetooth.service" ];
+      };
     })
   ];
 }
