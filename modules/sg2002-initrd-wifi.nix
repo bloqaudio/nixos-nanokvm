@@ -3,8 +3,8 @@
 # Requires `sg2002.wifi.enable = true` and, for association,
 # `sg2002.wifi.wpaConf`.
 #
-# Pair this with an initrd boot style (includes/usb-recovery.nix or
-# similar). For stage-2 wifi use includes/stage2-wifi.nix instead.
+# Pair this with an initrd boot profile such as profiles/usb-nfs-live.nix.
+# modules/wifi-aic8800.nix owns the corresponding stage-2 service.
 {
   config,
   lib,

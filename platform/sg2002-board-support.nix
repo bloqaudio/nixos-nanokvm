@@ -1,8 +1,7 @@
-# The sg2002 common module: hardware-level options (kernel choice,
-# wifi chip, ssh keys, tuning) and their unconditional config. Boot
-# style is NOT an option here — it's expressed by importing a file
-# from modules/includes/ (extlinux.nix, vendor-fit.nix, usb-recovery.nix,
-# usb-live.nix, sd-image.nix, stage2-wifi.nix).
+# The SG2002 common module: hardware-level options (kernel choice, WiFi,
+# SSH keys, and tuning) and their unconditional config. Boot style is
+# expressed by importing one of the modules/profiles rather than by an option
+# here (for example profiles/usb-nfs-live.nix or profiles/sd-image-mainline.nix).
 #
 # Expected overlay state: `pkgs.sg2002-kernel-*`, `pkgs.sg2002-dtb-*`,
 # `pkgs.sg2002-fip-*`, `pkgs.sg2002-boot-fit`, and
@@ -78,7 +77,7 @@ in {
       default = "mainline";
       description = ''
         Which Linux kernel to build and boot:
-          - mainline: nixpkgs `linux_latest` (7.x) + 9 SG2002 patches.
+          - mainline: nixpkgs `linux_latest` (7.x) + the local SG2002 patch stack.
           - vendor:   Sipeed's 5.10 tree. Requires vendor-fit boot;
             incompatible with extlinux / usb-live / zram / erofs.
 
@@ -148,30 +147,6 @@ in {
       type = types.listOf types.str;
       default = [];
       description = "SSH public keys baked into root's ~/.ssh/authorized_keys.";
-    };
-
-    recoveryHostKey = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = ''
-        Operator-supplied ed25519 SSH host private key for the USB-
-        recovery initrd. Required when importing
-        `modules/includes/usb-recovery.nix`. Generate once with:
-
-            ssh-keygen -t ed25519 -N "" -f ./recovery_host_ed25519_key
-
-        flake.nix picks the file up from the repo root if present.
-        Same gitignore caveat as ./authorized_keys: pure flake builds
-        skip untracked files — either `git add -f` it or build with
-        `--impure` for the recovery FIT targets.
-
-        Note: the key is baked into the initrd at build time and
-        therefore lands in /nix/store on the build host. Secrecy from
-        store readers isn't achievable for this artifact (the initrd
-        is shipped to the device anyway); the point of using an
-        operator-supplied key — instead of build-time `ssh-keygen` —
-        is a stable fingerprint across rebuilds and shared caches.
-      '';
     };
 
     tuning.enable =
