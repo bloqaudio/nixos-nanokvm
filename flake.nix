@@ -585,7 +585,9 @@
             nbd-client-minimal
             sg2002-fip-mainline-fastboot
             sg2002-fip-mainline-picoclaw-splash
+            sg2002-alsa-kernel-test
             sg2002-h264-bridge
+            sg2002-h264-bridge-pcma
             sg2002-kernel-mainline
             sg2002-usb-boot
             sg2002-usb-boot-picoclaw-splash

@@ -382,6 +382,12 @@ in
 
   picoclaw-lcd-test = final.callPackage ./sg2002/picoclaw-lcd-test { };
   sg2002-h264-bridge = final.callPackage ./sg2002/h264-bridge { };
+  # Separate test derivation: the shared source enables ALSA/PCMA only here;
+  # the normal bridge has neither an ALSA header nor a library dependency.
+  sg2002-h264-bridge-pcma = final.callPackage ./sg2002/h264-bridge {
+    enablePcma = true;
+  };
+  sg2002-alsa-kernel-test = final.callPackage ./sg2002/alsa-kernel-test { };
 
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;

@@ -34,6 +34,10 @@
  */
 
 #define _GNU_SOURCE
+#ifdef ENABLE_PCMA
+#include <alsa/asoundlib.h>
+#include <pthread.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -74,6 +78,16 @@
 
 #define RTP_MTU 1400
 #define RTP_PT 96
+#ifdef ENABLE_PCMA
+#define RTP_VIDEO_PT RTP_PT
+#define RTP_AUDIO_PT 8
+#define AUDIO_INPUT_RATE 48000U
+#define AUDIO_INPUT_CHANNELS 2U
+#define AUDIO_OUTPUT_RATE 8000U
+#define AUDIO_OUTPUT_SAMPLES 160U /* 20 ms at 8 kHz */
+#define AUDIO_INPUT_CHUNK 1024U
+#define AUDIO_DRAIN_BUDGET 16U
+#endif
 #define RTSP_RECONNECT_MS 2000
 
 static volatile sig_atomic_t stop_requested;
@@ -1034,8 +1048,20 @@ static void base64_encode(const uint8_t *in, size_t len, char *out)
 }
 
 /* ------------------------------------------------------------------ */
-/* Minimal RTSP publisher (TCP interleaved, H.264 RTP packetization)   */
+/* Minimal RTSP publisher (TCP interleaved, H.264 RTP packetization).
+ * PCMA is compiled in only for the explicit camera test derivation; keeping
+ * the normal bridge's RTSP path below unchanged makes its video behaviour and
+ * closure independent of ALSA. */
 /* ------------------------------------------------------------------ */
+
+#ifdef ENABLE_PCMA
+struct rtp_track {
+	uint8_t channel;
+	uint8_t payload_type;
+	uint16_t sequence;
+	uint32_t ssrc;
+};
+#endif
 
 struct rtsp_sink {
 	char url[160];
@@ -1043,8 +1069,16 @@ struct rtsp_sink {
 	char path[81];
 	uint16_t port;
 	int fd;              /* -1 when disconnected */
+#ifdef ENABLE_PCMA
+	struct rtp_track video;
+	struct rtp_track audio;
+	int audio_enabled;
+	uint32_t audio_epoch;
+	uint64_t audio_epoch_timestamp;
+#else
 	uint16_t rtp_seq;
 	uint32_t rtp_ssrc;
+#endif
 	uint32_t cseq;
 	uint64_t next_retry_ms;
 	/* Stashed parameter sets for the SDP offer. */
@@ -1054,6 +1088,64 @@ struct rtsp_sink {
 	size_t pps_len;
 	int have_params;
 };
+
+#ifdef ENABLE_PCMA
+static void rtsp_init(struct rtsp_sink *sink)
+{
+	memset(sink, 0, sizeof(*sink));
+	sink->fd = -1;
+	sink->video.channel = 0;
+	sink->video.payload_type = RTP_VIDEO_PT;
+	sink->video.ssrc = 0x53324732; /* "S2G2" */
+	sink->audio.channel = 2;
+	sink->audio.payload_type = RTP_AUDIO_PT;
+	sink->audio.ssrc = 0x53324733; /* "S2G3" */
+}
+
+static uint64_t monotonic_ticks(unsigned int rate)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * rate +
+		(uint64_t)ts.tv_nsec * rate / 1000000000ULL;
+}
+
+static int rtsp_make_sdp(const struct rtsp_sink *sink, const char *sps_b64,
+			 const char *pps_b64, char *sdp, size_t sdp_size)
+{
+	int len;
+
+	if (sink->audio_enabled)
+		len = snprintf(sdp, sdp_size,
+		"v=0\r\n"
+		"o=- 0 0 IN IP4 127.0.0.1\r\n"
+		"s=sg2002-kvm\r\n"
+		"c=IN IP4 0.0.0.0\r\n"
+		"t=0 0\r\n"
+		"m=video 0 RTP/AVP/TCP 96\r\n"
+		"a=rtpmap:96 H264/90000\r\n"
+		"a=fmtp:96 packetization-mode=1;sprop-parameter-sets=%s,%s\r\n"
+		"a=control:trackID=0\r\n"
+		"m=audio 0 RTP/AVP/TCP 8\r\n"
+		"a=rtpmap:8 PCMA/8000/1\r\n"
+		"a=control:trackID=1\r\n",
+		sps_b64, pps_b64);
+	else
+		len = snprintf(sdp, sdp_size,
+		"v=0\r\n"
+		"o=- 0 0 IN IP4 127.0.0.1\r\n"
+		"s=sg2002-kvm\r\n"
+		"c=IN IP4 0.0.0.0\r\n"
+		"t=0 0\r\n"
+		"m=video 0 RTP/AVP/TCP 96\r\n"
+		"a=rtpmap:96 H264/90000\r\n"
+		"a=fmtp:96 packetization-mode=1;sprop-parameter-sets=%s,%s\r\n"
+		"a=control:trackID=0\r\n",
+		sps_b64, pps_b64);
+	return len < 0 || (size_t)len >= sdp_size ? -1 : 0;
+}
+#endif
 
 static int rtsp_parse_url(struct rtsp_sink *sink, const char *url)
 {
@@ -1191,6 +1283,28 @@ static void rtsp_close(struct rtsp_sink *sink)
 	sink->next_retry_ms = now_ms() + RTSP_RECONNECT_MS;
 }
 
+#ifdef ENABLE_PCMA
+static int rtsp_setup_track(struct rtsp_sink *sink, const char *track_name,
+			    const char *session_in, char *session_out,
+			    size_t session_size, uint8_t channel)
+{
+	char track_url[sizeof(sink->url) + 16];
+	char request[640];
+	int len;
+
+	snprintf(track_url, sizeof(track_url), "%s/%s", sink->url, track_name);
+	len = snprintf(request, sizeof(request),
+		       "SETUP %s RTSP/1.0\r\nCSeq: %u\r\n"
+		       "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u;mode=record\r\n%s\r\n",
+		       track_url, ++sink->cseq, channel, (unsigned int)channel + 1,
+		       session_in ? session_in : "");
+	if (len < 0 || (size_t)len >= sizeof(request) ||
+	    write_all(sink->fd, request, (size_t)len))
+		return -1;
+	return rtsp_read_reply(sink->fd, session_out, session_size);
+}
+#endif
+
 static int rtsp_connect(struct rtsp_sink *sink)
 {
 	char port_text[8];
@@ -1199,7 +1313,12 @@ static int rtsp_connect(struct rtsp_sink *sink)
 		.ai_socktype = SOCK_STREAM,
 	};
 	struct addrinfo *result = NULL, *it;
-	char sps_b64[384], pps_b64[384], sdp[1200];
+	char sps_b64[384], pps_b64[384];
+#ifdef ENABLE_PCMA
+	char sdp[1600], session[80];
+#else
+	char sdp[1200];
+#endif
 	int status = -1;
 
 	if (!sink->have_params)
@@ -1222,6 +1341,10 @@ static int rtsp_connect(struct rtsp_sink *sink)
 
 	base64_encode(sink->sps, sink->sps_len, sps_b64);
 	base64_encode(sink->pps, sink->pps_len, pps_b64);
+#ifdef ENABLE_PCMA
+	if (rtsp_make_sdp(sink, sps_b64, pps_b64, sdp, sizeof(sdp)))
+		goto fail;
+#else
 	snprintf(sdp, sizeof(sdp),
 		 "v=0\r\n"
 		 "o=- 0 0 IN IP4 127.0.0.1\r\n"
@@ -1233,11 +1356,45 @@ static int rtsp_connect(struct rtsp_sink *sink)
 		 "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=%s,%s\r\n"
 		 "a=control:track1\r\n",
 		 sps_b64, pps_b64);
+#endif
 
 	sink->cseq = 0;
 	status = rtsp_request(sink, "ANNOUNCE", NULL, sdp);
 	if (status != 200)
 		goto fail;
+#ifdef ENABLE_PCMA
+	status = rtsp_setup_track(sink, "trackID=0", NULL, session,
+				  sizeof(session), sink->video.channel);
+	if (status != 200 || !session[0])
+		goto fail;
+	if (sink->audio_enabled) {
+		char session_header[112];
+
+		snprintf(session_header, sizeof(session_header), "Session: %s\r\n", session);
+		status = rtsp_setup_track(sink, "trackID=1", session_header, NULL, 0,
+					  sink->audio.channel);
+		if (status != 200)
+			goto fail;
+	}
+	{
+		char request[512];
+		int len = snprintf(request, sizeof(request),
+			"RECORD %s RTSP/1.0\r\nCSeq: %u\r\n"
+			"Session: %s\r\nRange: npt=0.000-\r\n\r\n",
+			sink->url, ++sink->cseq, session);
+
+		if (len < 0 || (size_t)len >= sizeof(request) ||
+		    write_all(sink->fd, request, (size_t)len))
+			goto fail;
+		status = rtsp_read_reply(sink->fd, NULL, 0);
+		if (status != 200)
+			goto fail;
+	}
+	if (sink->audio_enabled) {
+		sink->audio_epoch_timestamp = monotonic_ticks(AUDIO_OUTPUT_RATE);
+		sink->audio_epoch++;
+	}
+#else
 	{
 		char track_url[sizeof(sink->url) + 16];
 		char request[512];
@@ -1266,6 +1423,7 @@ static int rtsp_connect(struct rtsp_sink *sink)
 		if (status != 200)
 			goto fail;
 	}
+#endif
 	fprintf(stderr, "rtsp: publishing to %s\n", sink->url);
 	return 0;
 fail:
@@ -1274,9 +1432,96 @@ fail:
 }
 
 /* RTP-send one access unit (Annex-B).  90 kHz clock. */
+#ifdef ENABLE_PCMA
+static void rtp_make_headers(const struct rtp_track *track, uint32_t timestamp,
+			     int marker, uint8_t rtp[12], uint8_t interleaved[4],
+			     size_t payload_length)
+{
+	uint32_t total = 12U + (uint32_t)payload_length;
+
+	rtp[0] = 0x80;
+	rtp[1] = (uint8_t)(track->payload_type | (marker ? 0x80 : 0));
+	rtp[2] = (uint8_t)(track->sequence >> 8);
+	rtp[3] = (uint8_t)track->sequence;
+	rtp[4] = (uint8_t)(timestamp >> 24);
+	rtp[5] = (uint8_t)(timestamp >> 16);
+	rtp[6] = (uint8_t)(timestamp >> 8);
+	rtp[7] = (uint8_t)timestamp;
+	rtp[8] = (uint8_t)(track->ssrc >> 24);
+	rtp[9] = (uint8_t)(track->ssrc >> 16);
+	rtp[10] = (uint8_t)(track->ssrc >> 8);
+	rtp[11] = (uint8_t)track->ssrc;
+	interleaved[0] = '$';
+	interleaved[1] = track->channel;
+	interleaved[2] = (uint8_t)(total >> 8);
+	interleaved[3] = (uint8_t)total;
+}
+
+static int rtsp_send_rtp(struct rtsp_sink *sink, struct rtp_track *track,
+			 const uint8_t *payload, size_t length, uint32_t timestamp,
+			 int marker)
+{
+	uint8_t packet[12 + RTP_MTU];
+	uint8_t frame[4];
+
+	if (length > RTP_MTU)
+		return -1;
+	rtp_make_headers(track, timestamp, marker, packet, frame, length);
+	memcpy(packet + 12, payload, length);
+	if (write_all(sink->fd, frame, sizeof(frame)) ||
+	    write_all(sink->fd, packet, 12 + length))
+		return -1;
+	track->sequence++;
+	return 0;
+}
+#endif
+
 static int rtsp_send_au(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 			uint64_t pts_ms)
 {
+#ifdef ENABLE_PCMA
+	struct nal_view nals[32];
+	unsigned int count, n;
+	uint32_t timestamp = (uint32_t)(pts_ms * 90);
+
+	count = annexb_split(buf, size, nals, 32);
+	if (!count)
+		return 0;
+	for (n = 0; n < count; n++) {
+		const uint8_t *nal = nals[n].data;
+		size_t left = nals[n].size;
+		int last_nal = n == count - 1;
+
+		if (left <= RTP_MTU) {
+			if (rtsp_send_rtp(sink, &sink->video, nal, left, timestamp,
+					  last_nal))
+				return -1;
+		} else {
+			uint8_t fu_header = (uint8_t)(nal[0] & 0xe0);
+			uint8_t nal_type = (uint8_t)(nal[0] & 0x1f);
+			size_t offset = 1;
+
+			while (offset < left) {
+				size_t chunk = left - offset;
+				uint8_t payload[2 + RTP_MTU];
+				int end;
+
+				if (chunk > RTP_MTU - 2U)
+					chunk = RTP_MTU - 2U;
+				end = offset + chunk >= left;
+				payload[0] = fu_header | 28;
+				payload[1] = (uint8_t)((offset == 1 ? 0x80 : 0) |
+						       (end ? 0x40 : 0) | nal_type);
+				memcpy(payload + 2, nal + offset, chunk);
+				if (rtsp_send_rtp(sink, &sink->video, payload, 2 + chunk,
+						  timestamp, last_nal && end))
+					return -1;
+				offset += chunk;
+			}
+		}
+	}
+	return 0;
+#else
 	struct nal_view nals[32];
 	unsigned int count, n;
 	uint32_t timestamp = (uint32_t)(pts_ms * 90);
@@ -1365,6 +1610,7 @@ static int rtsp_send_au(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 		}
 	}
 	return 0;
+#endif
 }
 
 /* Feed one coded access unit to the RTSP sink; handles (re)connect and
@@ -1408,6 +1654,513 @@ static void rtsp_offer(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 	}
 }
 
+#ifdef ENABLE_PCMA
+/* The opt-in onboard card is stereo S16_LE at 48 kHz.  PCMA is fixed at
+ * 8 kHz mono; deterministic six-frame averaging yields 160 samples/20 ms. */
+#define AUDIO_RING_PACKETS 128U /* 2.56 s maximum at 20 ms/packet */
+
+struct audio_packet {
+	uint8_t data[AUDIO_OUTPUT_SAMPLES];
+	uint64_t sequence;
+};
+
+/* The capture thread owns ALSA and the resampler.  The V4L2/main thread owns
+ * RTSP, so no two threads can interleave an RTSP `$` frame write. */
+struct audio_source {
+	snd_pcm_t *pcm;
+	pthread_t thread;
+	pthread_mutex_t lock;
+	int lock_ready;
+	int thread_started;
+	int stop;
+	int failed;
+	int64_t sum;
+	unsigned int sum_count;
+	uint8_t packet[AUDIO_OUTPUT_SAMPLES];
+	unsigned int packet_length;
+	struct audio_packet ring[AUDIO_RING_PACKETS];
+	unsigned int ring_head;
+	unsigned int ring_tail;
+	unsigned int ring_count;
+	unsigned int ring_highwater;
+	int marker_next;
+	uint32_t seen_epoch;
+	uint64_t next_timestamp;
+	uint64_t epoch_packet_sequence;
+	uint64_t packet_sequence_next;
+	uint64_t read_frames;
+	uint64_t recover_count;
+	uint64_t packet_count;
+	uint64_t sent_count;
+	uint64_t ring_drops;
+	uint64_t disconnect_drops;
+	uint64_t last_report_ms;
+	uint64_t input_samples;
+	uint64_t input_sumabs;
+	int16_t input_min;
+	int16_t input_max;
+};
+
+static uint8_t linear_to_alaw(int16_t sample)
+{
+	static const int segment_end[] = {
+		0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff,
+	};
+	int pcm = sample >> 3;
+	int mask = pcm >= 0 ? 0xd5 : 0x55;
+	int segment;
+
+	if (pcm < 0)
+		pcm = -pcm - 1;
+	for (segment = 0; segment < 8; segment++)
+		if (pcm <= segment_end[segment])
+			break;
+	if (segment >= 8)
+		return (uint8_t)(0x7f ^ mask);
+	return (uint8_t)(((segment << 4) |
+		(segment < 2 ? ((pcm >> 1) & 0x0f) :
+		 ((pcm >> segment) & 0x0f))) ^ mask);
+}
+
+static int audio_resample_frame(struct audio_source *source, int16_t left,
+				int16_t right, int16_t *output)
+{
+	source->sum += ((int32_t)left + right) / 2;
+	source->sum_count++;
+	if (source->sum_count != 6U)
+		return 0;
+	*output = (int16_t)(source->sum / 6);
+	source->sum = 0;
+	source->sum_count = 0;
+	return 1;
+}
+
+static int audio_should_stop(struct audio_source *source)
+{
+	int stop;
+
+	pthread_mutex_lock(&source->lock);
+	stop = source->stop;
+	pthread_mutex_unlock(&source->lock);
+	return stop;
+}
+
+static void audio_fail(struct audio_source *source)
+{
+	pthread_mutex_lock(&source->lock);
+	source->failed = 1;
+	pthread_mutex_unlock(&source->lock);
+}
+
+static void audio_enqueue(struct audio_source *source, const uint8_t *packet,
+			  uint64_t sequence)
+{
+	pthread_mutex_lock(&source->lock);
+	if (source->ring_count == AUDIO_RING_PACKETS) {
+		/* Keep presentation latency bounded: discard the oldest 20 ms. */
+		source->ring_tail = (source->ring_tail + 1U) % AUDIO_RING_PACKETS;
+		source->ring_count--;
+		source->ring_drops++;
+	}
+	memcpy(source->ring[source->ring_head].data, packet, AUDIO_OUTPUT_SAMPLES);
+	source->ring[source->ring_head].sequence = sequence;
+	source->ring_head = (source->ring_head + 1U) % AUDIO_RING_PACKETS;
+	source->ring_count++;
+	if (source->ring_count > source->ring_highwater)
+		source->ring_highwater = source->ring_count;
+	source->packet_count++;
+	pthread_mutex_unlock(&source->lock);
+}
+
+static void audio_observe_block(struct audio_source *source, int16_t minimum,
+				int16_t maximum, uint64_t samples, uint64_t sumabs)
+{
+	pthread_mutex_lock(&source->lock);
+	if (minimum < source->input_min)
+		source->input_min = minimum;
+	if (maximum > source->input_max)
+		source->input_max = maximum;
+	source->input_samples += samples;
+	source->input_sumabs += sumabs;
+	pthread_mutex_unlock(&source->lock);
+}
+
+static void *audio_capture_thread(void *opaque)
+{
+	struct audio_source *source = opaque;
+	int16_t input[AUDIO_INPUT_CHUNK * AUDIO_INPUT_CHANNELS];
+
+	while (!stop_requested && !audio_should_stop(source)) {
+		snd_pcm_sframes_t frames = snd_pcm_readi(source->pcm, input,
+							AUDIO_INPUT_CHUNK);
+		unsigned int frame;
+		int16_t minimum = INT16_MAX;
+		int16_t maximum = INT16_MIN;
+		uint64_t sumabs = 0;
+
+		if (frames < 0) {
+			int err = snd_pcm_recover(source->pcm, (int)frames, 1);
+
+			pthread_mutex_lock(&source->lock);
+			source->recover_count++;
+			pthread_mutex_unlock(&source->lock);
+			if (err < 0) {
+				fprintf(stderr, "audio: capture recovery failed: %s\n",
+					snd_strerror(err));
+				audio_fail(source);
+				break;
+			}
+			/* readi() starts a prepared capture implicitly, as in the lab probe. */
+			continue;
+		}
+		if (!frames)
+			continue;
+		for (frame = 0; frame < (unsigned int)frames; frame++) {
+			int16_t left = input[frame * 2U];
+			int16_t right = input[frame * 2U + 1U];
+			int16_t averaged;
+			int32_t left_abs = left < 0 ? -(int32_t)left : left;
+			int32_t right_abs = right < 0 ? -(int32_t)right : right;
+
+			if (left < minimum)
+				minimum = left;
+			if (right < minimum)
+				minimum = right;
+			if (left > maximum)
+				maximum = left;
+			if (right > maximum)
+				maximum = right;
+			sumabs += (uint32_t)left_abs + (uint32_t)right_abs;
+			if (!audio_resample_frame(source, left, right, &averaged))
+				continue;
+			source->packet[source->packet_length++] = linear_to_alaw(averaged);
+			if (source->packet_length == AUDIO_OUTPUT_SAMPLES) {
+				audio_enqueue(source, source->packet,
+					source->packet_sequence_next++);
+				source->packet_length = 0;
+			}
+		}
+		pthread_mutex_lock(&source->lock);
+		source->read_frames += (uint64_t)frames;
+		pthread_mutex_unlock(&source->lock);
+		audio_observe_block(source, minimum, maximum,
+			(uint64_t)frames * AUDIO_INPUT_CHANNELS, sumabs);
+	}
+	return NULL;
+}
+
+static int audio_open(struct audio_source *source, const char *device)
+{
+	snd_pcm_hw_params_t *params;
+	unsigned int rate = AUDIO_INPUT_RATE;
+	int direction = 0;
+	snd_pcm_uframes_t period = AUDIO_INPUT_CHUNK;
+	/* The software RAW12 conversion takes about one 9 fps video interval.
+	 * Keep enough PCM behind it to drain at the next visit without an XRUN. */
+	snd_pcm_uframes_t buffer = 32768U;
+	int err;
+
+	memset(source, 0, sizeof(*source));
+	source->input_min = INT16_MAX;
+	source->input_max = INT16_MIN;
+	err = snd_pcm_open(&source->pcm, device, SND_PCM_STREAM_CAPTURE, 0);
+	if (err < 0) {
+		fprintf(stderr, "audio: cannot open %s: %s\n", device, snd_strerror(err));
+		return -1;
+	}
+	snd_pcm_hw_params_alloca(&params);
+	if ((err = snd_pcm_hw_params_any(source->pcm, params)) < 0 ||
+	    (err = snd_pcm_hw_params_set_access(source->pcm, params,
+					 SND_PCM_ACCESS_RW_INTERLEAVED)) < 0 ||
+	    (err = snd_pcm_hw_params_set_format(source->pcm, params,
+				  SND_PCM_FORMAT_S16_LE)) < 0 ||
+	    (err = snd_pcm_hw_params_set_channels(source->pcm, params,
+				    AUDIO_INPUT_CHANNELS)) < 0 ||
+	    (err = snd_pcm_hw_params_set_rate_near(source->pcm, params, &rate,
+					     &direction)) < 0 ||
+	    (err = snd_pcm_hw_params_set_period_size_near(source->pcm, params,
+					    &period, &direction)) < 0 ||
+	    (err = snd_pcm_hw_params_set_buffer_size_near(source->pcm, params,
+					    &buffer)) < 0 ||
+	    (err = snd_pcm_hw_params(source->pcm, params)) < 0) {
+		fprintf(stderr, "audio: cannot configure %s: %s\n", device, snd_strerror(err));
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	if (rate != AUDIO_INPUT_RATE) {
+		fprintf(stderr, "audio: %s negotiated %u Hz, need %u Hz\n", device,
+			rate, AUDIO_INPUT_RATE);
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	if (snd_pcm_hw_params_get_period_size(params, &period, &direction) < 0 ||
+	    snd_pcm_hw_params_get_buffer_size(params, &buffer) < 0) {
+		fprintf(stderr, "audio: cannot read negotiated capture geometry\n");
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	err = snd_pcm_prepare(source->pcm);
+	if (err < 0) {
+		fprintf(stderr, "audio: cannot prepare %s: %s\n", device, snd_strerror(err));
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	if (pthread_mutex_init(&source->lock, NULL)) {
+		fprintf(stderr, "audio: cannot initialize capture lock\n");
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	source->lock_ready = 1;
+	if (pthread_create(&source->thread, NULL, audio_capture_thread, source)) {
+		fprintf(stderr, "audio: cannot start capture thread\n");
+		pthread_mutex_destroy(&source->lock);
+		source->lock_ready = 0;
+		snd_pcm_close(source->pcm);
+		source->pcm = NULL;
+		return -1;
+	}
+	source->thread_started = 1;
+	fprintf(stderr, "audio: capture %s, %u Hz stereo S16_LE period=%lu buffer=%lu -> PCMA 8 kHz mono\n",
+		device, rate, (unsigned long)period, (unsigned long)buffer);
+	return 0;
+}
+
+static void audio_close(struct audio_source *source)
+{
+	if (source->lock_ready) {
+		pthread_mutex_lock(&source->lock);
+		source->stop = 1;
+		pthread_mutex_unlock(&source->lock);
+	}
+	/* Wake a capture read promptly; the thread notices stop before enqueueing. */
+	if (source->pcm)
+		snd_pcm_drop(source->pcm);
+	if (source->thread_started)
+		pthread_join(source->thread, NULL);
+	if (source->pcm)
+		snd_pcm_close(source->pcm);
+	source->pcm = NULL;
+	if (source->lock_ready)
+		pthread_mutex_destroy(&source->lock);
+	source->lock_ready = 0;
+}
+
+/* Returns one when a packet was removed, zero when the ring is empty. */
+static int audio_pop(struct audio_source *source, struct audio_packet *packet,
+			     int *failed)
+{
+	int have_packet;
+
+	pthread_mutex_lock(&source->lock);
+	*failed = source->failed;
+	have_packet = source->ring_count != 0;
+	if (have_packet) {
+		memcpy(packet->data, source->ring[source->ring_tail].data,
+			AUDIO_OUTPUT_SAMPLES);
+		packet->sequence = source->ring[source->ring_tail].sequence;
+		source->ring_tail = (source->ring_tail + 1U) % AUDIO_RING_PACKETS;
+		source->ring_count--;
+	}
+	pthread_mutex_unlock(&source->lock);
+	return have_packet;
+}
+
+static void audio_reset_epoch(struct audio_source *source,
+			      const struct rtsp_sink *sink, uint64_t packet_sequence)
+{
+	if (source->seen_epoch == sink->audio_epoch)
+		return;
+	source->marker_next = 1;
+	source->seen_epoch = sink->audio_epoch;
+	source->next_timestamp = sink->audio_epoch_timestamp;
+	source->epoch_packet_sequence = packet_sequence;
+}
+
+static uint64_t audio_discard_disconnected(struct audio_source *source,
+					   uint64_t first_packet, int *failed)
+{
+	uint64_t dropped;
+
+	pthread_mutex_lock(&source->lock);
+	*failed = source->failed;
+	dropped = source->ring_count + first_packet;
+	source->ring_tail = source->ring_head;
+	source->ring_count = 0;
+	source->disconnect_drops += dropped;
+	pthread_mutex_unlock(&source->lock);
+	return dropped;
+}
+
+static void audio_report(struct audio_source *source)
+{
+	uint64_t now = now_ms();
+	uint64_t read_frames, recover_count, packet_count, sent_count, ring_drops;
+	uint64_t disconnect_drops;
+	uint64_t input_samples, input_sumabs;
+	unsigned int ring_count, ring_highwater;
+	int16_t input_min, input_max;
+
+	if (now - source->last_report_ms < 5000U)
+		return;
+	source->last_report_ms = now;
+	pthread_mutex_lock(&source->lock);
+	read_frames = source->read_frames;
+	recover_count = source->recover_count;
+	packet_count = source->packet_count;
+	sent_count = source->sent_count;
+	ring_drops = source->ring_drops;
+	disconnect_drops = source->disconnect_drops;
+	ring_count = source->ring_count;
+	ring_highwater = source->ring_highwater;
+	input_samples = source->input_samples;
+	input_sumabs = source->input_sumabs;
+	input_min = source->input_min;
+	input_max = source->input_max;
+	source->input_samples = 0;
+	source->input_sumabs = 0;
+	source->input_min = INT16_MAX;
+	source->input_max = INT16_MIN;
+	pthread_mutex_unlock(&source->lock);
+	fprintf(stderr,
+		"audio: frames=%" PRIu64 " recover=%" PRIu64
+		" packets=%" PRIu64 " sent=%" PRIu64
+		" queue=%u highwater=%u overflow_drops=%" PRIu64
+		" disconnect_drops=%" PRIu64
+		" pcm_samples=%" PRIu64 " pcm_min=%d pcm_max=%d pcm_mean_abs=%" PRIu64 "\n",
+		read_frames, recover_count, packet_count, sent_count,
+		ring_count, ring_highwater, ring_drops, disconnect_drops, input_samples, input_min,
+		input_max, input_samples ? input_sumabs / input_samples : 0);
+}
+
+static int audio_drain(struct audio_source *source, struct rtsp_sink *sink)
+{
+	unsigned int budget;
+
+	if (sink->fd < 0) {
+		int failed;
+		uint64_t dropped = audio_discard_disconnected(source, 0, &failed);
+
+		if (dropped)
+			fprintf(stderr, "audio: discarded %" PRIu64 " stale packets while disconnected\n",
+				dropped);
+		audio_report(source);
+		return failed ? -1 : 0;
+	}
+	for (budget = 0; budget < AUDIO_DRAIN_BUDGET; budget++) {
+		struct audio_packet packet;
+		int failed;
+		uint64_t timestamp;
+
+		if (!audio_pop(source, &packet, &failed)) {
+			if (failed)
+				return -1;
+			audio_report(source);
+			return 0;
+		}
+		audio_reset_epoch(source, sink, packet.sequence);
+		timestamp = source->next_timestamp +
+			(packet.sequence - source->epoch_packet_sequence) * AUDIO_OUTPUT_SAMPLES;
+		if (rtsp_send_rtp(sink, &sink->audio, packet.data,
+				  AUDIO_OUTPUT_SAMPLES,
+				  (uint32_t)timestamp, source->marker_next)) {
+			fprintf(stderr, "rtsp: audio send failed, will retry\n");
+			rtsp_close(sink);
+			audio_discard_disconnected(source, 1, &failed);
+			return failed ? -1 : 0;
+		}
+		pthread_mutex_lock(&source->lock);
+		source->sent_count++;
+		pthread_mutex_unlock(&source->lock);
+		source->marker_next = 0;
+	}
+	audio_report(source);
+	return 0;
+}
+
+static int pcma_selftest(void)
+{
+	struct rtsp_sink sink;
+	struct rtp_track track = { .channel = 2, .payload_type = RTP_AUDIO_PT,
+		.sequence = 0x1234, .ssrc = 0x01234567 };
+	struct audio_source source = { 0 };
+	struct audio_source ring = { 0 };
+	struct audio_packet packet;
+	uint8_t rtp[12], frame[4];
+	char sdp[1024];
+	int16_t averaged = 0;
+	unsigned int i;
+	int failed;
+
+	if (linear_to_alaw(0) != 0xd5 || linear_to_alaw(100) != 0xd3 ||
+	    linear_to_alaw(-100) != 0x53 || linear_to_alaw(1000) != 0xfa ||
+	    linear_to_alaw(-1000) != 0x7a || linear_to_alaw(248) != 0xda ||
+	    linear_to_alaw(256) != 0xc5 || linear_to_alaw(504) != 0xca ||
+	    linear_to_alaw(512) != 0xf5)
+		return -1;
+	for (i = 0; i < 5; i++)
+		if (audio_resample_frame(&source, 300, -100, &averaged))
+			return -1;
+	if (!audio_resample_frame(&source, 300, -100, &averaged) || averaged != 100)
+		return -1;
+	rtp_make_headers(&track, 0x89abcdef, 1, rtp, frame, AUDIO_OUTPUT_SAMPLES);
+	if (memcmp(rtp, (const uint8_t[]){ 0x80, 0x88, 0x12, 0x34,
+			0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67 }, 12) ||
+	    memcmp(frame, (const uint8_t[]){ '$', 2, 0, 172 }, 4))
+		return -1;
+	rtsp_init(&sink);
+	/* PCMA build without --audio-pcma is intentionally video-only. */
+	if (rtsp_make_sdp(&sink, "AQ==", "Ag==", sdp, sizeof(sdp)) ||
+	    strstr(sdp, "m=audio") || !strstr(sdp, "a=control:trackID=0\r\n"))
+		return -1;
+	sink.audio_enabled = 1;
+	if (rtsp_make_sdp(&sink, "AQ==", "Ag==", sdp, sizeof(sdp)) ||
+	    !strstr(sdp, "m=audio 0 RTP/AVP/TCP 8\r\n") ||
+	    !strstr(sdp, "a=control:trackID=1\r\n"))
+		return -1;
+	if (pthread_mutex_init(&ring.lock, NULL))
+		return -1;
+	ring.lock_ready = 1;
+	for (i = 0; i <= AUDIO_RING_PACKETS; i++) {
+		memset(packet.data, (int)i, sizeof(packet.data));
+		audio_enqueue(&ring, packet.data, i);
+	}
+	if (ring.ring_count != AUDIO_RING_PACKETS || ring.ring_drops != 1 ||
+	    ring.ring[ring.ring_tail].sequence != 1)
+		goto fail_ring;
+	for (i = 1; i <= AUDIO_DRAIN_BUDGET; i++) {
+		if (!audio_pop(&ring, &packet, &failed) || failed || packet.sequence != i)
+			goto fail_ring;
+	}
+	if (ring.ring_count != AUDIO_RING_PACKETS - AUDIO_DRAIN_BUDGET ||
+	    audio_discard_disconnected(&ring, 0, &failed) !=
+		AUDIO_RING_PACKETS - AUDIO_DRAIN_BUDGET || ring.disconnect_drops !=
+		AUDIO_RING_PACKETS - AUDIO_DRAIN_BUDGET || failed)
+		goto fail_ring;
+	ring.failed = 1;
+	sink.fd = -1;
+	if (audio_drain(&ring, &sink) != -1)
+		goto fail_ring;
+	sink.audio_epoch = 7;
+	sink.audio_epoch_timestamp = 1000;
+	audio_reset_epoch(&ring, &sink, 11);
+	if (ring.epoch_packet_sequence != 11 || ring.next_timestamp != 1000 ||
+	    ring.next_timestamp + (14 - ring.epoch_packet_sequence) *
+		AUDIO_OUTPUT_SAMPLES != 1480)
+		goto fail_ring;
+	pthread_mutex_destroy(&ring.lock);
+	fprintf(stderr, "pcma selftest: ok\n");
+	return 0;
+fail_ring:
+	pthread_mutex_destroy(&ring.lock);
+	return -1;
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Live bridge                                                         */
 /* ------------------------------------------------------------------ */
@@ -1418,6 +2171,9 @@ struct bridge_options {
 	const char *scaler_path;
 	const char *output_path;
 	const char *rtsp_url;
+#ifdef ENABLE_PCMA
+	const char *audio_pcma_device;
+#endif
 	unsigned int bitrate;
 	unsigned int gop;
 	unsigned int mid_buffers;
@@ -1452,14 +2208,24 @@ static int live_bridge(const struct bridge_options *opts)
 	int raw12 = 0, nv21;
 	uint32_t encoder_input_format;
 	struct rtsp_sink rtsp;
+#ifdef ENABLE_PCMA
+	struct audio_source audio = { 0 };
+#endif
 
+#ifdef ENABLE_PCMA
+	rtsp_init(&rtsp);
+	rtsp.audio_enabled = opts->audio_pcma_device != NULL;
+#else
 	memset(&rtsp, 0, sizeof(rtsp));
 	rtsp.fd = -1;
+#endif
 	if (opts->rtsp_url && rtsp_parse_url(&rtsp, opts->rtsp_url)) {
 		fprintf(stderr, "bad rtsp url: %s\n", opts->rtsp_url);
 		return -1;
 	}
+#ifndef ENABLE_PCMA
 	rtsp.rtp_ssrc = 0x53324732; /* "S2G2" */
+#endif
 
 	capture_fd = open(opts->capture_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (capture_fd < 0) {
@@ -1646,6 +2412,10 @@ static int live_bridge(const struct bridge_options *opts)
 	if (stream(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, 1))
 		goto out_errno;
 	capture_on = 1;
+#ifdef ENABLE_PCMA
+	if (opts->audio_pcma_device && audio_open(&audio, opts->audio_pcma_device))
+		goto out;
+#endif
 	fprintf(stderr, "bridge %s (%ux%u stride %u) -> %s %s (%ux%u stride %u) io=%s bitrate=%u gop=%u\n",
 		opts->capture_path, capture_fmt.width, capture_fmt.height,
 		capture_fmt.bytesperline, opts->encoder_path,
@@ -1659,6 +2429,10 @@ static int live_bridge(const struct bridge_options *opts)
 		struct v4l2_buffer buffer;
 		int progress = 0;
 
+#ifdef ENABLE_PCMA
+		if (audio.pcm && audio_drain(&audio, &rtsp))
+			goto out;
+#endif
 		/* Drain encoded CAPTURE buffers and forward to the sinks. */
 		for (;;) {
 			uint64_t pts_ms;
@@ -1806,7 +2580,13 @@ static int live_bridge(const struct bridge_options *opts)
 				{ .fd = capture_fd, .events = POLLIN },
 				{ .fd = encoder_fd, .events = POLLIN | POLLOUT },
 			};
-			if (poll(fds, 2, 1000) < 0 && errno != EINTR)
+			if (poll(fds, 2,
+#ifdef ENABLE_PCMA
+				 audio.pcm ? 20 : 1000
+#else
+				 1000
+#endif
+				 ) < 0 && errno != EINTR)
 				goto out_errno;
 		}
 	}
@@ -1828,6 +2608,9 @@ out:
 	unmap_queue(&encoder_out);
 	unmap_queue(&capture_queue);
 	free(output_queued);
+#ifdef ENABLE_PCMA
+	audio_close(&audio);
+#endif
 	rtsp_close(&rtsp);
 	if (heap_fd >= 0)
 		close(heap_fd);
@@ -1873,14 +2656,24 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	int capture_on = 0, encoder_out_on = 0, encoder_cap_on = 0;
 	int scaler_out_on = 0, scaler_cap_on = 0, ret = -1;
 	struct rtsp_sink rtsp;
+#ifdef ENABLE_PCMA
+	struct audio_source audio = { 0 };
+#endif
 
+#ifdef ENABLE_PCMA
+	rtsp_init(&rtsp);
+	rtsp.audio_enabled = opts->audio_pcma_device != NULL;
+#else
 	memset(&rtsp, 0, sizeof(rtsp));
 	rtsp.fd = -1;
+#endif
 	if (opts->rtsp_url && rtsp_parse_url(&rtsp, opts->rtsp_url)) {
 		fprintf(stderr, "bad rtsp url: %s\n", opts->rtsp_url);
 		return -1;
 	}
+#ifndef ENABLE_PCMA
 	rtsp.rtp_ssrc = 0x53324732; /* "S2G2" */
+#endif
 
 	capture_fd = open(opts->capture_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (capture_fd < 0) {
@@ -2132,6 +2925,10 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 		goto out_errno;
 	capture_on = 1;
 	fprintf(stderr, "init: capture streaming\n");
+#ifdef ENABLE_PCMA
+	if (opts->audio_pcma_device && audio_open(&audio, opts->audio_pcma_device))
+		goto out;
+#endif
 
 	/* Scaler OUTPUT imports the capture buffers 1:1 by index. */
 	init_step = "scaler OUTPUT REQBUFS";
@@ -2171,6 +2968,10 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 		struct v4l2_buffer buffer;
 		int progress = 0;
 
+#ifdef ENABLE_PCMA
+		if (audio.pcm && audio_drain(&audio, &rtsp))
+			goto out;
+#endif
 		/* Drain encoded CAPTURE buffers and forward to the sinks. */
 		for (;;) {
 			uint64_t pts_ms;
@@ -2309,7 +3110,13 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 				{ .fd = scaler_fd, .events = POLLIN | POLLOUT },
 				{ .fd = encoder_fd, .events = POLLIN | POLLOUT },
 			};
-			if (poll(fds, 3, 1000) < 0 && errno != EINTR)
+			if (poll(fds, 3,
+#ifdef ENABLE_PCMA
+				 audio.pcm ? 20 : 1000
+#else
+				 1000
+#endif
+				 ) < 0 && errno != EINTR)
 				goto out_errno;
 		}
 	}
@@ -2341,6 +3148,9 @@ out:
 		free(cap_fds);
 	}
 	free(mid_state);
+#ifdef ENABLE_PCMA
+	audio_close(&audio);
+#endif
 	rtsp_close(&rtsp);
 	if (heap_fd >= 0)
 		close(heap_fd);
@@ -2382,6 +3192,12 @@ static void usage(const char *program)
 		"  --bitrate N          encoder bitrate bit/s (default 4000000)\n"
 		"  --gop N              encoder GOP size (default 30)\n",
 		program, program, program);
+#ifdef ENABLE_PCMA
+	fputs("  --audio-pcma DEVICE  opt-in ALSA capture: 48 kHz stereo S16_LE to\n"
+	      "                       PCMA/8 kHz mono RTP (requires --rtsp)\n"
+	      "  --selftest-pcma      exercise SDP, RTP headers, A-law, and resampling\n",
+	      stderr);
+#endif
 }
 
 int main(int argc, char **argv)
@@ -2392,6 +3208,9 @@ int main(int argc, char **argv)
 		.scaler_path = DEFAULT_SCALER,
 		.output_path = NULL,
 		.rtsp_url = NULL,
+#ifdef ENABLE_PCMA
+		.audio_pcma_device = NULL,
+#endif
 		.bitrate = 4000000,
 		.gop = 30,
 		.mid_buffers = SCALER_MID_BUFFERS,
@@ -2407,6 +3226,10 @@ int main(int argc, char **argv)
 	int i;
 	int positional = 0;
 
+#ifdef ENABLE_PCMA
+	if (argc == 2 && !strcmp(argv[1], "--selftest-pcma"))
+		return pcma_selftest() ? EXIT_FAILURE : EXIT_SUCCESS;
+#endif
 	if (argc >= 2 && !strcmp(argv[1], "--raw")) {
 		if (argc != 7 || (strcmp(argv[2], "nv12") && strcmp(argv[2], "nv21") &&
 			   strcmp(argv[2], "srggb12")) ||
@@ -2428,6 +3251,10 @@ int main(int argc, char **argv)
 			opts.output_path = argv[++i];
 		else if (!strcmp(arg, "--rtsp") && i + 1 < argc)
 			opts.rtsp_url = argv[++i];
+#ifdef ENABLE_PCMA
+		else if (!strcmp(arg, "--audio-pcma") && i + 1 < argc)
+			opts.audio_pcma_device = argv[++i];
+#endif
 		else if (!strcmp(arg, "--size") && i + 1 < argc) {
 			if (strcmp(argv[++i], "half") == 0)
 				opts.half_scale = 1;
@@ -2490,6 +3317,12 @@ int main(int argc, char **argv)
 		fprintf(stderr, "nothing to do: pass --output and/or --rtsp\n");
 		goto bad_usage;
 	}
+#ifdef ENABLE_PCMA
+	if (opts.audio_pcma_device && !opts.rtsp_url) {
+		fprintf(stderr, "--audio-pcma requires --rtsp\n");
+		goto bad_usage;
+	}
+#endif
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGINT, &action, NULL) ||
 	    sigaction(SIGTERM, &action, NULL))
 		return EXIT_FAILURE;

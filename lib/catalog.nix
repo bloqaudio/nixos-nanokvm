@@ -513,6 +513,61 @@ in
     ];
   })
 
+  # Explicitly separate audio laboratory image.  It selects the shared,
+  # opt-in onboard ALSA kernel but neither installs a service nor publishes
+  # RTSP: an operator must manually select a private lab URL and run the
+  # PCMA bridge.  Production camera artifacts remain video-only.
+  (lichee "mainline" [ "live" "eth-nfs-cam-pcma-test" ] {
+    profile = "usb-nfs-live";
+    artifact = "nfs-live";
+    tag = "live-eth-nfs-cam-pcma-test-mainline";
+    artifactArgs.usbConsole = false;
+    artifactArgs.extraBootargs = [
+      "systemd.getty_auto=no"
+      "udev.children_max=2"
+    ];
+    mixins = [ ../modules/sg2002-coda.nix ../modules/sg2002-camera.nix ];
+    modules = [
+      ({ pkgs, ... }: {
+        sg2002 = {
+          fdt = pkgs.sg2002-dtb-mainline-cam;
+          audio.enable = true;
+          watchdogKeeper.healthHost = "192.168.23.8";
+        };
+        nanokvm.nfsLive = {
+          server = "192.168.23.8";
+          prefetchStage2Systemd = true;
+        };
+        environment.systemPackages = [
+          pkgs.sg2002-h264-bridge-pcma
+          pkgs.sg2002-alsa-kernel-test
+        ];
+
+        boot.initrd.systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          # Stage 2 must renew the same lease that initrd obtained.  Without
+          # an explicit MAC client ID the two networkd instances used distinct
+          # identifiers and the DHCP server assigned two eth0 addresses.
+          dhcpV4Config.ClientIdentifier = "mac";
+          linkConfig.RequiredForOnline = "no";
+        };
+        systemd.network.networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = {
+            DHCP = "yes";
+            KeepConfiguration = "dynamic";
+          };
+          dhcpV4Config.ClientIdentifier = "mac";
+          linkConfig.RequiredForOnline = "no";
+        };
+      })
+    ];
+  })
+
   # ===== nanokvm-pcie / mainline / NFS over ethernet =====
   # The cleanest data path of all: the PCIe carrier's RJ45. eth0 does
   # DHCP in the initrd (dwmac-sophgo), the root-nfs service mounts
