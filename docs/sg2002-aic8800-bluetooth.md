@@ -51,9 +51,13 @@ bluetoothctl --timeout 20 scan on
 ```
 
 Expected evidence is an unblocked Bluetooth rfkill entry, `hci0` with
-`Bus: SDIO`, and `bluetoothd` running.  If there is no `hci0`, retain the
-`dmesg` output and do not retry by loading a UART HCI driver: this board's
-implemented path is the AIC SDIO mailbox.
+`Bus: SDIO`, and `bluetoothd` running.  The Bluetooth-only package changes the
+vendor btlpm default from soft-blocked to unblocked so that BlueZ AutoEnable
+can power the controller; `rfkill unblock bluetooth` remains the manual
+recovery command if a user blocks it later.  It also compiles out the vendor's
+per-HCI-frame `aic_btsdio` info spam, retaining error and lifecycle logging.
+If there is no `hci0`, retain the `dmesg` output and do not retry by loading a
+UART HCI driver: this board's implemented path is the AIC SDIO mailbox.
 
 ## Reset recovery
 
