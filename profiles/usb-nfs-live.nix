@@ -107,10 +107,9 @@
     kexec.enable = false;
   };
 
-  # Numeric-address NFS and SSH do not need these background daemons. Avoid
-  # pulling their executables through the slow root link during bring-up.
-  services.resolved.enable = false;
-  services.timesyncd.enable = false;
+  # Keep the fleet's normal DNS and clock services. These targets have no
+  # usable RTC, so disabling resolved/timesyncd leaves every cold boot at the
+  # firmware timestamp even after the network is online.
   systemd.oomd.enable = false;
   systemd.network.wait-online.enable = false;
 
