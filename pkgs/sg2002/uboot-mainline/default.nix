@@ -8,6 +8,7 @@
 {
   buildUBoot,
   bootCommand ? "sysboot mmc 0:2 any 0x80c00000 /boot/extlinux/extlinux.conf; run distro_bootcmd; fastboot usb 0",
+  picoclawSplash ? false,
 }:
 buildUBoot {
   defconfig = "sipeed_licheerv_nano_defconfig";
@@ -63,7 +64,16 @@ buildUBoot {
     # without these a failed `mmc dev 0` is completely silent.
     CONFIG_LOGLEVEL=8
     CONFIG_MMC_TRACE=y
-  '';
+  '' + (if picoclawSplash then ''
+    # This is a separate PicoClaw-only build: its command changes the four
+    # LCD-wired Ethernet pads and GPIOA19/A27/A28 before entering fastboot.
+    # Do not enable it in the generic Nano U-Boot image.
+    CONFIG_DEFAULT_DEVICE_TREE="sg2002-licheerv-nano-picoclaw"
+    CONFIG_DM_GPIO=y
+    CONFIG_DWAPB_GPIO=y
+    CONFIG_DM_SPI=y
+    CONFIG_DESIGNWARE_SPI=y
+  '' else "");
 
   # buildUBoot's default is `cat extras >> .config`; olddefconfig then
   # resolves Kconfig dependencies for the gadget/fastboot tree.
@@ -78,5 +88,7 @@ buildUBoot {
     # MMC driver never programs the cv18xx SD PHY at init (only during
     # tuning). Port the kernel's PHY setup so the card answers ACMD41.
     ./patches/0005-mmc-cv1800b_sdhci-program-cv18xx-sd-phy-at-probe.patch
-  ];
+  ] ++ (if picoclawSplash then [
+    ./patches/0006-cmd-picoclaw-add-board-scoped-pre-linux-splash.patch
+  ] else [ ]);
 }

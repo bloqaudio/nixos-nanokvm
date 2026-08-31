@@ -312,6 +312,7 @@ let
     , bootargs
     , rootfsBindIp ? null
     , requireRootfsHostOverride ? false
+    , usbBootTool ? pkgs.sg2002-usb-boot
     , attachPicocom ? false
     , waitForSsh ? false
     , onShellDetachCommand ? null
@@ -490,7 +491,7 @@ let
         bootargs=${lib.escapeShellArg bootargs}
         case "''${1:-}" in
           -h|--help)
-            exec ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+            exec ${usbBootTool}/bin/usb-boot-mainline \
               --bootargs "$bootargs" \
               ${fit} "$@"
             ;;
@@ -506,7 +507,7 @@ let
           bootargs="$bootargs nanokvm.nbd_rootfs_host=$rootfs_host nanokvm.nbd_rootfs_port=$rootfs_port"
         ''}
 
-        ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+        ${usbBootTool}/bin/usb-boot-mainline \
           --bootargs "$bootargs" \
           ${fit} "$@"
 
@@ -604,6 +605,7 @@ let
     , bootargs
     , nfsServer
     , nfsExport
+    , usbBootTool ? pkgs.sg2002-usb-boot
     , waitForSsh ? false
     , onShellDetachCommand ? null
     ,
@@ -698,7 +700,7 @@ let
         fi
         case "''${1:-}" in
           -h|--help)
-            exec ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+            exec ${usbBootTool}/bin/usb-boot-mainline \
               --bootargs "$bootargs" \
               ${fit} "$@"
             ;;
@@ -706,7 +708,7 @@ let
 
         ${nfsLocalExportCheck "usb-boot"}
 
-        ${pkgs.sg2002-usb-boot}/bin/usb-boot-mainline \
+        ${usbBootTool}/bin/usb-boot-mainline \
           --bootargs "$bootargs" \
           ${fit} "$@"
 

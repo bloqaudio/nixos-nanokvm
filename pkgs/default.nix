@@ -221,6 +221,18 @@ in
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline-fastboot;
   };
+  # PicoClaw's ST7789 needs the Ethernet-pad handoff before fastboot starts.
+  # Keep this complete U-Boot/OpenSBI/FIP chain separate from every generic
+  # SG2002 image so those images cannot write the panel's pins.
+  sg2002-opensbi-mainline-picoclaw-splash = cross.opensbi.override {
+    withFDT = "${cross.sg2002-uboot-mainline-picoclaw-splash}/u-boot.dtb";
+  };
+  sg2002-fip-mainline-picoclaw-splash = final.callPackage ./sg2002/fip-mainline-uboot {
+    sg2002-fip = final.sg2002-fip;
+    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
+    sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline-picoclaw-splash;
+    sg2002-uboot-mainline = cross.sg2002-uboot-mainline-picoclaw-splash;
+  };
 
   # AIC8800DC firmware blobs (Nano-W onboard WiFi+BT). passthru
   # `compressFirmware=false` because aicbsp's rwnx_load_firmware uses
@@ -300,6 +312,10 @@ in
   sg2002-uboot-mainline-fastboot = cross.sg2002-uboot-mainline.override {
     bootCommand = "fastboot usb 0";
   };
+  sg2002-uboot-mainline-picoclaw-splash = cross.sg2002-uboot-mainline.override {
+    picoclawSplash = true;
+    bootCommand = "picoclaw_splash; fastboot usb 0";
+  };
 
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
@@ -355,6 +371,14 @@ in
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
     sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-fastboot;
+  };
+  # This runner differs only in the FIP sent after ROM USB-DL.  It makes
+  # PicoClaw's board-private U-Boot splash reachable without changing any
+  # other SG2002 USB boot path.
+  sg2002-usb-boot-picoclaw-splash = final.callPackage ./sg2002/usb-boot {
+    sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
+    sg2002-fip = final.sg2002-fip;
+    sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-picoclaw-splash;
   };
 
   # AIC8800 kernel module — vendor and mainline variants, parameterised

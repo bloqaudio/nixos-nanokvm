@@ -1,0 +1,334 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NixOS NanoKVM <nanokvm@localhost>
+Date: Mon, 31 Aug 2026 00:00:00 +0200
+Subject: [PATCH] cmd: add PicoClaw-only ST7789 pre-Linux splash
+
+The LicheeRV Nano generic U-Boot image is also used on boards where the
+PicoClaw LCD Ethernet pads are real Ethernet. Keep this command and its
+private device tree opt-in: generic SG2002 builds contain neither the command
+nor any LCD pad write.
+
+The init and EPHY-pad handoff are the proven values from the repository's
+PicoClaw Linux userspace driver. The command draws one simple RGB565 mark,
+then leaves the SPI/GPIO lines idle for Linux to claim from its own DT.
+---
+ arch/riscv/dts/Makefile                          |   2 +-
+ arch/riscv/dts/sg2002-licheerv-nano-picoclaw.dts |  42 ++++
+ arch/riscv/dts/sg2002-licheerv-nano-picoclaw-u-boot.dtsi | 46 +++++
+ cmd/Makefile                                     |   1 +
+ cmd/picoclaw_splash.c                            | 186 +++++++++++++++++++++
+ 5 files changed, 275 insertions(+), 1 deletion(-)
+
+diff --git a/arch/riscv/dts/Makefile b/arch/riscv/dts/Makefile
+index aa0866f9..40ea90f4 100644
+--- a/arch/riscv/dts/Makefile
++++ b/arch/riscv/dts/Makefile
+@@ -8,3 +8,3 @@ dtb-$(CONFIG_TARGET_MILKV_DUO) += cv1800b-milkv-duo.dtb
+ dtb-$(CONFIG_TARGET_MILKV_DUO) += cv1800b-milkv-duo.dtb
+-dtb-$(CONFIG_TARGET_LICHEERV_NANO) += sg2002-licheerv-nano-b.dtb
++dtb-$(CONFIG_TARGET_LICHEERV_NANO) += sg2002-licheerv-nano-b.dtb sg2002-licheerv-nano-picoclaw.dtb
+ dtb-$(CONFIG_TARGET_QEMU_VIRT) += qemu-virt32.dtb qemu-virt64.dtb
+diff --git a/arch/riscv/dts/sg2002-licheerv-nano-picoclaw.dts b/arch/riscv/dts/sg2002-licheerv-nano-picoclaw.dts
+new file mode 100644
+index 00000000..f0ee0002
+--- /dev/null
++++ b/arch/riscv/dts/sg2002-licheerv-nano-picoclaw.dts
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++/* PicoClaw-specific U-Boot DT. Generic Nano FIPs do not contain the
++ * ST7789 GPIO/SPI description, because its SPI pins are Ethernet elsewhere. */
++/dts-v1/;
++
++#include <dt-bindings/clock/sophgo,cv1800.h>
++#include <dt-bindings/gpio/gpio.h>
++#include "sg2002.dtsi"
++
++/ {
++	model = "Sipeed LicheeRV Nano PicoClaw";
++	compatible = "sipeed,licheerv-nano-picoclaw", "sipeed,licheerv-nano";
++
++	aliases {
++		gpio0 = &gpio0;
++		gpio1 = &gpio1;
++		gpio2 = &gpio2;
++		gpio3 = &gpio3;
++		serial0 = &uart0;
++		spi1 = &spi1;
++	};
++
++	chosen { stdout-path = "serial0:115200n8"; };
++
++	/* GPIOA28 D/C, A27 reset and active-low A19 backlight. Pad muxing is
++	 * done in the command: upstream U-Boot has no CV18xx pinctrl driver. */
++	picoclaw-splash {
++		dc-gpios = <&porta 28 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&porta 27 GPIO_ACTIVE_HIGH>;
++		backlight-gpios = <&porta 19 GPIO_ACTIVE_LOW>;
++	};
++};
++
++&osc { clock-frequency = <25000000>; };
++
++&sdhci0 {
++	status = "okay";
++	bus-width = <4>;
++	no-1-8-v;
++	no-mmc;
++	no-sdio;
++};
++
++&uart0 { status = "okay"; };
++
+diff --git a/arch/riscv/dts/sg2002-licheerv-nano-picoclaw-u-boot.dtsi b/arch/riscv/dts/sg2002-licheerv-nano-picoclaw-u-boot.dtsi
+new file mode 100644
+index 00000000..c9e23b59
+--- /dev/null
++++ b/arch/riscv/dts/sg2002-licheerv-nano-picoclaw-u-boot.dtsi
+@@ -0,0 +1,46 @@
++// SPDX-License-Identifier: GPL-2.0+
++/* Reproduce the generic Nano U-Boot overlay: DWC2 fastboot plus
++ * conservative SD polling. SPI1 is absent from upstream's CV18xx DTS. */
++/ {
++	soc {
++		usb@4340000 {
++		compatible = "snps,dwc2";
++		reg = <0x04340000 0x10000>;
++		dr_mode = "peripheral";
++		g-rx-fifo-size = <1536>;
++		g-np-tx-fifo-size = <32>;
++		g-tx-fifo-size = <128 128 64 64 64 64 32 32>;
++		};
++
++		spi1: spi@4190000 {
++			compatible = "snps,dw-apb-ssi";
++			reg = <0x04190000 0x10000>;
++			clocks = <&clk CLK_SPI>, <&clk CLK_APB_SPI1>;
++			clock-names = "ssi_clk", "pclk";
++			#address-cells = <1>;
++			#size-cells = <0>;
++			num-cs = <1>;
++			status = "okay";
++
++			lcd@0 {
++				compatible = "spi-generic";
++				reg = <0>;
++				spi-max-frequency = <1000000>;
++			};
++		};
++	};
++};
++
++&sdhci0 {
++	broken-cd;
++	disable-wp;
++	min-frequency = <400000>;
++	max-frequency = <25000000>;
++	sophgo,mshc-ctrl-8-9;
++	sophgo,sdio-clkgen-pll-reg = <0x03002070>;
++	sophgo,sdio-clkgen-pll-div = <0x00040109>;
++	sophgo,sdio-clkgen-bypass-reg = <0x03002030>;
++	sophgo,sdio-clkgen-bypass-bit = <6>;
++	sophgo,sd-pwrsw-ctrl-reg = <0x030001f4>;
++	no-1-8-v;
++};
+diff --git a/cmd/Makefile b/cmd/Makefile
+index 6a7e4b26..ed9815df 100644
+--- a/cmd/Makefile
++++ b/cmd/Makefile
+@@ -344,3 +344,4 @@ $(obj)/license_data_size.h: $(srctree)/Licenses/gpl-2.0.txt FORCE
+ 	$(call filechk,data_size)
+ 
+ CFLAGS_ethsw.o := -Wno-enum-conversion
++obj-y += picoclaw_splash.o
+diff --git a/cmd/picoclaw_splash.c b/cmd/picoclaw_splash.c
+new file mode 100644
+index 00000000..aeadfe31
+--- /dev/null
++++ b/cmd/picoclaw_splash.c
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: GPL-2.0+
++/* Minimal PicoClaw-only ST7789 pre-Linux splash. */
++#include <command.h>
++#include <dm.h>
++#include <spi.h>
++#include <asm/io.h>
++#include <asm-generic/gpio.h>
++#include <linux/delay.h>
++
++#define SG2002_SYS_PINMUX_BASE 0x03001000UL
++#define SG2002_EPHY_BASE 0x03009000UL
++#define LCD_WIDTH 240
++#define LCD_HEIGHT 240
++
++static void sg2002_set_func(ulong offset, u32 function)
++{
++	void __iomem *reg = (void __iomem *)(SG2002_SYS_PINMUX_BASE + offset);
++	u32 value = readl(reg);
++
++	writel((value & ~0x7) | function, reg);
++}
++
++static int picoclaw_xfer(struct spi_slave *slave, const void *data, uint len)
++{
++	return spi_xfer(slave, len * 8, data, NULL, SPI_XFER_BEGIN | SPI_XFER_END);
++}
++
++static int picoclaw_command(struct spi_slave *slave, struct gpio_desc *dc,
++			    u8 command, const u8 *data, uint len)
++{
++	int ret;
++
++	dm_gpio_set_value(dc, 0);
++	ret = picoclaw_xfer(slave, &command, 1);
++	if (ret || !len)
++		return ret;
++	dm_gpio_set_value(dc, 1);
++	return picoclaw_xfer(slave, data, len);
++}
++
++static void picoclaw_route_spi1(void)
++{
++	void __iomem *ephy = (void __iomem *)SG2002_EPHY_BASE;
++	u32 value;
++
++	/* Proven PicoClaw handoff from picoclaw-lcd-test. These four pads are
++	 * LCD wires here, but real Ethernet on the generic Nano carriers. */
++	writel(readl(ephy + 0x804) | 1, ephy + 0x804);
++	value = readl(ephy + 0x808);
++	writel((value & ~0x1f) | 1, ephy + 0x808);
++	writel(readl(ephy + 0x800) | BIT(2), ephy + 0x800);
++	udelay(1000);
++	writel((readl(ephy + 0x7c) & ~(0x1f << 8)) | (5 << 8), ephy + 0x7c);
++	writel((readl(ephy + 0x78) & ~0xfff) | 0xf00, ephy + 0x78);
++	writel(0x606, ephy + 0x74);
++	writel(0x606, ephy + 0x70);
++
++	/* GPIOA19 backlight, A27 reset, A28 D/C. */
++	sg2002_set_func(0x64, 3);
++	sg2002_set_func(0x58, 3);
++	sg2002_set_func(0x70, 3);
++}
++
++static int picoclaw_init(struct spi_slave *slave, struct gpio_desc *dc,
++			  struct gpio_desc *reset, struct gpio_desc *backlight)
++{
++	static const u8 porch[] = { 0x1f, 0x1f, 0x00, 0x33, 0x33 };
++	static const u8 power[] = { 0xa4, 0xa1 };
++	static const u8 gamma_p[] = { 0xf0, 0x08, 0x0e, 0x09, 0x08, 0x04, 0x2f,
++		0x33, 0x45, 0x36, 0x13, 0x12, 0x2a, 0x2d };
++	static const u8 gamma_n[] = { 0xf0, 0x0e, 0x12, 0x0c, 0x0a, 0x15, 0x2e,
++		0x32, 0x44, 0x39, 0x17, 0x18, 0x2b, 0x2f };
++	static const u8 gate3[] = { 0x1d, 0x00, 0x00 };
++	static const u8 madctl = 0xc0, pixel_format = 0x05, gate = 0x00;
++	static const u8 vcom = 0x36, lcm = 0x2c, vdv_vrh = 0x01;
++	static const u8 vrh = 0x13, vdv = 0x20, frame_rate = 0x13;
++	static const u8 gate2 = 0xa1;
++	static const struct { u8 cmd; const u8 *data; u8 len; } seq[] = {
++		{ 0xb2, porch, sizeof(porch) }, { 0x36, &madctl, 1 },
++		{ 0x3a, &pixel_format, 1 }, { 0xb7, &gate, 1 },
++		{ 0xbb, &vcom, 1 }, { 0xc0, &lcm, 1 },
++		{ 0xc2, &vdv_vrh, 1 }, { 0xc3, &vrh, 1 },
++		{ 0xc4, &vdv, 1 }, { 0xc6, &frame_rate, 1 },
++		{ 0xd6, &gate2, 1 }, { 0xd0, power, sizeof(power) },
++		{ 0xe0, gamma_p, sizeof(gamma_p) }, { 0xe1, gamma_n, sizeof(gamma_n) },
++		{ 0xe4, gate3, sizeof(gate3) },
++	};
++	int ret, index;
++
++	/* Logical 0 is inactive for the active-low backlight GPIO. */
++	dm_gpio_set_value(backlight, 0);
++	dm_gpio_set_value(reset, 1); mdelay(50);
++	dm_gpio_set_value(reset, 0); mdelay(50);
++	dm_gpio_set_value(reset, 1); mdelay(50);
++	ret = picoclaw_command(slave, dc, 0x11, NULL, 0); /* SLPOUT */
++	if (ret)
++		return ret;
++	mdelay(120);
++	for (index = 0; index < ARRAY_SIZE(seq); index++) {
++		ret = picoclaw_command(slave, dc, seq[index].cmd, seq[index].data,
++					seq[index].len);
++		if (ret)
++			return ret;
++	}
++	if ((ret = picoclaw_command(slave, dc, 0x21, NULL, 0)) ||
++	    (ret = picoclaw_command(slave, dc, 0x11, NULL, 0)) ||
++	    (ret = picoclaw_command(slave, dc, 0x29, NULL, 0)))
++		return ret;
++	mdelay(100);
++	return 0;
++}
++
++static u16 picoclaw_pixel(int x, int y)
++{
++	/* Static blue field, white border and cyan loading lozenge. */
++	if (x < 8 || x >= LCD_WIDTH - 8 || y < 8 || y >= LCD_HEIGHT - 8)
++		return 0xffff;
++	if (x > 39 && x < 201 && y > 101 && y < 139)
++		return (x > 47 && x < 193 && y > 109 && y < 131) ? 0x07ff : 0xffff;
++	return ((x / 30 + y / 30) & 1) ? 0x0015 : 0x0010;
++}
++
++static int picoclaw_draw(struct spi_slave *slave, struct gpio_desc *dc)
++{
++	u8 column[] = { 0, 0, 0, LCD_WIDTH - 1 };
++	u8 row_addr[] = { 0, 80, 1, 63 }; /* ST7789 240x240 RAM Y offset */
++	u8 row[LCD_WIDTH * 2];
++	int x, y, ret;
++
++	if ((ret = picoclaw_command(slave, dc, 0x2a, column, sizeof(column))) ||
++	    (ret = picoclaw_command(slave, dc, 0x2b, row_addr, sizeof(row_addr))) ||
++	    (ret = picoclaw_command(slave, dc, 0x2c, NULL, 0)))
++		return ret;
++	dm_gpio_set_value(dc, 1);
++	for (y = 0; y < LCD_HEIGHT; y++) {
++		for (x = 0; x < LCD_WIDTH; x++) {
++			u16 pixel = picoclaw_pixel(x, y);
++			row[x * 2] = pixel >> 8;
++			row[x * 2 + 1] = pixel;
++		}
++		ret = picoclaw_xfer(slave, row, sizeof(row));
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static int do_picoclaw_splash(struct cmd_tbl *cmdtp, int flag, int argc,
++			       char *const argv[])
++{
++	struct gpio_desc dc, reset, backlight;
++	struct udevice *bus;
++	struct spi_slave *slave;
++	ofnode node = ofnode_path("/picoclaw-splash");
++	int ret;
++
++	if (!ofnode_valid(node))
++		return CMD_RET_FAILURE;
++	picoclaw_route_spi1();
++	ret = gpio_request_by_name_nodev(node, "dc-gpios", 0, &dc, GPIOD_IS_OUT);
++	ret |= gpio_request_by_name_nodev(node, "reset-gpios", 0, &reset, GPIOD_IS_OUT);
++	ret |= gpio_request_by_name_nodev(node, "backlight-gpios", 0, &backlight,
++					 GPIOD_IS_OUT);
++	if (ret || (ret = spi_get_bus_and_cs(1, 0, &bus, &slave))) {
++		printf("picoclaw splash: devices unavailable (%d)\\n", ret);
++		return CMD_RET_FAILURE;
++	}
++	ret = spi_claim_bus(slave);
++	if (ret)
++		goto done;
++	ret = picoclaw_init(slave, &dc, &reset, &backlight);
++	if (!ret)
++		ret = picoclaw_draw(slave, &dc);
++	if (!ret)
++		dm_gpio_set_value(&backlight, 1);
++	spi_release_bus(slave);
++done:
++	if (ret) {
++		printf("picoclaw splash: failed (%d)\\n", ret);
++		return CMD_RET_FAILURE;
++	}
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(picoclaw_splash, 1, 0, do_picoclaw_splash,
++	   "draw the PicoClaw ST7789 pre-Linux splash", "");

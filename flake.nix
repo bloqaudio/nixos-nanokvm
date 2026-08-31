@@ -339,6 +339,10 @@
           entryIncludeKexec = entryArtifactArg "includeKexec" true;
           entryUsbConsole = entryArtifactArg "usbConsole" true;
           entryUartConsole = entryArtifactArg "uartConsole" "ttyS0";
+          entryUsbBootTool = entry:
+            if entry.boardName == "licheerv-nano-picoclaw"
+            then pkgs.sg2002-usb-boot-picoclaw-splash
+            else pkgs.sg2002-usb-boot;
 
           mkEntryPayload =
             { entry
@@ -392,6 +396,7 @@
               };
               usb-boot = art.mkUsbBootRunner ({
                 name = "usb-boot";
+                usbBootTool = entryUsbBootTool entry;
                 inherit rootfsBindIp requireRootfsHostOverride;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
@@ -430,6 +435,7 @@
               };
               usb-boot = art.mkUsbBootRunner {
                 name = "usb-boot";
+                usbBootTool = entryUsbBootTool entry;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "kernel-test";
@@ -464,6 +470,7 @@
               };
               usb-boot = art.mkUsbBootRunner {
                 name = "usb-boot";
+                usbBootTool = entryUsbBootTool entry;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "debug";
@@ -509,6 +516,7 @@
               };
               usb-boot = art.mkNfsUsbBootRunner {
                 name = "usb-boot";
+                usbBootTool = entryUsbBootTool entry;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "live";
@@ -576,10 +584,13 @@
             nanokvm-web
             nbd-client-minimal
             sg2002-fip-mainline-fastboot
+            sg2002-fip-mainline-picoclaw-splash
             sg2002-h264-bridge
             sg2002-kernel-mainline
             sg2002-usb-boot
+            sg2002-usb-boot-picoclaw-splash
             sg2002-uboot-mainline-fastboot
+            sg2002-uboot-mainline-picoclaw-splash
             spacemit-k3-fsbl
             spacemit-k3-linux
             spacemit-k3-raw-fastboot-boot
