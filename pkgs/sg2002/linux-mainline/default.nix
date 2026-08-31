@@ -61,6 +61,10 @@ in
     BT = lib.kernel.module;
     BT_BREDR = lib.kernel.yes;
     BT_LE = lib.kernel.yes;
+    # BlueZ's native HSP/HFP roles register RFCOMM service records.  Keep the
+    # transport modular and omit RFCOMM_TTY: bluetoothd needs the socket
+    # protocol, not serial tty emulation.
+    BT_RFCOMM = lib.kernel.module;
     BT_BNEP = lib.kernel.module;
     BT_BNEP_MC_FILTER = lib.kernel.yes;
     BT_BNEP_PROTO_FILTER = lib.kernel.yes;

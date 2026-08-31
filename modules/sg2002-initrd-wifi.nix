@@ -52,12 +52,12 @@ in {
 
       boot.extraModulePackages = [aic8800Pkg];
       sg2002.initrd.pruneKernelModules = true;
-      sg2002.initrd.availableKernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ] ++ [
+      sg2002.initrd.availableKernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ] ++ [
         "aic8800_bsp"
         "aic8800_fdrv"
         "aic8800_btlpm"
       ];
-      sg2002.initrd.kernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ] ++ [
+      sg2002.initrd.kernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ] ++ [
         "aic8800_bsp"
         "aic8800_fdrv"
         "aic8800_btlpm"
