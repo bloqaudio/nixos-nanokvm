@@ -230,7 +230,7 @@ in {
       boot.extraModulePackages = lib.optional (aic8800Pkg != null) aic8800Pkg;
       boot.kernelModules =
         lib.optional (cfg.kernel == "mainline" && cfg.wifi.enable) "rfkill"
-        ++ lib.optional cfg.bluetooth.enable "bluetooth"
+        ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ]
         ++ lib.optionals (aic8800Pkg != null) [
           "aic8800_bsp"
           "aic8800_fdrv"
@@ -243,7 +243,7 @@ in {
       sg2002.initrd.availableKernelModules = lib.optionals
         (cfg.kernel == "mainline" && cfg.wifi.enable) (
           [ "rfkill" ]
-          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" ]
+          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ]
           ++ [
             "aic8800_bsp"
             "aic8800_fdrv"
@@ -253,7 +253,7 @@ in {
       sg2002.initrd.kernelModules = lib.optionals
         (cfg.kernel == "mainline" && cfg.wifi.enable) (
           [ "rfkill" ]
-          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" ]
+          ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" ]
           ++ [
             "aic8800_bsp"
             "aic8800_fdrv"

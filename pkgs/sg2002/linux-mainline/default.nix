@@ -41,9 +41,13 @@ in
   structuredExtraConfig = (import ./config.nix {inherit lib;}) // lib.optionalAttrs bluetooth {
     # AIC8800 FDRV provides HCI_SDIO itself; the kernel needs only the
     # Bluetooth core and the BR/EDR + LE protocols for BlueZ discovery.
+    # BNEP is the kernel data path for BlueZ's Bluetooth PAN profile.
     BT = lib.kernel.module;
     BT_BREDR = lib.kernel.yes;
     BT_LE = lib.kernel.yes;
+    BT_BNEP = lib.kernel.module;
+    BT_BNEP_MC_FILTER = lib.kernel.yes;
+    BT_BNEP_PROTO_FILTER = lib.kernel.yes;
   };
   kernelPatches = (import ./patches.nix).patches;
   # Let olddefconfig drop options whose dependencies are unavailable.

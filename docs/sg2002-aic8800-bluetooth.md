@@ -59,6 +59,14 @@ per-HCI-frame `aic_btsdio` info spam, retaining error and lifecycle logging.
 If there is no `hci0`, retain the `dmesg` output and do not retry by loading a
 UART HCI driver: this board's implemented path is the AIC SDIO mailbox.
 
+The BT-only kernel also provides the `bnep` module for BlueZ's Bluetooth PAN
+profile.  This is unrelated to discovery, but avoids `bnep_init()` reporting
+that the kernel lacks BNEP protocol support.  BlueZ 5.86 can additionally log
+`Failed to set default system config for hci0` with a stock `main.conf`; its
+upstream 5.87 fix identifies this as an empty-default-list startup warning,
+not an AIC transport failure.  Treat it separately from controller errors and
+use `btmgmt info` plus an actual scan to assess the radio.
+
 ## Reset recovery
 
 The ordinary Linux reboot has previously stopped stage 2 without returning

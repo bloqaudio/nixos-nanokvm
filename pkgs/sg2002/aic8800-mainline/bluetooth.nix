@@ -39,11 +39,16 @@ base.overrideAttrs (old: {
     sed -i 's/AICBT_INFO("%s", data->hdev->name);/AICBT_DBG("%s", data->hdev->name);/' aic8800_fdrv/btsdio.c
     sed -i 's/AICBT_INFO("%s,%s", data->hdev->name,__func__);/AICBT_DBG("%s,%s", data->hdev->name,__func__);/' aic8800_fdrv/btsdio.c
     sed -i 's/AICBT_INFO("skb type %d",type);/AICBT_DBG("skb type %d",type);/' aic8800_fdrv/btsdio.c
+    # btsdio_send_frame uses hdev directly (rather than data->hdev), so keep
+    # this focused on the hot send path and leave open/close/flush lifecycle
+    # messages as INFO.
+    sed -i '/static int btsdio_send_frame/,/switch (hci_skb_pkt_type(skb))/s/AICBT_INFO("%s,%s", hdev->name,__func__);/AICBT_DBG("%s,%s", hdev->name,__func__);/' aic8800_fdrv/btsdio.c
 
     grep -q '^CONFIG_SDIO_BT[[:space:]]*=[[:space:]]*y' aic8800_bsp/Makefile
     grep -q '^CONFIG_SDIO_BT[[:space:]]*=[[:space:]]*y' aic8800_fdrv/Makefile
     grep -q 'rfkill_init_sw_state(bt_rfk, false);' aic8800_btlpm/rfkill.c
     grep -q '^#define AICBT_DBG_FLAG[[:space:]]*0' aic8800_fdrv/aic_btsdio.h
+    sed -n '/static int btsdio_send_frame/,/switch (hci_skb_pkt_type(skb))/p' aic8800_fdrv/btsdio.c | grep -q 'AICBT_DBG("%s,%s", hdev->name,__func__);'
   '';
   preBuild = (old.preBuild or "") + ''
     # C8A1:0082 is D80 even though this board's compatibility firmware
