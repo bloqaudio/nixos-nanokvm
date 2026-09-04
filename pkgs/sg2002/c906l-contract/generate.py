@@ -536,6 +536,9 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
         f"pub const CONTRACT_EPOCH: u32 = {contract['contractEpoch']};",
         f"pub const ABI_MAJOR: u16 = {abi['major']};",
         f"pub const ABI_MINOR: u16 = {abi['minor']};",
+        f"pub const MESSAGE_SIZE: usize = {abi['message']['size']};",
+        f"pub const STATUS_SIZE: usize = {abi['status']['size']};",
+        f"pub const CAPABILITY_WIRE_WIDTH: u16 = {abi['capabilityWireWidth']};",
         f"pub const SHMEM_MAGIC: u32 = {hex_literal(abi['magic'])};",
         f"pub const EXPECTED_CAPABILITIES: u64 = {hex_literal(profile['expectedCapabilities'], 16)};",
         f"pub const DORMANT_CAPABILITIES: u64 = {hex_literal(profile['dormantCapabilities'], 16)};",
@@ -544,6 +547,8 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
         f"pub const MANIFEST_FLAGS: u32 = {hex_literal(profile['manifestFlags'])};",
         f"pub const ACTIVATION_REQUIRED: bool = {'true' if profile['activationRequired'] else 'false'};",
         f"pub const CACHE_LINE_SIZE: usize = {soc['cacheLineSize']};",
+        f"pub const DRAM_ADDRESS: usize = {hex_literal(soc['dram']['address'])};",
+        f"pub const DRAM_SIZE: usize = {hex_literal(soc['dram']['size'])};",
         f"pub const FIRMWARE_ADDRESS: usize = {hex_literal(memory['firmware']['address'])};",
         f"pub const FIRMWARE_SIZE: usize = {hex_literal(memory['firmware']['size'])};",
         f"pub const SHMEM_ADDRESS: usize = {hex_literal(memory['shared']['address'])};",
@@ -588,9 +593,13 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
     lines.extend(
         [
             f"pub const MAILBOX_ADDRESS: usize = {hex_literal(mailbox['address'])};",
+            f"pub const MAILBOX_SIZE: usize = {hex_literal(mailbox['size'])};",
             f"pub const MAILBOX_PAYLOAD_ADDRESS: usize = {hex_literal(mailbox['payloadAddress'])};",
+            f"pub const MAILBOX_SLOT_COUNT: usize = {mailbox['slotCount']};",
             f"pub const LINUX_CPU_ID: usize = {mailbox['processorIds']['linux']};",
             f"pub const RTOS_CPU_ID: usize = {mailbox['processorIds']['c906l']};",
+            f"pub const MAILBOX_LINUX_IRQ: u32 = {mailbox['interrupts']['linux']};",
+            f"pub const MAILBOX_C906L_IRQ: u32 = {mailbox['interrupts']['c906l']};",
         ]
     )
     for name, channel in mailbox["channels"].items():
@@ -611,6 +620,12 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
         )
     lines.extend(
         [
+            f"pub const RSC_TABLE_VERSION: u32 = {rpmsg['resourceTable']['version']};",
+            f"pub const RSC_TABLE_ENTRIES: u32 = {rpmsg['resourceTable']['entries']};",
+            f"pub const RSC_TABLE_ENTRY_OFFSET: u32 = {rpmsg['resourceTable']['entryOffset']};",
+            f"pub const RSC_VDEV: u32 = {rpmsg['resourceTable']['resourceTypeVdev']};",
+            f"pub const VIRTIO_ID_RPMSG: u32 = {rpmsg['resourceTable']['virtioDeviceId']};",
+            f"pub const VIRTIO_RPMSG_FEATURES: u32 = {hex_literal(rpmsg['resourceTable']['deviceFeatures'])};",
             f"pub const VRING_ALIGN: u32 = {rpmsg['vrings']['alignment']};",
             f"pub const VRING_DESCRIPTORS: usize = {rpmsg['vrings']['descriptors']};",
             f"pub const VRING_DRIVER_BYTES: usize = {rpmsg['vrings']['driverBytes']};",
@@ -623,6 +638,7 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
             f"pub const VIRTIO_DRIVER_OK: u8 = {hex_literal(rpmsg['resourceTable']['driverOkStatus'], 2)};",
             f"pub const VRING_NOTIFY_ID_INITIAL: u32 = {hex_literal(rpmsg['resourceTable']['vringNotifyIdInitial'])};",
             f"pub const VRING_PHYSICAL_ADDRESS_INITIAL: u32 = {hex_literal(rpmsg['resourceTable']['vringPhysicalAddressInitial'])};",
+            f"pub const RSC_TABLE_SERIALIZED_SIZE: usize = {rpmsg['resourceTable']['serializedSize']};",
             f"pub const RPMSG_BUFFER_BYTES: usize = {rpmsg['buffers']['bufferSize']};",
             f"pub const RPMSG_HEADER_BYTES: usize = {rpmsg['buffers']['headerSize']};",
             f"pub const RPMSG_PAYLOAD_BYTES: usize = {rpmsg['buffers']['payloadSize']};",
@@ -710,6 +726,17 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
             "const _: [(); 64] = [(); core::mem::align_of::<Manifest>()];",
             "const _: [(); 128] = [(); core::mem::size_of::<ActivationRequest>()];",
             "const _: [(); 64] = [(); core::mem::align_of::<ActivationRequest>()];",
+        ]
+    )
+    control = soc["coreControl"]
+    lines.extend(
+        [
+            f"pub const RESET_ADDRESS: usize = {hex_literal(control['reset']['address'])};",
+            f"pub const RESET_MASK: u32 = {hex_literal(1 << control['reset']['bit'])};",
+            f"pub const SECURITY_ENABLE_ADDRESS: usize = {hex_literal(control['securityEnable']['address'])};",
+            f"pub const SECURITY_ENABLE_MASK: u32 = {hex_literal(1 << control['securityEnable']['bit'])};",
+            f"pub const VECTOR_LOW_ADDRESS: usize = {hex_literal(control['vectorLowAddress'])};",
+            f"pub const VECTOR_HIGH_ADDRESS: usize = {hex_literal(control['vectorHighAddress'])};",
         ]
     )
     for type_name, fields in (
