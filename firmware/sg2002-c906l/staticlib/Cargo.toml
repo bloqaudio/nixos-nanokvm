@@ -1,0 +1,16 @@
+[package]
+name = "sg2002-c906l-static"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = []
+timer4 = ["sg2002-c906l-firmware/timer4"]
+
+[dependencies]
+sg2002-c906l-firmware = { path = ".." }

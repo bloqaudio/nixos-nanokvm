@@ -125,6 +125,7 @@
         builtins.elem (lib.getName pkg) [
           "nanokvm-factory-runtime"
           "sg2002-coda980-firmware"
+          "sg2002-c906l-firmware"
           "sophgo-host-tools"
         ];
 
@@ -292,6 +293,7 @@
       };
       nixosModules.extlinuxTryBoot = import ./modules/extlinux-try-boot.nix;
       nixosModules.nanokvm = import ./modules/nanokvm.nix;
+      nixosModules.sg2002C906L = import ./modules/sg2002-c906l.nix;
       nixosModules.default = {
         imports = [
           self.nixosModules.nanokvm
@@ -339,8 +341,10 @@
           entryIncludeKexec = entryArtifactArg "includeKexec" true;
           entryUsbConsole = entryArtifactArg "usbConsole" true;
           entryUartConsole = entryArtifactArg "uartConsole" "ttyS0";
-          entryUsbBootTool = entry:
-            if entry.boardName == "licheerv-nano-picoclaw"
+          entryUsbBootTool = entry: cfg:
+            if cfg.config.sg2002.auxCore.enable
+            then pkgs.sg2002-usb-boot-for cfg.config.system.build.fipFastboot
+            else if entry.boardName == "licheerv-nano-picoclaw"
             then pkgs.sg2002-usb-boot-picoclaw-splash
             else pkgs.sg2002-usb-boot;
 
@@ -396,7 +400,7 @@
               };
               usb-boot = art.mkUsbBootRunner ({
                 name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry;
+                usbBootTool = entryUsbBootTool entry cfg;
                 inherit rootfsBindIp requireRootfsHostOverride;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
@@ -435,7 +439,7 @@
               };
               usb-boot = art.mkUsbBootRunner {
                 name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry;
+                usbBootTool = entryUsbBootTool entry cfg;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "kernel-test";
@@ -470,7 +474,7 @@
               };
               usb-boot = art.mkUsbBootRunner {
                 name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry;
+                usbBootTool = entryUsbBootTool entry cfg;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "debug";
@@ -516,7 +520,7 @@
               };
               usb-boot = art.mkNfsUsbBootRunner {
                 name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry;
+                usbBootTool = entryUsbBootTool entry cfg;
                 fit = mkEntryBootFit {
                   inherit entry cfg;
                   profile = "live";
@@ -583,15 +587,31 @@
             nanokvm-server-nocamera
             nanokvm-web
             nbd-client-minimal
+            sg2002-dtb-mainline-nowifi-c906l
+            sg2002-fiptool
             sg2002-fip-mainline-fastboot
+            sg2002-fip-mainline-fastboot-c906l
+            sg2002-fip-mainline-uboot-c906l
+            sg2002-fip-mainline-fastboot-c906l-timer4
+            sg2002-fip-mainline-uboot-c906l-timer4
             sg2002-fip-mainline-picoclaw-splash
+            sg2002-c906l-firmware
+            sg2002-c906l-firmware-timer4
+            sg2002-c906l-control
+            sg2002-c906l-ctl
+            sg2002-c906l-rust
+            sg2002-c906l-rust-timer4
             sg2002-alsa-kernel-test
             sg2002-h264-bridge
             sg2002-h264-bridge-pcma
             sg2002-kernel-mainline
             sg2002-usb-boot
+            sg2002-usb-boot-c906l
+            sg2002-usb-boot-c906l-timer4
             sg2002-usb-boot-picoclaw-splash
+            sg2002-uboot-mainline-c906l
             sg2002-uboot-mainline-fastboot
+            sg2002-uboot-mainline-fastboot-c906l
             sg2002-uboot-mainline-picoclaw-splash
             spacemit-k3-fsbl
             spacemit-k3-linux
@@ -613,6 +633,21 @@
       packages = lib.mapAttrs
         (_system: attrs: builtins.removeAttrs attrs [ "boards" ])
         self.legacyPackages;
+
+      checks = forAllSystems (pkgs:
+        lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          sg2002-c906l-rust = pkgs.sg2002-c906l-rust-tests;
+          sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
+          sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
+          sg2002-c906l-control = pkgs.sg2002-c906l-control;
+          sg2002-c906l-ctl = pkgs.sg2002-c906l-ctl;
+          sg2002-c906l-fip-disabled = pkgs.sg2002-fip-mainline-fastboot;
+          sg2002-c906l-fip = pkgs.sg2002-fip-mainline-fastboot-c906l;
+          sg2002-c906l-fip-timer4 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer4;
+          sg2002-c906l-uboot = pkgs.sg2002-uboot-mainline-fastboot-c906l;
+          sg2002-c906l-runner = pkgs.sg2002-usb-boot-c906l.tests.runner;
+          sg2002-c906l-dtb = pkgs.sg2002-dtb-mainline-nowifi-c906l;
+        });
 
       # `apps.<system>` is reserved for flat `nix run` shortcuts. The
       # boards.* tree lives under `legacyPackages.<system>.boards.…` instead;
@@ -736,34 +771,52 @@
           };
         });
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs;
-            [
-              go_1_25
-              nodejs_24
-              pnpm_10
-              patchelf
-              dtc
-              erofs-utils
-              nbd
-              sg2002-cv181x-usb-dl
-              usbutils
-              pkgsCross.riscv64-musl.stdenv.cc
-            ]
-            ++ lib.optionals pkgs.stdenv.isLinux [
-              android-tools
-              picocom
-            ];
+      devShells = forAllSystems (pkgs:
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs;
+              [
+                go_1_25
+                nodejs_24
+                pnpm_10
+                patchelf
+                dtc
+                erofs-utils
+                nbd
+                sg2002-cv181x-usb-dl
+                usbutils
+                pkgsCross.riscv64-musl.stdenv.cc
+              ]
+              ++ lib.optionals pkgs.stdenv.isLinux [
+                android-tools
+                picocom
+              ];
 
-          shellHook = ''
-            export GOOS=linux
-            export GOARCH=riscv64
-            export CGO_ENABLED=1
-            export CC=${pkgs.pkgsCross.riscv64-musl.stdenv.cc}/bin/riscv64-unknown-linux-musl-gcc
-            export CGO_CFLAGS="-mcpu=thead-c906 -march=rv64gc_xtheadba_xtheadbb_xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_xtheadmac_xtheadmemidx_xtheadmempair_xtheadsync -mcmodel=medany -mabi=lp64d"
-          '';
-        };
-      });
+            shellHook = ''
+              export GOOS=linux
+              export GOARCH=riscv64
+              export CGO_ENABLED=1
+              export CC=${pkgs.pkgsCross.riscv64-musl.stdenv.cc}/bin/riscv64-unknown-linux-musl-gcc
+              export CGO_CFLAGS="-mcpu=thead-c906 -march=rv64gc_xtheadba_xtheadbb_xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_xtheadmac_xtheadmemidx_xtheadmempair_xtheadsync -mcmodel=medany -mabi=lp64d"
+            '';
+          };
+        }
+        // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          c906l = pkgs.mkShell {
+            inputsFrom = [ pkgs.sg2002-c906l-rust ];
+            packages = [
+              pkgs.cargo
+              pkgs.clippy
+              pkgs.rust-analyzer
+              pkgs.rustc
+              pkgs.rustfmt
+              pkgs.pkgsCross.riscv64-embedded.stdenv.cc
+            ];
+            shellHook = ''
+              export CARGO_BUILD_TARGET=riscv64gc-unknown-none-elf
+              export RUSTFLAGS="-C code-model=medium"
+            '';
+          };
+        });
     };
 }

@@ -7,9 +7,20 @@
 #     driver build on RISC-V
 {
   buildUBoot,
+  lib,
   bootCommand ? "sysboot mmc 0:2 any 0x80c00000 /boot/extlinux/extlinux.conf; run distro_bootcmd; fastboot usb 0",
+  # Bytes at the top of DRAM which U-Boot and the subsequently booted OS must
+  # leave untouched.  The C906L firmware package uses this for its firmware
+  # and shared-memory carveouts; ordinary images retain upstream's zero.
+  memoryTopHide ? 0,
   picoclawSplash ? false,
 }:
+assert lib.assertMsg (builtins.isInt memoryTopHide)
+  "sg2002 U-Boot: memoryTopHide must be an integer byte count";
+assert lib.assertMsg (memoryTopHide >= 0)
+  "sg2002 U-Boot: memoryTopHide must not be negative";
+assert lib.assertMsg (lib.mod memoryTopHide 4096 == 0)
+  "sg2002 U-Boot: memoryTopHide must be aligned to the 4 KiB OS page size";
 buildUBoot {
   defconfig = "sipeed_licheerv_nano_defconfig";
   extraMeta.platforms = ["riscv64-linux"];
@@ -64,6 +75,11 @@ buildUBoot {
     # without these a failed `mmc dev 0` is completely silent.
     CONFIG_LOGLEVEL=8
     CONFIG_MMC_TRACE=y
+  '' + lib.optionalString (memoryTopHide != 0) ''
+    # Keep the auxiliary C906L firmware and its Linux mailbox carveout outside
+    # U-Boot's relocation and malloc arenas.  The Linux DT independently
+    # reserves the same bytes before its allocator comes online.
+    CONFIG_SYS_MEM_TOP_HIDE=0x${lib.toHexString memoryTopHide}
   '' + (if picoclawSplash then ''
     # This is a separate PicoClaw-only build: its command changes the four
     # LCD-wired Ethernet pads and GPIOA19/A27/A28 before entering fastboot.
@@ -77,7 +93,28 @@ buildUBoot {
 
   # buildUBoot's default is `cat extras >> .config`; olddefconfig then
   # resolves Kconfig dependencies for the gadget/fastboot tree.
-  postConfigure = "make olddefconfig";
+  postConfigure = ''
+    make olddefconfig
+  '' + lib.optionalString (memoryTopHide != 0) ''
+    # Fail the build if this option is renamed, removed, dependency-gated or
+    # otherwise discarded by a future U-Boot Kconfig update.  Silently losing
+    # this reservation would let U-Boot overwrite the running C906L image.
+    if ! grep -Fxq 'CONFIG_SYS_MEM_TOP_HIDE=0x${lib.toHexString memoryTopHide}' .config; then
+      echo "SG2002 top-of-RAM reservation was not preserved by olddefconfig" >&2
+      grep '^CONFIG_SYS_MEM_TOP_HIDE=' .config >&2 || true
+      exit 1
+    fi
+    if ! grep -Fxq 'CONFIG_LMB_LIMIT_DMA_BELOW_RAM_TOP=y' .config; then
+      echo "SG2002 LMB did not preserve the top-of-RAM reservation" >&2
+      exit 1
+    fi
+  '';
+
+  passthru = {
+    # Numeric bytes, intentionally not a formatted Kconfig string, so FIP and
+    # firmware packages can assert their complete carveout fits this contract.
+    inherit memoryTopHide;
+  };
 
   extraPatches = [
     ./patches/0001-configs-licheerv_nano-define-ramdisk_addr_r-move-fdt.patch
@@ -88,6 +125,9 @@ buildUBoot {
     # MMC driver never programs the cv18xx SD PHY at init (only during
     # tuning). Port the kernel's PHY setup so the card answers ACMD41.
     ./patches/0005-mmc-cv1800b_sdhci-program-cv18xx-sd-phy-at-probe.patch
+    # SYS_MEM_TOP_HIDE must constrain LMB/EFI allocations as well as U-Boot's
+    # relocation and malloc arenas.
+    ./patches/0007-lmb-respect-SYS_MEM_TOP_HIDE-for-allocations.patch
   ] ++ (if picoclawSplash then [
     ./patches/0006-cmd-picoclaw-add-board-scoped-pre-linux-splash.patch
   ] else [ ]);

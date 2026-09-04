@@ -240,6 +240,24 @@ in
   })
   (debug "mainline")
   (live "mainline" "usb" "live-mainline" { })
+  # The auxiliary-core variant is deliberately a separate catalog leaf: its
+  # FIP starts C906L and its DT removes the matching DDR carveouts from Linux.
+  # The artifact builder also selects the firmware-bearing ROM USB runner.
+  (live "mainline" "usb-c906l" "live-mainline-c906l" {
+    modules = [ ({ ... }: { sg2002.auxCore.enable = true; }) ];
+  })
+  # Explicit Timer4 lease: the evaluated auxCore configuration selects the
+  # matched firmware-bearing FIP and USB runner through the artifact builder.
+  (live "mainline" "usb-c906l-timer4" "live-mainline-c906l-timer4" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer4" ];
+        };
+      })
+    ];
+  })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
   # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder

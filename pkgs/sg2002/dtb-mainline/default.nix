@@ -19,6 +19,7 @@
 ,
 }:
 let
+  c906lMemoryMap = import ../c906l-memory-map.nix;
   # Each overlay has to be interpolated into the script body individually
   # — `toString [path1 path2]` doesn't trigger Nix's path-to-store import,
   # it just stringifies the raw source paths, which are then missing from
@@ -55,6 +56,37 @@ let
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
+
+  # Bring-up DT for the FSBL-started C906L.  Its FIP and this DTB are an
+  # atomic pair: Linux must never allocate from the final 2 MiB while the
+  # auxiliary core is executing there.
+  dtbNoWifiC906L =
+    let
+      unchecked = buildDtb "sg2002-licheerv-nano-bw-nowifi-c906l-unchecked" [
+        ./sg2002-licheerv-nano-bw.dtsi
+        ./sg2002-licheerv-nano-bw-nowifi.dtsi
+        ./sg2002-c906l.dtsi
+      ];
+    in
+    runCommand "sg2002-licheerv-nano-bw-nowifi-c906l.dtb"
+      {
+        nativeBuildInputs = [ dtc ];
+        passthru = c906lMemoryMap;
+      } ''
+      cp ${unchecked} "$out"
+
+      # The DTS is intentionally readable and reviewable rather than Nix-
+      # generated.  Verify its compiled contract against the shared memory-map
+      # values so hand edits cannot drift from firmware/FIP/U-Boot packaging.
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-firmware@8fe00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.firmwareAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.firmwareSize)}"
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-shmem@8ff00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemoryAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemorySize)}"
+      test "$(fdtget -t s "$out" /c906l-control compatible)" = \
+        "sophgo,sg2002-c906l-control"
+      test "$(fdtget -t s "$out" /soc/mailbox@1900000 compatible)" = \
+        "sophgo,cv1800b-mailbox"
+    '';
 
   # LicheeRV-Nano with the RJ45 wired: gmac0 + internal EPHY on.
   dtbEth = buildDtb "sg2002-licheerv-nano-bw-eth" [
@@ -137,6 +169,7 @@ in
   eth = dtbEth;
   oled = dtbOled;
   nowifi = dtbNoWifi;
+  nowifi-c906l = dtbNoWifiC906L;
   nowifi-high-speed = dtbNoWifiHighSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;

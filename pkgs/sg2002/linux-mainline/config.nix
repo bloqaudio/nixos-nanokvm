@@ -329,10 +329,15 @@ with lib.kernel; {
   PERF_EVENTS = no;
   HUGETLBFS = no;
 
-  # No remote processor, mailbox endpoint, or RPMsg device exists in the
-  # SG2002 DT. These are generic communication frameworks left on by the
-  # RISC-V defconfig, not requirements of USB, Ethernet, or NFS.
-  MAILBOX = no;
+  # The upstream controller is used as the low-latency doorbell to C906L.
+  # Bulk messages belong in explicitly reserved shared DDR; do not enable
+  # mailbox-test, whose generic buffer assumptions do not match this 8-byte
+  # controller.
+  MAILBOX = yes;
+  CV1800_MBOX = yes;
+
+  # No SG2002 remoteproc lifecycle driver exists upstream yet.  Keep RPMsg
+  # off until reset/quiesce and noncoherent shared-memory handling are proven.
   RPMSG = no;
   # These four options select the RPMsg core back on in the generic
   # defconfig; keep the broad gate above and close those selector paths.

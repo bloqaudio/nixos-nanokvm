@@ -12,24 +12,34 @@ with a bootable SD card inserted — no UART required. Flow:
 
   1. Push FIP via cv181x-rom-dl (no UART interaction — ROM USB download
      only uses the CVITEK USB Com Port, not the board's debug UART).
-  2. FSBL → OpenSBI → U-Boot runs; fastboot usb 0 enumerates on the
-     host as VID 18d1:d00d.
-  3. Optional diagnostic stop: `--uboot-only` leaves U-Boot in fastboot
+  2. On the tested USB BootROM path the FSBL loads and starts C906L, then
+     OpenSBI → U-Boot runs and fastboot usb 0 enumerates as VID 18d1:d00d.
+  3. With a C906L-bearing FIP, choose the handoff from the observed reset
+     state.  A core started after this invocation's FIP transfer is accepted
+     only after ABI, required-capability, and advancing-heartbeat checks.  A
+     held-reset core additionally gets an exact payload CRC before the vendor
+     reset/vector release sequence.  Attaching to a core started by an earlier
+     invocation requires explicit --accept-running-c906l consent and the same
+     live-status checks; its now-mutable payload cannot be CRC-verified.
+  4. Optional diagnostic stop: `--uboot-only` leaves U-Boot in fastboot
      so the host can issue `fastboot oem run:<cmd>` commands.
-  4. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
-  5. Host: soft-disconnect U-Boot's DWC2 gadget, then run
+  5. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
+  6. Host: soft-disconnect U-Boot's DWC2 gadget, then run
      `bootm <addr>`. The disconnect is explicit because a successful
      bootm never returns to fastboot's normal gadget teardown.
 
 Requires `fastboot` on PATH (android-tools).
 """
 import argparse
+from dataclasses import dataclass
 import errno
 import os
+import re
 import socket
 import subprocess
 import sys
 import time
+import zlib
 
 
 FASTBOOT_BUF_ADDR = 0x82000000
@@ -53,6 +63,38 @@ FASTBOOT_PRODUCT_ID = 0xd00d
 ROM_VENDOR_ID = 0x3346
 ROM_PRODUCT_ID = 0x1000
 
+# The SG2002 has 256 MiB of DRAM at 0x80000000.  C906L payload, status and
+# cache-eviction reads must stay in that aperture.  Restricting these inputs is
+# deliberate: the runner accepts no arbitrary MMIO range from its command
+# line, even though U-Boot's OEM command is capable of accessing one.
+SG2002_DRAM_START = 0x80000000
+SG2002_DRAM_END = 0x90000000
+
+C906L_RESET_REG = 0x03003024
+C906L_RESET_BIT = 1 << 6
+C906L_SEC_SYS_REG = 0x020B0004
+C906L_SEC_ENABLE_BIT = 1 << 13
+C906L_VECTOR_LOW_REG = 0x020B0020
+C906L_VECTOR_HIGH_REG = 0x020B0024
+
+C906L_STATUS_SIZE = 64
+C906L_STATUS_MAGIC = 0x4D564B4E
+C906L_ABI_MAJOR = 1
+C906L_STATE_RUNNING = 2
+C906L_STATE_FAULT = 3
+C906L_CAP_SHMEM_HEARTBEAT = 1 << 1
+C906L_MIN_CACHE_SCRATCH_SIZE = 1024 * 1024
+
+_CRC32_LINE = re.compile(
+    r"CRC32 for\s+([0-9a-fA-F]+)\s+\.\.\.\s+"
+    r"([0-9a-fA-F]+)\s+==>\s+([0-9a-fA-F]{8})",
+    re.IGNORECASE,
+)
+_MD_LONG_LINE = re.compile(
+    r"(?im)^(?:\(bootloader\)\s*)?([0-9a-fA-F]{8,16}):\s+"
+    r"((?:[0-9a-fA-F]{8}(?:\s+|$)){1,4})"
+)
+
 
 _SERIAL_AUTO = "<auto>"  # sentinel: device present but iSerial empty
 
@@ -63,6 +105,195 @@ _SERIAL_AUTO = "<auto>"  # sentinel: device present but iSerial empty
 # Unix socket gives the complete mainline handoff a host-wide, crash-released
 # claim without leaving a stale lock file behind.
 _ROM_LOCK_ADDRESS = "\0nanokvm-sg2002-usb-boot-mainline"
+
+
+class C906LBringupError(RuntimeError):
+    """A checked C906L handoff invariant was not satisfied."""
+
+
+@dataclass(frozen=True)
+class C906LStatus:
+    magic: int
+    abi_major: int
+    abi_minor: int
+    struct_size: int
+    state: int
+    generation: int
+    flags: int
+    heartbeat: int
+    capabilities: int
+    last_request: int
+    last_response: int
+
+    def readiness_error(self, required_capabilities=C906L_CAP_SHMEM_HEARTBEAT):
+        if self.magic != C906L_STATUS_MAGIC:
+            return "status magic is not NKVM"
+        if self.abi_major != C906L_ABI_MAJOR:
+            return (f"unsupported status ABI major {self.abi_major} "
+                    f"(expected {C906L_ABI_MAJOR})")
+        if self.struct_size != C906L_STATUS_SIZE:
+            return (f"status size is {self.struct_size}, expected "
+                    f"{C906L_STATUS_SIZE}")
+        if self.generation == 0:
+            return "status generation is zero"
+        missing = required_capabilities & ~self.capabilities
+        if missing:
+            return (f"firmware is missing required capabilities "
+                    f"0x{missing:x} (has 0x{self.capabilities:x}, "
+                    f"requires 0x{required_capabilities:x})")
+        if self.state != C906L_STATE_RUNNING:
+            return f"firmware state is {self.state}, not RUNNING"
+        return None
+
+
+def parse_int(value):
+    """argparse integer accepting the conventional 0x-prefixed form."""
+    try:
+        return int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value}") from exc
+
+
+def ranges_overlap(start_a, size_a, start_b, size_b):
+    return start_a < start_b + size_b and start_b < start_a + size_a
+
+
+def validate_c906l_layout(firmware_size, run_address, shmem_address,
+                          scratch_address, scratch_size):
+    ranges = {
+        "firmware": (run_address, firmware_size),
+        "status": (shmem_address, C906L_STATUS_SIZE),
+        "cache scratch": (scratch_address, scratch_size),
+    }
+    if firmware_size <= 0:
+        raise C906LBringupError("C906L firmware is empty")
+    if scratch_size < C906L_MIN_CACHE_SCRATCH_SIZE:
+        raise C906LBringupError(
+            "C906L cache scratch must be at least "
+            f"0x{C906L_MIN_CACHE_SCRATCH_SIZE:x} bytes"
+        )
+    for name, (address, size) in ranges.items():
+        if address % 64:
+            raise C906LBringupError(
+                f"{name} address 0x{address:x} is not cache-line aligned"
+            )
+        if size <= 0 or address < SG2002_DRAM_START or address + size > SG2002_DRAM_END:
+            raise C906LBringupError(
+                f"{name} range 0x{address:x}..0x{address + size:x} "
+                "is outside SG2002 DRAM"
+            )
+    names = list(ranges)
+    for index, first in enumerate(names):
+        for second in names[index + 1:]:
+            a_start, a_size = ranges[first]
+            b_start, b_size = ranges[second]
+            if ranges_overlap(a_start, a_size, b_start, b_size):
+                raise C906LBringupError(
+                    f"{first} and {second} ranges overlap"
+                )
+
+
+def select_c906l_handoff_mode(reset_value, fip_transfer_attempted,
+                              accept_running):
+    """Choose the only safe verification path for the observed reset state."""
+    if not reset_value & C906L_RESET_BIT:
+        return "held-reset"
+    if fip_transfer_attempted:
+        return "fsbl-started"
+    if accept_running:
+        return "explicit-attach"
+    raise C906LBringupError(
+        "C906L is already out of reset without a FIP transfer by this "
+        "runner; refusing an ambiguous attach (use "
+        "--accept-running-c906l only after independently proving the image)"
+    )
+
+
+def parse_uboot_crc32(output, expected_address, expected_size):
+    matches = []
+    for match in _CRC32_LINE.finditer(output):
+        start, end, checksum = (int(part, 16) for part in match.groups())
+        if start == expected_address and end == expected_address + expected_size - 1:
+            matches.append(checksum)
+    if len(matches) != 1:
+        raise C906LBringupError(
+            "expected exactly one matching U-Boot CRC32 result for "
+            f"0x{expected_address:x}+0x{expected_size:x}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def parse_uboot_words(output, expected_address, count):
+    words = {}
+    for match in _MD_LONG_LINE.finditer(output):
+        line_address = int(match.group(1), 16)
+        for offset, value in enumerate(match.group(2).split()):
+            words[line_address + offset * 4] = int(value, 16)
+    missing = [expected_address + offset * 4 for offset in range(count)
+               if expected_address + offset * 4 not in words]
+    if missing:
+        raise C906LBringupError(
+            f"U-Boot memory dump omitted 0x{missing[0]:x}"
+        )
+    return [words[expected_address + offset * 4] for offset in range(count)]
+
+
+def decode_c906l_status(words):
+    if len(words) != C906L_STATUS_SIZE // 4:
+        raise C906LBringupError("C906L status dump is not exactly 64 bytes")
+    return C906LStatus(
+        magic=words[0],
+        abi_major=words[1] & 0xffff,
+        abi_minor=words[1] >> 16,
+        struct_size=words[2],
+        state=words[3],
+        generation=words[4],
+        flags=words[5],
+        heartbeat=words[6] | words[7] << 32,
+        capabilities=words[8] | words[9] << 32,
+        last_request=words[10] | words[11] << 32,
+        last_response=words[12] | words[13] << 32,
+    )
+
+
+def apply_c906l_reset_sequence(run_address, read_u32, write_u32):
+    """Apply the vendor FSBL C906L sequence through checked callbacks.
+
+    The callback shape keeps ordering and readback policy independently
+    testable while the real runner supplies U-Boot-backed MMIO operations.
+    There is intentionally no rollback reset: after the final write the core
+    may own buses, so a failed readiness check requires a cold-cycle.
+    """
+    reset_value = read_u32(C906L_RESET_REG)
+    write_u32(C906L_RESET_REG, reset_value & ~C906L_RESET_BIT)
+    actual = read_u32(C906L_RESET_REG)
+    if actual & C906L_RESET_BIT:
+        raise C906LBringupError(
+            f"C906L reset did not assert (register is 0x{actual:08x})"
+        )
+
+    sec_value = read_u32(C906L_SEC_SYS_REG)
+    write_u32(C906L_SEC_SYS_REG, sec_value | C906L_SEC_ENABLE_BIT)
+    sec_actual = read_u32(C906L_SEC_SYS_REG)
+    if not sec_actual & C906L_SEC_ENABLE_BIT:
+        raise C906LBringupError("C906L secure-system enable bit did not latch")
+
+    write_u32(C906L_VECTOR_LOW_REG, run_address)
+    write_u32(C906L_VECTOR_HIGH_REG, run_address >> 32)
+    vector_low = read_u32(C906L_VECTOR_LOW_REG)
+    vector_high = read_u32(C906L_VECTOR_HIGH_REG)
+    if (vector_high << 32 | vector_low) != run_address:
+        raise C906LBringupError(
+            "C906L boot vector readback does not match run address"
+        )
+
+    reset_value = read_u32(C906L_RESET_REG)
+    write_u32(C906L_RESET_REG, reset_value | C906L_RESET_BIT)
+    actual = read_u32(C906L_RESET_REG)
+    if not actual & C906L_RESET_BIT:
+        raise C906LBringupError(
+            f"C906L reset did not release (register is 0x{actual:08x})"
+        )
 
 
 def acquire_rom_downloader_lock():
@@ -143,7 +374,10 @@ def main():
                    help='with --uboot-only, run a U-Boot command via '
                         '`fastboot oem run:<cmd>`; may be repeated')
     p.add_argument('--skip-fip', action='store_true',
-                   help='skip ROM FIP push; assume U-Boot already in fastboot')
+                   help='skip ROM FIP push; assume U-Boot already in fastboot. '
+                        'A held-reset C906L still requires an exact payload '
+                        'CRC before release. An already-running core is '
+                        'refused unless --accept-running-c906l is also given.')
     p.add_argument('--fip', help='path to directory containing fip.bin')
     p.add_argument('--rom-dl', help='path to cv181x-rom-dl')
     p.add_argument('--fastboot', default='fastboot',
@@ -186,10 +420,69 @@ def main():
                         '(U-Boot fastboot gadget). Set this if multiple '
                         'fastboot devices are co-attached or you want to '
                         'be explicit.')
+    p.add_argument('--c906l-firmware',
+                   help='C906L firmware file already embedded in the FIP. '
+                        'Enables checked live attach or held-reset release; '
+                        'all other --c906l-* layout options then become '
+                        'mandatory.')
+    p.add_argument('--c906l-run-address', type=parse_int,
+                   help='physical DRAM address at which the FIP loaded the '
+                        'C906L firmware')
+    p.add_argument('--c906l-shmem-address', type=parse_int,
+                   help='physical address of the 64-byte C906L status record')
+    p.add_argument('--c906l-required-capabilities', type=parse_int,
+                   help='capability mask the matched firmware must advertise '
+                        'before Linux handoff')
+    p.add_argument('--c906l-cache-scratch-address', type=parse_int,
+                   help='start of a safe, readable DRAM span used to evict '
+                        "U-Boot's non-coherent cached status snapshot")
+    p.add_argument('--c906l-cache-scratch-size', type=parse_int,
+                   help='size of the cache-eviction span (at least 1 MiB)')
+    p.add_argument('--c906l-ready-timeout', type=float, default=15.0,
+                   help='seconds to wait for a valid RUNNING status and two '
+                        'different heartbeat values (default: 15)')
+    p.add_argument('--c906l-poll-interval', type=float, default=0.25,
+                   help='seconds between status snapshots (default: 0.25)')
+    p.add_argument('--accept-running-c906l', action='store_true',
+                   help='explicitly attach to an already-running C906L after '
+                        'independently proving the exact FIP image. The runner '
+                        'does not CRC or reset the mutable live payload, but '
+                        'still requires its ABI, required capabilities, and '
+                        'advancing heartbeat')
     a = p.parse_args()
 
     if not a.uboot_only and not a.fit:
         p.error('fit is required unless --uboot-only is set')
+
+    c906l_layout = (
+        a.c906l_run_address,
+        a.c906l_shmem_address,
+        a.c906l_required_capabilities,
+        a.c906l_cache_scratch_address,
+        a.c906l_cache_scratch_size,
+    )
+    if a.c906l_firmware is None and any(value is not None
+                                        for value in c906l_layout):
+        p.error('--c906l-firmware is required with any other --c906l-* '
+                'layout option')
+    if a.c906l_firmware is not None and any(value is None
+                                            for value in c906l_layout):
+        p.error('--c906l-run-address, --c906l-shmem-address, '
+                '--c906l-required-capabilities, '
+                '--c906l-cache-scratch-address and '
+                '--c906l-cache-scratch-size are all required with '
+                '--c906l-firmware')
+    if a.c906l_firmware is not None and not os.path.isfile(a.c906l_firmware):
+        p.error(f'C906L firmware is not a regular file: {a.c906l_firmware}')
+    if a.c906l_ready_timeout <= 0:
+        p.error('--c906l-ready-timeout must be positive')
+    if a.c906l_poll_interval <= 0:
+        p.error('--c906l-poll-interval must be positive')
+    if (a.c906l_required_capabilities is not None
+            and not 0 < a.c906l_required_capabilities < 1 << 64):
+        p.error('--c906l-required-capabilities must be a nonzero u64 mask')
+    if a.accept_running_c906l and a.c906l_firmware is None:
+        p.error('--accept-running-c906l requires a C906L-bearing runner')
 
     fit_size = os.path.getsize(a.fit) if a.fit else 0
 
@@ -213,6 +506,192 @@ def main():
         if a.fastboot_serial and a.fastboot_serial != _SERIAL_AUTO:
             cmd += ['-s', a.fastboot_serial]
         return cmd + list(args)
+
+    def run_fastboot_checked(*args, timeout=60):
+        try:
+            result = subprocess.run(
+                fastboot_cmd(*args), capture_output=True, text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise C906LBringupError(
+                f"fastboot {' '.join(args[:2])} timed out"
+            ) from exc
+        except OSError as exc:
+            raise C906LBringupError(
+                f"could not execute fastboot: {exc}"
+            ) from exc
+        if result.returncode != 0:
+            detail = (result.stdout + result.stderr).strip()
+            raise C906LBringupError(
+                f"fastboot {' '.join(args[:2])} failed: {detail}"
+            )
+        return result.stdout + result.stderr
+
+    def drain_uboot_console():
+        """Drain and reset U-Boot's console record before a parsed command."""
+        try:
+            result = subprocess.run(
+                fastboot_cmd('oem', 'console'), capture_output=True,
+                text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise C906LBringupError("fastboot oem console timed out") from exc
+        except OSError as exc:
+            raise C906LBringupError(
+                f"could not execute fastboot oem console: {exc}"
+            ) from exc
+        output = result.stdout + result.stderr
+        if result.returncode and 'empty console' not in output.lower():
+            raise C906LBringupError(
+                f"fastboot oem console failed: {output.strip()}"
+            )
+        return output
+
+    def run_uboot_checked(command):
+        log(f"C906L: U-Boot: {command}")
+        run_fastboot_checked('oem', f'run:{command}')
+
+    def run_uboot_with_output(command):
+        drain_uboot_console()
+        run_uboot_checked(command)
+        output = run_fastboot_checked('oem', 'console')
+        if not output.strip():
+            raise C906LBringupError(
+                f"U-Boot command produced no console record: {command}"
+            )
+        return output
+
+    def uboot_crc32(address, size):
+        output = run_uboot_with_output(
+            f'crc32 0x{address:x} 0x{size:x}'
+        )
+        return parse_uboot_crc32(output, address, size)
+
+    def uboot_read_words(address, count):
+        output = run_uboot_with_output(
+            f'md.l 0x{address:x} 0x{count:x}'
+        )
+        return parse_uboot_words(output, address, count)
+
+    def uboot_write_u32(address, value):
+        run_uboot_checked(f'mw.l 0x{address:x} 0x{value & 0xffffffff:08x} 1')
+
+    def uboot_read_u32(address):
+        return uboot_read_words(address, 1)[0]
+
+    def read_c906l_status():
+        # U-Boot has no dcache command in this configuration and SG2002 is not
+        # hardware coherent.  A full, caller-declared safe span larger than
+        # the cache is read before every snapshot to evict an old status line.
+        uboot_crc32(a.c906l_cache_scratch_address,
+                    a.c906l_cache_scratch_size)
+        words = uboot_read_words(a.c906l_shmem_address,
+                                 C906L_STATUS_SIZE // 4)
+        return decode_c906l_status(words)
+
+    def wait_for_c906l_ready():
+        deadline = time.monotonic() + a.c906l_ready_timeout
+        baseline = None
+        last_status = None
+        while time.monotonic() < deadline:
+            status = read_c906l_status()
+            last_status = status
+            if status.magic == C906L_STATUS_MAGIC:
+                if status.state == C906L_STATE_FAULT:
+                    raise C906LBringupError(
+                        f"C906L reported FAULT (flags=0x{status.flags:x})"
+                    )
+                if status.state == C906L_STATE_RUNNING:
+                    readiness_error = status.readiness_error(
+                        a.c906l_required_capabilities
+                    )
+                    if readiness_error:
+                        raise C906LBringupError(readiness_error)
+                    if baseline is None or baseline.generation != status.generation:
+                        baseline = status
+                        log("C906L: RUNNING status observed: "
+                            f"generation={status.generation}, "
+                            f"heartbeat={status.heartbeat}")
+                    elif baseline.heartbeat != status.heartbeat:
+                        log("C906L: heartbeat advanced: "
+                            f"{baseline.heartbeat} -> {status.heartbeat}")
+                        return status
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(a.c906l_poll_interval, remaining))
+
+        detail = "no valid status observed"
+        if last_status is not None:
+            detail = (f"last status magic=0x{last_status.magic:08x} "
+                      f"state={last_status.state} "
+                      f"generation={last_status.generation} "
+                      f"heartbeat={last_status.heartbeat}")
+        raise C906LBringupError(
+            f"C906L did not reach RUNNING with an advancing heartbeat "
+            f"within {a.c906l_ready_timeout:g}s ({detail})"
+        )
+
+    fip_transfer_attempted = False
+
+    def bring_up_c906l():
+        firmware_size = os.path.getsize(a.c906l_firmware)
+        validate_c906l_layout(
+            firmware_size,
+            a.c906l_run_address,
+            a.c906l_shmem_address,
+            a.c906l_cache_scratch_address,
+            a.c906l_cache_scratch_size,
+        )
+        reset_value = uboot_read_words(C906L_RESET_REG, 1)[0]
+        mode = select_c906l_handoff_mode(
+            reset_value, fip_transfer_attempted, a.accept_running_c906l
+        )
+        if mode != "held-reset":
+            if mode == "fsbl-started":
+                log("C906L: FSBL already released the core after this "
+                    "runner's FIP transfer; validating live status")
+            else:
+                log("C906L: explicit attach to an already-running core; "
+                    "payload CRC cannot be checked after firmware mutates "
+                    "its data, so requiring ABI/capabilities/heartbeat")
+            wait_for_c906l_ready()
+            return
+        if a.skip_fip:
+            log("C906L: --skip-fip selected; held-reset and exact in-DRAM "
+                "payload checks remain mandatory")
+        with open(a.c906l_firmware, 'rb') as firmware:
+            expected_crc = zlib.crc32(firmware.read()) & 0xffffffff
+        log("C906L: verifying FIP-loaded firmware: "
+            f"0x{a.c906l_run_address:x}+0x{firmware_size:x}, "
+            f"CRC32 {expected_crc:08x}")
+        actual_crc = uboot_crc32(a.c906l_run_address, firmware_size)
+        if actual_crc != expected_crc:
+            raise C906LBringupError(
+                f"C906L firmware CRC32 mismatch: U-Boot read "
+                f"{actual_crc:08x}, local file is {expected_crc:08x}; "
+                "refusing to release the core"
+            )
+        log("C906L: firmware CRC32 verified")
+
+        try:
+            apply_c906l_reset_sequence(
+                a.c906l_run_address, uboot_read_u32, uboot_write_u32
+            )
+        except BaseException:
+            log("ERROR: C906L reset handoff did not complete; hardware state "
+                "is ambiguous. Do not continue to Linux; cold-cycle before "
+                "retrying.")
+            raise
+
+        log("C906L: reset released; waiting for firmware status")
+        try:
+            wait_for_c906l_ready()
+        except BaseException:
+            log("ERROR: C906L was released but readiness was not proven. "
+                "The runner will not reset a core that may own buses; refuse "
+                "Linux handoff and cold-cycle the board before retrying.")
+            raise
 
     def find_fastboot_target():
         """Return our fastboot serial (or `_SERIAL_AUTO` for an empty-
@@ -292,6 +771,7 @@ def main():
             attempt_timeout = min(per_attempt, remaining)
             log(f"attempt {attempt}/{a.attempts}: "
                 f"rom-dl push (per-attempt timeout {attempt_timeout:.0f}s)...")
+            fip_transfer_attempted = True
             try:
                 rc = subprocess.call(
                     [a.rom_dl, '--image_dir', a.fip],
@@ -343,6 +823,13 @@ def main():
             "(Looking for VID:PID "
             f"{FASTBOOT_VENDOR_ID:04x}:{FASTBOOT_PRODUCT_ID:04x}.)")
         sys.exit(1)
+
+    if a.c906l_firmware is not None:
+        try:
+            bring_up_c906l()
+        except C906LBringupError as exc:
+            log(f"ERROR: {exc}")
+            sys.exit(1)
 
     if a.uboot_only:
         if a.oem_console:
