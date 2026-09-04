@@ -1,7 +1,7 @@
 {
   "spdxLicense": "MIT",
   "schemaVersion": 1,
-  "contractEpoch": 1,
+  "contractEpoch": 2,
   "soc": {
     "compatible": "sophgo,sg2002",
     "cacheLineSize": 64,
@@ -47,7 +47,7 @@
   "abi": {
     "endianness": "little",
     "major": 1,
-    "minor": 0,
+    "minor": 1,
     "magic": "0x4d564b4e",
     "message": {
       "size": 8,
@@ -74,7 +74,10 @@
         { "name": "capabilities", "offset": 32, "width": 8 },
         { "name": "lastRequest", "offset": 40, "width": 8 },
         { "name": "lastResponse", "offset": 48, "width": 8 },
-        { "name": "reserved", "offset": 56, "width": 8 }
+        { "name": "activationState", "offset": 56, "width": 1 },
+        { "name": "activationError", "offset": 57, "width": 1 },
+        { "name": "activationAttempts", "offset": 58, "width": 2 },
+        { "name": "activationRequestId", "offset": 60, "width": 4 }
       ]
     },
     "states": {
@@ -89,10 +92,11 @@
       "ping": "0x01",
       "getAbi": "0x02",
       "getCapabilities": "0x03",
+      "activateLeases": "0x04",
       "response": "0x80",
       "error": "0xff"
     },
-    "capabilityWireWidth": 32,
+    "capabilityWireWidth": 64,
     "capabilities": {
       "mailbox": {
         "bit": 0,
@@ -123,8 +127,117 @@
       "timer4SelfTestFailed": {
         "bit": 2,
         "description": "Selected Timer4 lease validation or IRQ self-test failed"
+      },
+      "activationRejected": {
+        "bit": 3,
+        "description": "Linux activation record or mailbox envelope was rejected"
+      },
+      "activationFailed": {
+        "bit": 4,
+        "description": "A lease failed after exact activation authorization"
+      },
+      "manifestFault": {
+        "bit": 5,
+        "description": "The immutable firmware manifest could not be published"
       }
     }
+  },
+  "activation": {
+    "leaseWireWidth": 32,
+    "manifest": {
+      "offset": "0x00000040",
+      "size": 128,
+      "alignment": 64,
+      "magic": "0x31434b4e",
+      "formatMajor": 1,
+      "formatMinor": 0,
+      "commit": "0x54494d43",
+      "fields": [
+        { "name": "magic", "offset": 0, "width": 4 },
+        { "name": "formatMajor", "offset": 4, "width": 2 },
+        { "name": "formatMinor", "offset": 6, "width": 2 },
+        { "name": "structSize", "offset": 8, "width": 4 },
+        { "name": "generation", "offset": 12, "width": 4 },
+        { "name": "contractEpoch", "offset": 16, "width": 4 },
+        { "name": "profileId", "offset": 20, "width": 4 },
+        { "name": "abiMajor", "offset": 24, "width": 2 },
+        { "name": "abiMinor", "offset": 26, "width": 2 },
+        { "name": "capabilityWidth", "offset": 28, "width": 2 },
+        { "name": "leaseWidth", "offset": 30, "width": 2 },
+        { "name": "finalCapabilities", "offset": 32, "width": 8 },
+        { "name": "dormantCapabilities", "offset": 40, "width": 8 },
+        { "name": "leaseMask", "offset": 48, "width": 8 },
+        { "name": "flags", "offset": 56, "width": 4 },
+        { "name": "reserved0", "offset": 60, "width": 4 },
+        { "name": "contractSha256", "offset": 64, "width": 32 },
+        { "name": "reserved1", "offset": 96, "width": 28 },
+        { "name": "commit", "offset": 124, "width": 4 }
+      ]
+    },
+    "request": {
+      "offset": "0x000000c0",
+      "size": 128,
+      "alignment": 64,
+      "magic": "0x31414b4e",
+      "formatMajor": 1,
+      "formatMinor": 0,
+      "commit": "0x314b4341",
+      "fields": [
+        { "name": "magic", "offset": 0, "width": 4 },
+        { "name": "formatMajor", "offset": 4, "width": 2 },
+        { "name": "formatMinor", "offset": 6, "width": 2 },
+        { "name": "structSize", "offset": 8, "width": 4 },
+        { "name": "generation", "offset": 12, "width": 4 },
+        { "name": "requestId", "offset": 16, "width": 4 },
+        { "name": "contractEpoch", "offset": 20, "width": 4 },
+        { "name": "profileId", "offset": 24, "width": 4 },
+        { "name": "abiVersion", "offset": 28, "width": 4 },
+        { "name": "finalCapabilities", "offset": 32, "width": 8 },
+        { "name": "leaseMask", "offset": 40, "width": 8 },
+        { "name": "contractSha256", "offset": 48, "width": 32 },
+        { "name": "reserved", "offset": 80, "width": 44 },
+        { "name": "commit", "offset": 124, "width": 4 }
+      ]
+    },
+    "states": {
+      "initializing": 0,
+      "dormant": 1,
+      "validating": 2,
+      "activating": 3,
+      "active": 4,
+      "rejected": 5,
+      "leaseFault": 6
+    },
+    "results": {
+      "success": 0,
+      "invalidEnvelope": 1,
+      "malformedRecord": 2,
+      "staleGeneration": 3,
+      "abiMismatch": 4,
+      "epochMismatch": 5,
+      "profileMismatch": 6,
+      "digestMismatch": 7,
+      "capabilitiesMismatch": 8,
+      "leaseMaskMismatch": 9,
+      "invalidState": 10,
+      "preconditionFailed": 11,
+      "irqInstallFailed": 12,
+      "selfTestTimeout": 13,
+      "selfTestFailed": 14,
+      "internalFailure": 15,
+      "activationTimeout": 16
+    },
+    "manifestFlags": {
+      "ackRequired": {
+        "bit": 0,
+        "description": "Physical peripheral leases require exact Linux acknowledgement"
+      },
+      "rpmsgWhileDormant": {
+        "bit": 1,
+        "description": "The base RPMsg transport is available before lease activation"
+      }
+    },
+    "linuxResponseTimeoutMs": 2000
   },
   "memory": {
     "firmware": {
@@ -140,7 +253,12 @@
         "status": {
           "offset": "0x00000000",
           "size": "0x00001000",
-          "writer": "c906l"
+          "ownership": {
+            "hotStatus": "c906l",
+            "manifest": "c906l",
+            "activationRequest": "linux",
+            "remainder": "none"
+          }
         },
         "resourceTable": {
           "offset": "0x00001000",
@@ -239,6 +357,7 @@
   "peripherals": {
     "timer4": {
       "kind": "dw-apb-timer-channel",
+      "leaseBit": 0,
       "cargoFeature": "timer4",
       "capability": "timer4SelfTest",
       "failureFlag": "timer4SelfTestFailed",

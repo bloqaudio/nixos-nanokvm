@@ -71,8 +71,12 @@ runCommand "sg2002-c906l-contract-${selected.profileName}" {
     contract = selected.resolvedContract;
     contractEpoch = selected.resolvedContract.contractEpoch;
     contractSha256 = selected.sha256;
+    dormantCapabilities = selected.dormantCapabilities;
     enabledPeripherals = selected.sortedPeripherals;
+    leaseMask = selected.leaseMask;
+    manifestFlags = selected.manifestFlags;
     profileName = selected.profileName;
+    profileId = selected.profileId;
     protocolVersion = {
       inherit (selected.resolvedContract.abi) major minor;
     };

@@ -123,9 +123,49 @@ let
       { name = "capabilities"; offset = 32; width = 8; }
       { name = "lastRequest"; offset = 40; width = 8; }
       { name = "lastResponse"; offset = 48; width = 8; }
-      { name = "reserved"; offset = 56; width = 8; }
+      { name = "activationState"; offset = 56; width = 1; }
+      { name = "activationError"; offset = 57; width = 1; }
+      { name = "activationAttempts"; offset = 58; width = 2; }
+      { name = "activationRequestId"; offset = 60; width = 4; }
     ];
   };
+  expectedManifestFields = [
+    { name = "magic"; offset = 0; width = 4; }
+    { name = "formatMajor"; offset = 4; width = 2; }
+    { name = "formatMinor"; offset = 6; width = 2; }
+    { name = "structSize"; offset = 8; width = 4; }
+    { name = "generation"; offset = 12; width = 4; }
+    { name = "contractEpoch"; offset = 16; width = 4; }
+    { name = "profileId"; offset = 20; width = 4; }
+    { name = "abiMajor"; offset = 24; width = 2; }
+    { name = "abiMinor"; offset = 26; width = 2; }
+    { name = "capabilityWidth"; offset = 28; width = 2; }
+    { name = "leaseWidth"; offset = 30; width = 2; }
+    { name = "finalCapabilities"; offset = 32; width = 8; }
+    { name = "dormantCapabilities"; offset = 40; width = 8; }
+    { name = "leaseMask"; offset = 48; width = 8; }
+    { name = "flags"; offset = 56; width = 4; }
+    { name = "reserved0"; offset = 60; width = 4; }
+    { name = "contractSha256"; offset = 64; width = 32; }
+    { name = "reserved1"; offset = 96; width = 28; }
+    { name = "commit"; offset = 124; width = 4; }
+  ];
+  expectedRequestFields = [
+    { name = "magic"; offset = 0; width = 4; }
+    { name = "formatMajor"; offset = 4; width = 2; }
+    { name = "formatMinor"; offset = 6; width = 2; }
+    { name = "structSize"; offset = 8; width = 4; }
+    { name = "generation"; offset = 12; width = 4; }
+    { name = "requestId"; offset = 16; width = 4; }
+    { name = "contractEpoch"; offset = 20; width = 4; }
+    { name = "profileId"; offset = 24; width = 4; }
+    { name = "abiVersion"; offset = 28; width = 4; }
+    { name = "finalCapabilities"; offset = 32; width = 8; }
+    { name = "leaseMask"; offset = 40; width = 8; }
+    { name = "contractSha256"; offset = 48; width = 32; }
+    { name = "reserved"; offset = 80; width = 44; }
+    { name = "commit"; offset = 124; width = 4; }
+    ];
 
   validateFields = recordName: record:
     let
@@ -138,7 +178,7 @@ let
             "${recordName} contains an unnamed field")
           (require (field.offset == state.next)
             "${recordName}.${field.name} starts at ${toString field.offset}, expected ${toString state.next}")
-          (require (builtins.elem field.width [ 1 2 4 8 ])
+          (require (builtins.elem field.width [ 1 2 4 8 28 32 44 ])
             "${recordName}.${field.name} has unsupported width ${toString field.width}")
           (require (fieldEnd <= record.size)
             "${recordName}.${field.name} extends past the record")
@@ -241,6 +281,10 @@ let
         "peripheral `${peripheralName}` has no kind")
       (require (builtins.hasAttr peripheral.capability contract.abi.capabilities)
         "peripheral `${peripheralName}` names an unknown capability")
+      (require (builtins.isInt peripheral.leaseBit
+        && peripheral.leaseBit >= 0
+        && peripheral.leaseBit < contract.activation.leaseWireWidth)
+        "peripheral `${peripheralName}` has an invalid lease bit")
       (if peripheral.kind == "dw-apb-timer-channel" then
         validateTimerPeripheral peripheralName peripheral
       else
@@ -289,31 +333,54 @@ let
 
   validation = [
     (require (contract.schemaVersion == 1) "unsupported schemaVersion")
-    (require (builtins.isInt contract.contractEpoch && contract.contractEpoch > 0)
-      "contractEpoch must be a positive integer")
+    (require (contract.contractEpoch == 2)
+      "ABI 1.1 requires contractEpoch 2")
     (require (contract.abi.endianness == "little") "only the little-endian ABI is supported")
-    (require (contract.abi.major == 1 && contract.abi.minor == 0)
-      "this contract must describe the committed ABI 1.0")
+    (require (contract.abi.major == 1 && contract.abi.minor == 1)
+      "this contract must describe the committed ABI 1.1")
     (require (contract.abi.magic == 1297501006) "unexpected status magic")
     (require (contract.abi.message == expectedMessage)
       "abi.message does not match the frozen schema-1 wire layout")
     (require (contract.abi.status == expectedStatus)
       "abi.status does not match the frozen schema-1 wire layout")
+    (require (contract.activation.manifest.fields == expectedManifestFields)
+      "activation.manifest does not match the frozen ABI-1.1 wire layout")
+    (require (contract.activation.request.fields == expectedRequestFields)
+      "activation.request does not match the frozen ABI-1.1 wire layout")
     (validateFields "abi.message" contract.abi.message)
     (validateFields "abi.status" contract.abi.status)
+    (validateFields "activation.manifest" contract.activation.manifest)
+    (validateFields "activation.request" contract.activation.request)
     (validateNames "abi.states" contract.abi.states)
     (validateNames "abi.services" contract.abi.services)
     (validateNames "abi.opcodes" contract.abi.opcodes)
     (validateNames "abi.capabilities" contract.abi.capabilities)
     (validateNames "abi.flags" contract.abi.flags)
+    (validateNames "activation.states" contract.activation.states)
+    (validateNames "activation.results" contract.activation.results)
+    (validateNames "activation.manifestFlags"
+      contract.activation.manifestFlags)
     (validateNames "soc.mailbox.channels" contract.soc.mailbox.channels)
     (validateNames "memory.shared.regions" contract.memory.shared.regions)
     (validateBits "abi.capabilities" contract.abi.capabilityWireWidth
       contract.abi.capabilities)
     (validateBits "abi.flags" 32 contract.abi.flags)
+    (validateBits "activation.manifestFlags" 32
+      contract.activation.manifestFlags)
     (require (allUnique (values contract.abi.states)) "ABI states are not unique")
     (require (allUnique (values contract.abi.services)) "ABI services are not unique")
     (require (allUnique (values contract.abi.opcodes)) "ABI opcodes are not unique")
+    (require (contract.abi.capabilityWireWidth == 64)
+      "ABI 1.1 capability width must be 64 bits")
+    (require (contract.abi.opcodes.activateLeases == 4)
+      "ABI 1.1 activation opcode must remain 0x04")
+    (require (allUnique (values contract.activation.states))
+      "activation states are not unique")
+    (require (allUnique (values contract.activation.results))
+      "activation results are not unique")
+    (require (allUnique
+      (map (peripheral: peripheral.leaseBit) (values contract.peripherals)))
+      "peripheral lease bits are not unique")
     (require (builtins.hasAttr "base" contract.profiles
       && contract.profiles.base.peripherals == [ ])
       "profiles.base must exist and have no peripheral leases")
@@ -324,6 +391,41 @@ let
       "cacheLineSize must be a power of two")
     (require (contract.abi.status.size == contract.soc.cacheLineSize)
       "status must occupy exactly one cache line")
+    (require (
+      contract.activation.leaseWireWidth > 0
+      && contract.activation.leaseWireWidth == 32
+    ) "lease wire width must fit the stable 32-bit profile identifier")
+    (require (
+      contract.activation.manifest.offset == contract.abi.status.size
+      && contract.activation.manifest.size == 128
+      && contract.activation.manifest.alignment == contract.soc.cacheLineSize
+      && lib.mod contract.activation.manifest.offset
+        contract.soc.cacheLineSize == 0
+      && lib.mod contract.activation.manifest.size
+        contract.soc.cacheLineSize == 0
+      && contract.activation.request.offset
+        == contract.activation.manifest.offset
+          + contract.activation.manifest.size
+      && contract.activation.request.size == 128
+      && contract.activation.request.alignment == contract.soc.cacheLineSize
+      && lib.mod contract.activation.request.offset
+        contract.soc.cacheLineSize == 0
+      && lib.mod contract.activation.request.size
+        contract.soc.cacheLineSize == 0
+      && contract.activation.request.offset + contract.activation.request.size
+        <= shared.regions.status.size
+    ) "ABI-1.1 records do not form disjoint cacheline-owned status-page ranges")
+    (require (
+      contract.activation.manifest.magic == 826493774
+      && contract.activation.manifest.formatMajor == 1
+      && contract.activation.manifest.formatMinor == 0
+      && contract.activation.manifest.commit == 1414090051
+      && contract.activation.request.magic == 826362702
+      && contract.activation.request.formatMajor == 1
+      && contract.activation.request.formatMinor == 0
+      && contract.activation.request.commit == 827016001
+      && contract.activation.linuxResponseTimeoutMs > 0
+    ) "ABI-1.1 manifest or activation framing constants changed")
     (require (firmwareEnd == shared.address)
       "firmware and shared memory must be contiguous")
     (require (sharedEnd == dramEnd)
@@ -394,12 +496,32 @@ let
           (name: validated.peripherals.${name}.capability)
           sortedPeripherals));
       expectedCapabilities = capabilityMask sortedCapabilities;
+      dormantCapabilities = capabilityMask baseCapabilities;
+      leaseMask = lib.foldl'
+        (mask: name: mask + pow2 selectedLeases.${name}.leaseBit)
+        0
+        sortedPeripherals;
+      profileId = leaseMask + 1;
+      activationRequired = sortedPeripherals != [ ];
+      manifestFlags =
+        pow2 validated.activation.manifestFlags.rpmsgWhileDormant.bit
+        + (if activationRequired then
+          pow2 validated.activation.manifestFlags.ackRequired.bit
+        else
+          0);
       resolvedContract = builtins.removeAttrs validated [ "profiles" "peripherals" ] // {
         profile = {
           name = profileName;
           peripherals = sortedPeripherals;
           capabilities = sortedCapabilities;
-          inherit expectedCapabilities;
+          inherit
+            activationRequired
+            dormantCapabilities
+            expectedCapabilities
+            leaseMask
+            manifestFlags
+            profileId
+            ;
         };
         peripheralLeases = selectedLeases;
       };
@@ -407,10 +529,16 @@ let
       digestJson = builtins.toJSON (stripDocumentation resolvedContract);
       sha256 = builtins.hashString "sha256" digestJson;
     in {
+      _profileIdFits = require (profileId < pow2 32)
+        "profile identifier does not fit 32 bits";
       inherit
         canonicalJson
         digestJson
         expectedCapabilities
+        dormantCapabilities
+        leaseMask
+        manifestFlags
+        profileId
         profileName
         resolvedContract
         sha256
@@ -427,7 +555,9 @@ let
       fail "unknown profile `${profileName}`";
 
   resolveProfile = profileName:
-    builtins.deepSeq validated (resolveProfileUnchecked profileName);
+    let resolved = builtins.deepSeq validated (resolveProfileUnchecked profileName);
+    in builtins.deepSeq resolved._profileIdFits
+      (builtins.removeAttrs resolved [ "_profileIdFits" ]);
 
   resolvePeripherals = peripherals:
     let
@@ -454,7 +584,9 @@ let
     else if builtins.length matchingProfiles > 1 then
       fail "multiple named profiles match peripherals: ${lib.concatStringsSep ", " sorted}"
     else
-      resolvePeripheralsUnchecked profileName sorted;
+      let resolved = resolvePeripheralsUnchecked profileName sorted;
+      in builtins.deepSeq resolved._profileIdFits
+        (builtins.removeAttrs resolved [ "_profileIdFits" ]);
 in
 {
   inherit

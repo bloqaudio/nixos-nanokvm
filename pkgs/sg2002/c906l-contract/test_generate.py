@@ -59,9 +59,17 @@ class ContractGenerationTests(unittest.TestCase):
     def test_profiles_have_exact_current_capabilities(self) -> None:
         self.assertEqual(self.base["profile"]["name"], "base")
         self.assertEqual(self.base["profile"]["expectedCapabilities"], 0x0B)
+        self.assertEqual(self.base["profile"]["dormantCapabilities"], 0x0B)
+        self.assertEqual(self.base["profile"]["leaseMask"], 0)
+        self.assertEqual(self.base["profile"]["profileId"], 1)
+        self.assertFalse(self.base["profile"]["activationRequired"])
         self.assertEqual(self.base["profile"]["peripherals"], [])
         self.assertEqual(self.timer4["profile"]["name"], "timer4")
         self.assertEqual(self.timer4["profile"]["expectedCapabilities"], 0x0F)
+        self.assertEqual(self.timer4["profile"]["dormantCapabilities"], 0x0B)
+        self.assertEqual(self.timer4["profile"]["leaseMask"], 1)
+        self.assertEqual(self.timer4["profile"]["profileId"], 2)
+        self.assertTrue(self.timer4["profile"]["activationRequired"])
         self.assertEqual(self.timer4["profile"]["peripherals"], ["timer4"])
         self.assertNotEqual(self.base_sha256, self.timer4_sha256)
 
@@ -100,7 +108,7 @@ class ContractGenerationTests(unittest.TestCase):
         self.assertEqual(len(message), self.base["abi"]["message"]["size"])
 
         status = struct.pack(
-            "<IHHIIIIQQQQ8s",
+            "<IHHIIIIQQQQBBHI",
             0x4D564B4E,
             1,
             0,
@@ -112,11 +120,57 @@ class ContractGenerationTests(unittest.TestCase):
             0x0B,
             0x1122334455667788,
             0x8877665544332211,
-            bytes(8),
+            1,
+            0,
+            0,
+            0,
         )
         self.assertEqual(len(status), self.base["abi"]["status"]["size"])
         for field in self.base["abi"]["status"]["fields"]:
             self.assertLessEqual(field["offset"] + field["width"], len(status))
+
+        manifest = struct.pack(
+            "<IHHIIIIHHHHQQQII32s28sI",
+            0x31434B4E,
+            1,
+            0,
+            128,
+            7,
+            2,
+            2,
+            1,
+            1,
+            64,
+            32,
+            0x0F,
+            0x0B,
+            1,
+            3,
+            0,
+            bytes.fromhex(self.timer4_sha256),
+            bytes(28),
+            0x54494D43,
+        )
+        self.assertEqual(len(manifest), 128)
+
+        activation = struct.pack(
+            "<IHHIIIIIIQQ32s44sI",
+            0x31414B4E,
+            1,
+            0,
+            128,
+            7,
+            0x12345678,
+            2,
+            2,
+            0x00010001,
+            0x0F,
+            1,
+            bytes.fromhex(self.timer4_sha256),
+            bytes(44),
+            0x314B4341,
+        )
+        self.assertEqual(len(activation), 128)
 
         resource_snapshot_format = "<" + "I" * 11 + "B" * 4 + "I" * 10
         self.assertEqual(
@@ -148,6 +202,10 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertIn("SG2002_C906L_RPMSG_PAYLOAD_BYTES 496U", header)
             self.assertNotIn("SG2002_C906L_HAVE_TIMER4", header)
             self.assertIn("SG2002_C906L_STATUS_SIZE 64U", header)
+            self.assertIn("SG2002_C906L_ABI_MINOR 1U", header)
+            self.assertIn("SG2002_C906L_CONTRACT_EPOCH 2U", header)
+            self.assertIn("SG2002_C906L_MANIFEST_SIZE 128U", header)
+            self.assertIn("SG2002_C906L_ACTIVATION_REQUEST_SIZE 128U", header)
             self.assertIn("__attribute__((packed, aligned(8)))", header)
             self.assertIn("__attribute__((packed, aligned(64)))", header)
             self.assertIn(
@@ -156,11 +214,19 @@ class ContractGenerationTests(unittest.TestCase):
             )
             rust = generated["rust/generated_contract.rs"].decode()
             self.assertIn('pub const PROFILE_NAME: &str = "base";', rust)
+            self.assertIn("pub const PROFILE_ID: u32 = 0x00000001;", rust)
+            self.assertIn("pub const ACTIVATION_REQUIRED: bool = false;", rust)
             self.assertIn("pub const RPMSG_PAYLOAD_BYTES: usize = 496;", rust)
             dts = generated["dts/sg2002-c906l-contract.dtsi"].decode()
             self.assertIn("mboxes = <&mailbox 0 2>;", dts)
             self.assertIn("/bits/ 64 <0x000000000000000b>", dts)
+            self.assertIn("sophgo,profile-id = <0x00000001>;", dts)
+            self.assertIn("sophgo,manifest-flags = <0x00000002>;", dts)
+            self.assertNotIn("sophgo,activation-required;", dts)
             self.assertIn(self.base_sha256[:16], dts.replace(" ", ""))
+            python = generated["python/sg2002_c906l_contract.py"].decode()
+            compile(python, "sg2002_c906l_contract.py", "exec")
+            self.assertIn("MANIFEST_SIZE = 128", python)
 
     def test_generated_constant_names_are_unique(self) -> None:
         for name, (path, digest, _contract, _semantic) in self.profiles.items():

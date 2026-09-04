@@ -144,6 +144,16 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
         f"#define {prefix}CACHE_LINE_SIZE {soc['cacheLineSize']}U",
         f"#define {prefix}EXPECTED_CAPABILITIES "
         f"{c_value(profile['expectedCapabilities'], kernel=kernel, bits=64)}",
+        f"#define {prefix}DORMANT_CAPABILITIES "
+        f"{c_value(profile['dormantCapabilities'], kernel=kernel, bits=64)}",
+        f"#define {prefix}LEASE_MASK "
+        f"{c_value(profile['leaseMask'], kernel=kernel, bits=64)}",
+        f"#define {prefix}PROFILE_ID "
+        f"{c_value(profile['profileId'], kernel=kernel)}",
+        f"#define {prefix}MANIFEST_FLAGS "
+        f"{c_value(profile['manifestFlags'], kernel=kernel)}",
+        f"#define {prefix}ACTIVATION_REQUIRED "
+        f"{1 if profile['activationRequired'] else 0}U",
         f"#define {prefix}DRAM_ADDRESS "
         f"{c_value(soc['dram']['address'], kernel=kernel, bits=64)}",
         f"#define {prefix}DRAM_SIZE "
@@ -168,6 +178,45 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
         lines.append(f"#define {prefix}CAP_{macro(name)} (1ULL << {entry['bit']})")
     for name, entry in abi["flags"].items():
         lines.append(f"#define {prefix}FLAG_{macro(name)} (1U << {entry['bit']})")
+
+    activation = contract["activation"]
+    manifest = activation["manifest"]
+    request = activation["request"]
+    lines.extend(
+        [
+            f"#define {prefix}LEASE_WIRE_WIDTH {activation['leaseWireWidth']}U",
+            f"#define {prefix}MANIFEST_OFFSET "
+            f"{c_value(manifest['offset'], kernel=kernel, bits=64)}",
+            f"#define {prefix}MANIFEST_ADDRESS "
+            f"{c_value(memory['shared']['address'] + manifest['offset'], kernel=kernel, bits=64)}",
+            f"#define {prefix}MANIFEST_SIZE {manifest['size']}U",
+            f"#define {prefix}MANIFEST_MAGIC "
+            f"{c_value(manifest['magic'], kernel=kernel)}",
+            f"#define {prefix}MANIFEST_FORMAT_MAJOR {manifest['formatMajor']}U",
+            f"#define {prefix}MANIFEST_FORMAT_MINOR {manifest['formatMinor']}U",
+            f"#define {prefix}MANIFEST_COMMIT "
+            f"{c_value(manifest['commit'], kernel=kernel)}",
+            f"#define {prefix}ACTIVATION_REQUEST_OFFSET "
+            f"{c_value(request['offset'], kernel=kernel, bits=64)}",
+            f"#define {prefix}ACTIVATION_REQUEST_ADDRESS "
+            f"{c_value(memory['shared']['address'] + request['offset'], kernel=kernel, bits=64)}",
+            f"#define {prefix}ACTIVATION_REQUEST_SIZE {request['size']}U",
+            f"#define {prefix}ACTIVATION_REQUEST_MAGIC "
+            f"{c_value(request['magic'], kernel=kernel)}",
+            f"#define {prefix}ACTIVATION_REQUEST_FORMAT_MAJOR {request['formatMajor']}U",
+            f"#define {prefix}ACTIVATION_REQUEST_FORMAT_MINOR {request['formatMinor']}U",
+            f"#define {prefix}ACTIVATION_REQUEST_COMMIT "
+            f"{c_value(request['commit'], kernel=kernel)}",
+            f"#define {prefix}ACTIVATION_RESPONSE_TIMEOUT_MS "
+            f"{activation['linuxResponseTimeoutMs']}U",
+        ]
+    )
+    for name, entry in activation["states"].items():
+        lines.append(f"#define {prefix}ACTIVATION_STATE_{macro(name)} {entry}U")
+    for name, entry in activation["results"].items():
+        lines.append(f"#define {prefix}ACTIVATION_RESULT_{macro(name)} {entry}U")
+    for name, entry in activation["manifestFlags"].items():
+        lines.append(f"#define {prefix}MANIFEST_FLAG_{macro(name)} (1U << {entry['bit']})")
 
     lines.extend(
         [
@@ -323,10 +372,7 @@ def render_c_header(contract: dict[str, Any], digest: str, *, kernel: bool) -> s
     status_fields = []
     for field in abi["status"]["fields"]:
         name = snake(field["name"])
-        if name == "reserved":
-            status_fields.append(f"\t{types[1]} reserved[8];")
-        else:
-            status_fields.append(f"\t{types[field['width']]} {name};")
+        status_fields.append(f"\t{types[field['width']]} {name};")
     message_suffix = (
         f" __packed __aligned({abi['message']['alignment']})"
         if kernel
@@ -337,12 +383,27 @@ def render_c_header(contract: dict[str, Any], digest: str, *, kernel: bool) -> s
         if kernel
         else f" __attribute__((packed, aligned({abi['status']['alignment']})))"
     )
+    record_suffix = (
+        f" __packed __aligned({contract['activation']['manifest']['alignment']})"
+        if kernel
+        else " __attribute__((packed, aligned(64)))"
+    )
     packed_suffix = " __packed" if kernel else " __attribute__((packed))"
     assertion = "static_assert" if kernel else "_Static_assert"
     offset_assertions = "\n".join(
         f'{assertion}(offsetof(struct sg2002_c906l_status, {snake(field["name"])}) '
         f'== {field["offset"]}, "status.{snake(field["name"])} offset");'
         for field in abi["status"]["fields"]
+    )
+    manifest_offset_assertions = "\n".join(
+        f'{assertion}(offsetof(struct sg2002_c906l_manifest, {snake(field["name"])}) '
+        f'== {field["offset"]}, "manifest.{snake(field["name"])} offset");'
+        for field in contract["activation"]["manifest"]["fields"]
+    )
+    request_offset_assertions = "\n".join(
+        f'{assertion}(offsetof(struct sg2002_c906l_activation_request, {snake(field["name"])}) '
+        f'== {field["offset"]}, "activation_request.{snake(field["name"])} offset");'
+        for field in contract["activation"]["request"]["fields"]
     )
     return f"""/* SPDX-License-Identifier: MIT */
 /* Generated from the canonical SG2002 C906L contract.  Do not edit. */
@@ -363,6 +424,45 @@ struct sg2002_c906l_message {{
 struct sg2002_c906l_status {{
 {chr(10).join(status_fields)}
 }}{status_suffix};
+
+struct sg2002_c906l_manifest {{
+\t{types[4]} magic;
+\t{types[2]} format_major;
+\t{types[2]} format_minor;
+\t{types[4]} struct_size;
+\t{types[4]} generation;
+\t{types[4]} contract_epoch;
+\t{types[4]} profile_id;
+\t{types[2]} abi_major;
+\t{types[2]} abi_minor;
+\t{types[2]} capability_width;
+\t{types[2]} lease_width;
+\t{types[8]} final_capabilities;
+\t{types[8]} dormant_capabilities;
+\t{types[8]} lease_mask;
+\t{types[4]} flags;
+\t{types[4]} reserved0;
+\t{types[1]} contract_sha256[32];
+\t{types[1]} reserved1[28];
+\t{types[4]} commit;
+}}{record_suffix};
+
+struct sg2002_c906l_activation_request {{
+\t{types[4]} magic;
+\t{types[2]} format_major;
+\t{types[2]} format_minor;
+\t{types[4]} struct_size;
+\t{types[4]} generation;
+\t{types[4]} request_id;
+\t{types[4]} contract_epoch;
+\t{types[4]} profile_id;
+\t{types[4]} abi_version;
+\t{types[8]} final_capabilities;
+\t{types[8]} lease_mask;
+\t{types[1]} contract_sha256[32];
+\t{types[1]} reserved[44];
+\t{types[4]} commit;
+}}{record_suffix};
 
 struct sg2002_c906l_vring_resource {{
 \t{types[4]} device_address;
@@ -397,9 +497,19 @@ struct sg2002_c906l_resource_snapshot {{
 \t"C906L status size");
 {assertion}(__alignof__(struct sg2002_c906l_status) == {abi['status']['alignment']},
 \t"C906L status alignment");
+{assertion}(sizeof(struct sg2002_c906l_manifest) == SG2002_C906L_MANIFEST_SIZE,
+\t"C906L manifest size");
+{assertion}(__alignof__(struct sg2002_c906l_manifest) == {contract['activation']['manifest']['alignment']},
+\t"C906L manifest alignment");
+{assertion}(sizeof(struct sg2002_c906l_activation_request) ==
+\tSG2002_C906L_ACTIVATION_REQUEST_SIZE, "C906L activation request size");
+{assertion}(__alignof__(struct sg2002_c906l_activation_request) == {contract['activation']['request']['alignment']},
+\t"C906L activation request alignment");
 {assertion}(sizeof(struct sg2002_c906l_resource_snapshot) ==
 \tSG2002_C906L_RSC_TABLE_SERIALIZED_SIZE, "C906L resource table size");
 {offset_assertions}
+{manifest_offset_assertions}
+{request_offset_assertions}
 
 #endif
 """
@@ -412,6 +522,9 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
     memory = contract["memory"]
     rpmsg = contract["rpmsg"]
     profile = contract["profile"]
+    activation = contract["activation"]
+    manifest = activation["manifest"]
+    request = activation["request"]
     digest_bytes = ", ".join(f"0x{byte:02x}" for byte in bytes.fromhex(digest))
     lines = [
         "// SPDX-License-Identifier: MIT",
@@ -425,6 +538,11 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
         f"pub const ABI_MINOR: u16 = {abi['minor']};",
         f"pub const SHMEM_MAGIC: u32 = {hex_literal(abi['magic'])};",
         f"pub const EXPECTED_CAPABILITIES: u64 = {hex_literal(profile['expectedCapabilities'], 16)};",
+        f"pub const DORMANT_CAPABILITIES: u64 = {hex_literal(profile['dormantCapabilities'], 16)};",
+        f"pub const LEASE_MASK: u64 = {hex_literal(profile['leaseMask'], 16)};",
+        f"pub const PROFILE_ID: u32 = {hex_literal(profile['profileId'])};",
+        f"pub const MANIFEST_FLAGS: u32 = {hex_literal(profile['manifestFlags'])};",
+        f"pub const ACTIVATION_REQUIRED: bool = {'true' if profile['activationRequired'] else 'false'};",
         f"pub const CACHE_LINE_SIZE: usize = {soc['cacheLineSize']};",
         f"pub const FIRMWARE_ADDRESS: usize = {hex_literal(memory['firmware']['address'])};",
         f"pub const FIRMWARE_SIZE: usize = {hex_literal(memory['firmware']['size'])};",
@@ -441,6 +559,32 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
         lines.append(f"pub const CAP_{macro(name)}: u64 = 1 << {entry['bit']};")
     for name, entry in abi["flags"].items():
         lines.append(f"pub const FLAG_{macro(name)}: u32 = 1 << {entry['bit']};")
+    lines.extend(
+        [
+            f"pub const LEASE_WIRE_WIDTH: u16 = {activation['leaseWireWidth']};",
+            f"pub const MANIFEST_OFFSET: usize = {hex_literal(manifest['offset'])};",
+            f"pub const MANIFEST_ADDRESS: usize = {hex_literal(memory['shared']['address'] + manifest['offset'])};",
+            f"pub const MANIFEST_SIZE: usize = {manifest['size']};",
+            f"pub const MANIFEST_MAGIC: u32 = {hex_literal(manifest['magic'])};",
+            f"pub const MANIFEST_FORMAT_MAJOR: u16 = {manifest['formatMajor']};",
+            f"pub const MANIFEST_FORMAT_MINOR: u16 = {manifest['formatMinor']};",
+            f"pub const MANIFEST_COMMIT: u32 = {hex_literal(manifest['commit'])};",
+            f"pub const ACTIVATION_REQUEST_OFFSET: usize = {hex_literal(request['offset'])};",
+            f"pub const ACTIVATION_REQUEST_ADDRESS: usize = {hex_literal(memory['shared']['address'] + request['offset'])};",
+            f"pub const ACTIVATION_REQUEST_SIZE: usize = {request['size']};",
+            f"pub const ACTIVATION_REQUEST_MAGIC: u32 = {hex_literal(request['magic'])};",
+            f"pub const ACTIVATION_REQUEST_FORMAT_MAJOR: u16 = {request['formatMajor']};",
+            f"pub const ACTIVATION_REQUEST_FORMAT_MINOR: u16 = {request['formatMinor']};",
+            f"pub const ACTIVATION_REQUEST_COMMIT: u32 = {hex_literal(request['commit'])};",
+            f"pub const ACTIVATION_RESPONSE_TIMEOUT_MS: u32 = {activation['linuxResponseTimeoutMs']};",
+        ]
+    )
+    for name, entry in activation["states"].items():
+        lines.append(f"pub const ACTIVATION_STATE_{macro(name)}: u8 = {entry};")
+    for name, entry in activation["results"].items():
+        lines.append(f"pub const ACTIVATION_RESULT_{macro(name)}: u32 = {entry};")
+    for name, entry in activation["manifestFlags"].items():
+        lines.append(f"pub const MANIFEST_FLAG_{macro(name)}: u32 = 1 << {entry['bit']};")
     lines.extend(
         [
             f"pub const MAILBOX_ADDRESS: usize = {hex_literal(mailbox['address'])};",
@@ -510,14 +654,74 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
             "    pub capabilities: u64,",
             "    pub last_request: u64,",
             "    pub last_response: u64,",
-            "    pub reserved: u64,",
+            "    pub activation_state: u8,",
+            "    pub activation_error: u8,",
+            "    pub activation_attempts: u16,",
+            "    pub activation_request_id: u32,",
+            "}",
+            "",
+            "#[repr(C, align(64))]",
+            "#[derive(Clone, Copy)]",
+            "pub struct Manifest {",
+            "    pub magic: u32,",
+            "    pub format_major: u16,",
+            "    pub format_minor: u16,",
+            "    pub struct_size: u32,",
+            "    pub generation: u32,",
+            "    pub contract_epoch: u32,",
+            "    pub profile_id: u32,",
+            "    pub abi_major: u16,",
+            "    pub abi_minor: u16,",
+            "    pub capability_width: u16,",
+            "    pub lease_width: u16,",
+            "    pub final_capabilities: u64,",
+            "    pub dormant_capabilities: u64,",
+            "    pub lease_mask: u64,",
+            "    pub flags: u32,",
+            "    pub reserved0: u32,",
+            "    pub contract_sha256: [u8; 32],",
+            "    pub reserved1: [u8; 28],",
+            "    pub commit: u32,",
+            "}",
+            "",
+            "#[repr(C, align(64))]",
+            "#[derive(Clone, Copy)]",
+            "pub struct ActivationRequest {",
+            "    pub magic: u32,",
+            "    pub format_major: u16,",
+            "    pub format_minor: u16,",
+            "    pub struct_size: u32,",
+            "    pub generation: u32,",
+            "    pub request_id: u32,",
+            "    pub contract_epoch: u32,",
+            "    pub profile_id: u32,",
+            "    pub abi_version: u32,",
+            "    pub final_capabilities: u64,",
+            "    pub lease_mask: u64,",
+            "    pub contract_sha256: [u8; 32],",
+            "    pub reserved: [u8; 44],",
+            "    pub commit: u32,",
             "}",
             "",
             "const _: [(); 8] = [(); core::mem::size_of::<Message>()];",
             "const _: [(); 64] = [(); core::mem::size_of::<Status>()];",
             "const _: [(); 64] = [(); core::mem::align_of::<Status>()];",
+            "const _: [(); 128] = [(); core::mem::size_of::<Manifest>()];",
+            "const _: [(); 64] = [(); core::mem::align_of::<Manifest>()];",
+            "const _: [(); 128] = [(); core::mem::size_of::<ActivationRequest>()];",
+            "const _: [(); 64] = [(); core::mem::align_of::<ActivationRequest>()];",
         ]
     )
+    for type_name, fields in (
+        ("Status", abi["status"]["fields"]),
+        ("Manifest", manifest["fields"]),
+        ("ActivationRequest", request["fields"]),
+    ):
+        for field in fields:
+            lines.append(
+                f"const _: [(); {field['offset']}] = "
+                f"[(); core::mem::offset_of!({type_name}, {snake(field['name'])})];"
+            )
     for peripheral_name, timer in contract["peripheralLeases"].items():
         require(
             timer["kind"] == "dw-apb-timer-channel",
@@ -576,6 +780,11 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         f"MESSAGE_SIZE = {abi['message']['size']}",
         f"STATUS_SIZE = {abi['status']['size']}",
         f"EXPECTED_CAPABILITIES = {hex_literal(profile['expectedCapabilities'])}",
+        f"DORMANT_CAPABILITIES = {hex_literal(profile['dormantCapabilities'])}",
+        f"LEASE_MASK = {hex_literal(profile['leaseMask'], 16)}",
+        f"PROFILE_ID = {hex_literal(profile['profileId'])}",
+        f"MANIFEST_FLAGS = {hex_literal(profile['manifestFlags'])}",
+        f"ACTIVATION_REQUIRED = {profile['activationRequired']}",
         f"CACHE_LINE_SIZE = {soc['cacheLineSize']}",
         f"DRAM_ADDRESS = {hex_literal(soc['dram']['address'])}",
         f"DRAM_SIZE = {hex_literal(soc['dram']['size'])}",
@@ -601,6 +810,22 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         f"SECURITY_ENABLED_WHEN_SET = {core_control['securityEnable']['enabledWhenSet']}",
         f"VECTOR_LOW_ADDRESS = {hex_literal(core_control['vectorLowAddress'])}",
         f"VECTOR_HIGH_ADDRESS = {hex_literal(core_control['vectorHighAddress'])}",
+        f"LEASE_WIRE_WIDTH = {contract['activation']['leaseWireWidth']}",
+        f"MANIFEST_OFFSET = {hex_literal(contract['activation']['manifest']['offset'])}",
+        f"MANIFEST_ADDRESS = {hex_literal(memory['shared']['address'] + contract['activation']['manifest']['offset'])}",
+        f"MANIFEST_SIZE = {contract['activation']['manifest']['size']}",
+        f"MANIFEST_MAGIC = {hex_literal(contract['activation']['manifest']['magic'])}",
+        f"MANIFEST_FORMAT_MAJOR = {contract['activation']['manifest']['formatMajor']}",
+        f"MANIFEST_FORMAT_MINOR = {contract['activation']['manifest']['formatMinor']}",
+        f"MANIFEST_COMMIT = {hex_literal(contract['activation']['manifest']['commit'])}",
+        f"ACTIVATION_REQUEST_OFFSET = {hex_literal(contract['activation']['request']['offset'])}",
+        f"ACTIVATION_REQUEST_ADDRESS = {hex_literal(memory['shared']['address'] + contract['activation']['request']['offset'])}",
+        f"ACTIVATION_REQUEST_SIZE = {contract['activation']['request']['size']}",
+        f"ACTIVATION_REQUEST_MAGIC = {hex_literal(contract['activation']['request']['magic'])}",
+        f"ACTIVATION_REQUEST_FORMAT_MAJOR = {contract['activation']['request']['formatMajor']}",
+        f"ACTIVATION_REQUEST_FORMAT_MINOR = {contract['activation']['request']['formatMinor']}",
+        f"ACTIVATION_REQUEST_COMMIT = {hex_literal(contract['activation']['request']['commit'])}",
+        f"ACTIVATION_RESPONSE_TIMEOUT_MS = {contract['activation']['linuxResponseTimeoutMs']}",
     ]
     for name, entry in abi["states"].items():
         lines.append(f"STATE_{macro(name)} = {entry}")
@@ -612,6 +837,12 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         lines.append(f"CAP_{macro(name)} = 1 << {entry['bit']}")
     for name, entry in abi["flags"].items():
         lines.append(f"FLAG_{macro(name)} = 1 << {entry['bit']}")
+    for name, entry in contract["activation"]["states"].items():
+        lines.append(f"ACTIVATION_STATE_{macro(name)} = {entry}")
+    for name, entry in contract["activation"]["results"].items():
+        lines.append(f"ACTIVATION_RESULT_{macro(name)} = {entry}")
+    for name, entry in contract["activation"]["manifestFlags"].items():
+        lines.append(f"MANIFEST_FLAG_{macro(name)} = 1 << {entry['bit']}")
     for name, channel in mailbox["channels"].items():
         lines.append(f"CHANNEL_{macro(name)} = {channel}")
     for name, region in memory["shared"]["regions"].items():
@@ -640,12 +871,21 @@ def render_dts(contract: dict[str, Any], digest: str) -> str:
     if profile["peripherals"]:
         leases = ", ".join(f'"{name}"' for name in profile["peripherals"])
         lease_property = f"\n\t\tsophgo,leased-peripherals = {leases};"
+    activation_property = (
+        "\n\t\tsophgo,activation-required;"
+        if profile["activationRequired"]
+        else ""
+    )
     common_properties = f"""
 \t\tsophgo,contract-sha256 = [{digest_cells}];
 \t\tsophgo,contract-epoch = <{contract['contractEpoch']}>;
 \t\tsophgo,abi-version = <{hex_literal(abi_word)}>;
 \t\tsophgo,expected-capabilities = /bits/ 64 <{hex_literal(profile['expectedCapabilities'], 16)}>;
-\t\tsophgo,profile = "{profile['name']}";{lease_property}"""
+\t\tsophgo,dormant-capabilities = /bits/ 64 <{hex_literal(profile['dormantCapabilities'], 16)}>;
+\t\tsophgo,lease-mask = /bits/ 64 <{hex_literal(profile['leaseMask'], 16)}>;
+\t\tsophgo,profile-id = <{hex_literal(profile['profileId'])}>;
+\t\tsophgo,manifest-flags = <{hex_literal(profile['manifestFlags'])}>;
+\t\tsophgo,profile = "{profile['name']}";{activation_property}{lease_property}"""
     return f"""/* SPDX-License-Identifier: (GPL-2.0 OR MIT) */
 /* Generated from the canonical SG2002 C906L contract.  Do not edit. */
 

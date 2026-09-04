@@ -9,6 +9,14 @@ _Static_assert(_Alignof(struct sg2002_c906l_message) == 8U,
 	       "message ABI alignment changed");
 _Static_assert(_Alignof(struct sg2002_c906l_status) == 64U,
 	       "status ABI alignment changed");
+_Static_assert(sizeof(struct sg2002_c906l_manifest) == 128U,
+	       "manifest ABI size changed");
+_Static_assert(_Alignof(struct sg2002_c906l_manifest) == 64U,
+	       "manifest ABI alignment changed");
+_Static_assert(sizeof(struct sg2002_c906l_activation_request) == 128U,
+	       "activation request ABI size changed");
+_Static_assert(_Alignof(struct sg2002_c906l_activation_request) == 64U,
+	       "activation request ABI alignment changed");
 _Static_assert(SG2002_C906L_STATUS_REGION_SIZE == UINT64_C(0x1000),
 	       "status reservation changed");
 _Static_assert(SG2002_C906L_RPMSG_PAYLOAD_BYTES == 496U,

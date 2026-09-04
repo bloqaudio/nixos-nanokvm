@@ -11,11 +11,19 @@ let
 in
 assert base.expectedCapabilities == 11;
 assert timer4.expectedCapabilities == 15;
-assert base.sha256 == "da00e0fdb60c1075198fc839db5a8f61781f8fde7e751d67f9fd65e9aa8d64cf";
-assert timer4.sha256 == "6124d2817cc262aebf14bfcbafeedbd055249e90b9d8510d4e41859b7e548e93";
+assert base.sha256 == "bffc269cedbd5e7b1e681749fbac5f2f67b3a8193d9b9828874a64c26a3d53ef";
+assert timer4.sha256 == "49ddcde2653c3b194ad2349654f6d984a1bc5f0baf55e0d0dcbbc6cfd5bbf97e";
 assert base.sha256 != timer4.sha256;
 assert base.sortedPeripherals == [ ];
 assert timer4.sortedPeripherals == [ "timer4" ];
+assert base.dormantCapabilities == 11;
+assert timer4.dormantCapabilities == 11;
+assert base.leaseMask == 0;
+assert timer4.leaseMask == 1;
+assert base.profileId == 1;
+assert timer4.profileId == 2;
+assert base.manifestFlags == 2;
+assert timer4.manifestFlags == 3;
 assert (contract.resolvePeripherals [ ]).profileName == "base";
 assert (contract.resolvePeripherals [ "timer4" ]).profileName == "timer4";
 assert !unknownProfile.success;
