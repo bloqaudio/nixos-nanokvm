@@ -18,7 +18,7 @@ let
     peripherals;
   enabledPeripherals = lib.sort builtins.lessThan (lib.unique peripherals);
   timer4 = builtins.elem "timer4" enabledPeripherals;
-  inherit (import ../c906l-memory-map.nix)
+  inherit (import ../c906l-memory-map.nix { inherit lib; })
     firmwareAddress
     firmwareSize
     sharedMemoryAddress

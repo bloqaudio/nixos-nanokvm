@@ -37,7 +37,7 @@ let
   c906lRustPlatform = final.buildPackages.callPackage ./sg2002/c906l-rust-platform.nix {
     inherit riscv64Embedded;
   };
-  c906lMemoryMap = import ./sg2002/c906l-memory-map.nix;
+  c906lMemoryMap = import ./sg2002/c906l-memory-map.nix { inherit lib; };
 
 in
 {
@@ -198,6 +198,13 @@ in
 
   # The C906L is a bare-metal target, so it needs the newlib/ELF toolchain,
   # not the riscv64-linux cross compiler used by the kernel and userspace.
+  sg2002-c906l-contract-for = peripherals:
+    final.buildPackages.callPackage ./sg2002/c906l-contract {
+      inherit peripherals;
+    };
+  sg2002-c906l-contract = final.sg2002-c906l-contract-for [ ];
+  sg2002-c906l-contract-timer4 =
+    final.sg2002-c906l-contract-for [ "timer4" ];
   sg2002-c906l-rust-for = peripherals:
     (riscv64Embedded.callPackage ./sg2002/c906l-firmware/rust.nix {
       rustPlatform = c906lRustPlatform;

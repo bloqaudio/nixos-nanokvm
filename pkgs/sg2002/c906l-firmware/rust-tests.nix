@@ -5,7 +5,7 @@
 }:
 
 let
-  memoryMap = import ../c906l-memory-map.nix;
+  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
 in
 rustPlatform.buildRustPackage {
   pname = "sg2002-c906l-rust-tests";

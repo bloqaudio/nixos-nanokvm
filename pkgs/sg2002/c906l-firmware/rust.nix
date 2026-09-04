@@ -7,7 +7,7 @@
 }:
 
 let
-  memoryMap = import ../c906l-memory-map.nix;
+  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
   rustTarget = stdenv.hostPlatform.rust.rustcTarget;
   knownPeripherals = [ "timer4" ];
   unknownPeripherals = lib.filter

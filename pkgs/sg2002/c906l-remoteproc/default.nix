@@ -5,7 +5,7 @@
 }:
 
 let
-  memoryMap = import ../c906l-memory-map.nix;
+  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
   hex = value: "0x${lib.toHexString value}ULL";
 in
 assert lib.assertMsg (

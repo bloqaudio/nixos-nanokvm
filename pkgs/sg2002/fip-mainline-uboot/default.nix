@@ -17,7 +17,7 @@
   rtosFirmware ? null,
 }:
 let
-  memoryMap = import ../c906l-memory-map.nix;
+  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
   haveRtos = rtosFirmware != null;
   contractFields = [
     "firmwareAddress"

@@ -19,7 +19,7 @@
 ,
 }:
 let
-  c906lMemoryMap = import ../c906l-memory-map.nix;
+  c906lMemoryMap = import ../c906l-memory-map.nix { inherit lib; };
   # Each overlay has to be interpolated into the script body individually
   # — `toString [path1 path2]` doesn't trigger Nix's path-to-store import,
   # it just stringifies the raw source paths, which are then missing from

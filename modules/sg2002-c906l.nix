@@ -9,7 +9,7 @@ let
   cfg = config.sg2002.auxCore;
   controlModule = pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel;
   remoteprocModule = pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel;
-  memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix;
+  memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix { inherit lib; };
   inherit (memoryMap) firmwareAddress sharedMemoryAddress;
   carveoutSize = memoryMap.firmwareSize;
   firmwareContractFields = [

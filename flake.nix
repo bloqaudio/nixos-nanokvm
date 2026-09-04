@@ -587,6 +587,8 @@
             nanokvm-server-nocamera
             nanokvm-web
             nbd-client-minimal
+            sg2002-c906l-contract
+            sg2002-c906l-contract-timer4
             sg2002-dtb-mainline-nowifi-c906l
             sg2002-dtb-mainline-pcie-nowifi-c906l
             sg2002-fiptool
@@ -638,6 +640,10 @@
 
       checks = forAllSystems (pkgs:
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
+          sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;
+          sg2002-c906l-contract-generator =
+            pkgs.sg2002-c906l-contract.tests.generator;
           sg2002-c906l-rust = pkgs.sg2002-c906l-rust-tests;
           sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
           sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
