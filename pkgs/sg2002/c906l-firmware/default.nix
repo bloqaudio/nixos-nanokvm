@@ -1,13 +1,13 @@
-{
-  lib,
-  stdenvNoCC,
-  fetchFromGitHub,
-  cmake,
-  ninja,
-  python3,
-  riscv64Embedded,
-  sg2002-c906l-rust,
-  peripherals ? [ ],
+{ lib
+, stdenvNoCC
+, fetchFromGitHub
+, cmake
+, ninja
+, python3
+, riscv64Embedded
+, sg2002-c906l-rust
+, contract
+,
 }:
 
 let
@@ -15,24 +15,30 @@ let
   knownPeripherals = [ "timer4" ];
   unknownPeripherals = lib.filter
     (peripheral: !builtins.elem peripheral knownPeripherals)
-    peripherals;
-  enabledPeripherals = lib.sort builtins.lessThan (lib.unique peripherals);
+    contract.enabledPeripherals;
+  enabledPeripherals = contract.enabledPeripherals;
   timer4 = builtins.elem "timer4" enabledPeripherals;
-  inherit (import ../c906l-memory-map.nix { inherit lib; })
-    firmwareAddress
-    firmwareSize
-    sharedMemoryAddress
-    sharedMemorySize
-    ;
+  firmwareAddress = contract.contract.memory.firmware.address;
+  firmwareSize = contract.contract.memory.firmware.size;
+  sharedMemoryAddress = contract.contract.memory.shared.address;
+  sharedMemorySize = contract.contract.memory.shared.size;
 in
 assert lib.assertMsg (unknownPeripherals == [ ]) ''
   Unknown SG2002 C906L peripheral(s):
   ${lib.concatStringsSep ", " unknownPeripherals}
 '';
-assert lib.assertMsg (
-  (sg2002-c906l-rust.enabledPeripherals or [ ]) == enabledPeripherals
-) ''
+assert lib.assertMsg
+  (
+    (sg2002-c906l-rust.enabledPeripherals or [ ]) == enabledPeripherals
+  ) ''
   SG2002 C906L C and Rust peripheral selections must match exactly
+'';
+assert lib.assertMsg
+  (
+    (sg2002-c906l-rust.contractSha256 or null) == contract.contractSha256
+      && (sg2002-c906l-rust.profileId or null) == contract.profileId
+  ) ''
+  SG2002 C906L C and Rust generated-contract identities must match exactly
 '';
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "sg2002-c906l-firmware";
@@ -70,8 +76,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --replace-fail '#define configUSE_PORT_OPTIMISED_TASK_SELECTION 1' \
                      '#define configUSE_PORT_OPTIMISED_TASK_SELECTION 0'
 
-    # Keep the first image intentionally small: scheduler + interrupt core +
-    # one mailbox task.  Every physical peripheral remains Linux-owned.
+    # Keep the image intentionally small: scheduler, interrupt core and the
+    # mailbox/RPMsg tasks. Selected physical leases remain dormant until the
+    # exact Linux acknowledgement has been validated by Rust.
     substituteInPlace driver/CMakeLists.txt \
       --replace-fail $'set(driver_list\n\tcommon\n\tpinmux\n\tuart\n\tspinlock\n\tgpio\n\trtos_cmdqu\n)' $'set(driver_list\n\tcommon\n)'
     substituteInPlace hal/cv181x/CMakeLists.txt \
@@ -80,11 +87,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./rtos-shim.c} task/comm/src/riscv64/comm_main.c
     cp ${./silent-printf.c} common/src/riscv64/printf.c
     cp ${./silent-putchar.c} common/src/riscv64/putchar.c
-    cp ${./protocol.h} sg2002-c906l-protocol.h
-    substituteInPlace sg2002-c906l-protocol.h \
-      --replace-fail 'UINT64_C(0x8ff00000)' \
-                     'UINT64_C(0x${lib.toHexString sharedMemoryAddress})'
-    cp sg2002-c906l-protocol.h task/comm/include/sg2002-c906l-protocol.h
+    cp ${contract}/include/sg2002-c906l-contract.h \
+      sg2002-c906l-contract.h
+    cp sg2002-c906l-contract.h task/comm/include/sg2002-c906l-contract.h
+    python3 ${./test_source.py} \
+      task/comm/src/riscv64/comm_main.c \
+      ${contract}/share/sg2002-c906l/contract.json
 
     # Reproducible firmware must not contain compiler wall-clock strings.
     substituteInPlace task/main/src/main.c \
@@ -160,8 +168,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       "$debug/share/sg2002-c906l/sg2002-c906l.map"
     install -m 0644 install/bin/cvirtos.dis \
       "$debug/share/sg2002-c906l/sg2002-c906l.dis"
-    install -m 0644 sg2002-c906l-protocol.h \
-      "$debug/share/sg2002-c906l/protocol.h"
+    install -m 0644 sg2002-c906l-contract.h \
+      "$debug/share/sg2002-c906l/contract.h"
 
     size=$(stat -c %s "$firmwareDir/sg2002-c906l.bin")
     test "$size" -gt 0
@@ -177,6 +185,18 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     riscv64-none-elf-nm \
       "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
       | grep -q ' T c906l_rust_main$'
+    ${if timer4 then ''
+      riscv64-none-elf-nm \
+        "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
+        | grep -q ' T c906l_timer4_interrupt$'
+    '' else ''
+      if riscv64-none-elf-nm \
+        "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
+        | grep -q ' c906l_timer4_'; then
+        echo "base firmware unexpectedly contains Timer4 code" >&2
+        exit 1
+      fi
+    ''}
     test -z "$(riscv64-none-elf-nm -u \
       "$debug/share/sg2002-c906l/sg2002-c906l.elf")"
     python3 ${./verify-elf.py} \
@@ -192,12 +212,19 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   passthru = {
     inherit firmwareAddress firmwareSize sharedMemoryAddress sharedMemorySize;
     inherit enabledPeripherals;
+    c906lContract = contract;
+    inherit (contract)
+      contractEpoch
+      contractSha256
+      dormantCapabilities
+      leaseMask
+      manifestFlags
+      profileId
+      profileName
+      protocolVersion
+      requiredCapabilities
+      ;
     firmwareFile = "lib/firmware/sophgo/sg2002-c906l.bin";
-    requiredCapabilities = if timer4 then 15 else 11;
-    protocolVersion = {
-      major = 1;
-      minor = 0;
-    };
     upstreamRev = sourceRev;
   };
 

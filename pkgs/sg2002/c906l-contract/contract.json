@@ -15,6 +15,7 @@
       "payloadAddress": "0x01900400",
       "slotCount": 8,
       "slotSize": 8,
+      "processorCount": 4,
       "processorIds": {
         "linux": 1,
         "c906l": 2
@@ -22,6 +23,19 @@
       "interrupts": {
         "linux": 101,
         "c906l": 61
+      },
+      "hardwareSpinlock": {
+        "registerOffset": "0x000000c0",
+        "registerCount": 8,
+        "registerStride": 4,
+        "accessWidth": 2,
+        "mailboxField": 4,
+        "tokenWidth": 8,
+        "linuxTokenShift": 0,
+        "c906lTokenShift": 8,
+        "taskAcquireAttempts": 1024,
+        "irqAcquireAttempts": 64,
+        "irqConsecutiveDeferralLimit": 16
       },
       "channels": {
         "control": 0,
@@ -139,6 +153,14 @@
       "manifestFault": {
         "bit": 5,
         "description": "The immutable firmware manifest could not be published"
+      },
+      "mailboxLockFailure": {
+        "bit": 6,
+        "description": "The cross-core mailbox hardware spinlock timed out or could not be released"
+      },
+      "unexpectedMailboxChannel": {
+        "bit": 7,
+        "description": "C906L drained a mailbox interrupt on a channel not assigned by this contract"
       }
     }
   },

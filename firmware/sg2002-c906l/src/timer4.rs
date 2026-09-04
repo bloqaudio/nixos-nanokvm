@@ -12,25 +12,27 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::{c906l_delay, c906l_ticks, deadline_reached, io_fence};
+use crate::contract::{
+    TIMER4_CONTROL_ADDRESS, TIMER4_EOI_ADDRESS, TIMER4_LOAD_ADDRESS,
+    TIMER4_PRECONDITION_CLOCK_SOURCE_ADDRESS, TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED,
+    TIMER4_PRECONDITION_CLOCK_SOURCE_MASK, TIMER4_PRECONDITION_CLOCK_TIMER4_ADDRESS,
+    TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED, TIMER4_PRECONDITION_CLOCK_TIMER4_MASK,
+    TIMER4_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS, TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED,
+    TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK, TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+    TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED, TIMER4_PRECONDITION_RESET_TIMER_IP_MASK,
+    TIMER4_PRECONDITION_RESET_TIMER4_ADDRESS, TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED,
+    TIMER4_PRECONDITION_RESET_TIMER4_MASK, TIMER4_TEST_PERIOD_TICKS,
+    TIMER4_TEST_TIMEOUT_RTOS_TICKS,
+};
 
 #[cfg(test)]
-pub(crate) const IRQ: u32 = 55;
-
-const TIMER_CLOCK_HZ: u32 = 25_000_000;
-const TEST_PERIOD_TICKS: u32 = TIMER_CLOCK_HZ / 10; // 100 ms
-const TEST_TIMEOUT_RTOS_TICKS: u32 = 100; // 500 ms at the 200 Hz RTOS tick.
+use crate::contract::TIMER4_IRQ;
 
 const CONTROL_ENABLE: u32 = 1 << 0;
 const CONTROL_USER_DEFINED: u32 = 1 << 1;
 const CONTROL_INTERRUPT_MASK: u32 = 1 << 2;
 const CONTROL_STOPPED_MASKED: u32 = CONTROL_INTERRUPT_MASK;
 const CONTROL_RUNNING_UNMASKED: u32 = CONTROL_ENABLE | CONTROL_USER_DEFINED;
-
-const CLK_XTAL_MISC_GATE: u32 = 1 << 14;
-const CLK_TIMER4_GATE: u32 = 1 << 13;
-const RESET_TIMER_IP_DEASSERTED: u32 = 1 << 13;
-const RESET_TIMER4_DEASSERTED: u32 = 1 << 18;
-const TIMER4_XTAL_SOURCE_SELECT: u32 = 1 << 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Register {
@@ -46,13 +48,13 @@ pub(crate) enum Register {
 impl Register {
     const fn address(self) -> usize {
         match self {
-            Self::ClockXtalMisc => 0x0300_2000,
-            Self::ClockTimer4 => 0x0300_200c,
-            Self::ResetTimer => 0x0300_3008,
-            Self::TimerSource => 0x0300_01a0,
-            Self::Timer4Load => 0x030a_0050,
-            Self::Timer4Control => 0x030a_0058,
-            Self::Timer4Eoi => 0x030a_005c,
+            Self::ClockXtalMisc => TIMER4_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
+            Self::ClockTimer4 => TIMER4_PRECONDITION_CLOCK_TIMER4_ADDRESS,
+            Self::ResetTimer => TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+            Self::TimerSource => TIMER4_PRECONDITION_CLOCK_SOURCE_ADDRESS,
+            Self::Timer4Load => TIMER4_LOAD_ADDRESS,
+            Self::Timer4Control => TIMER4_CONTROL_ADDRESS,
+            Self::Timer4Eoi => TIMER4_EOI_ADDRESS,
         }
     }
 }
@@ -114,21 +116,35 @@ impl<I: TimerIo> Timer4<I> {
     /// any shared register.  The caller must not perform Timer MMIO writes
     /// until this method succeeds.
     fn validate_platform(&mut self) -> Result<(), SelfTestError> {
-        if self.io.read(Register::ClockXtalMisc) & CLK_XTAL_MISC_GATE == 0 {
+        if self.io.read(Register::ClockXtalMisc) & TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK
+            != TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED
+        {
             return Err(SelfTestError::ClockXtalMiscDisabled);
         }
-        if self.io.read(Register::ClockTimer4) & CLK_TIMER4_GATE == 0 {
+        if self.io.read(Register::ClockTimer4) & TIMER4_PRECONDITION_CLOCK_TIMER4_MASK
+            != TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED
+        {
             return Err(SelfTestError::ClockTimer4Disabled);
         }
 
         let reset = self.io.read(Register::ResetTimer);
-        if reset & RESET_TIMER_IP_DEASSERTED == 0 {
+        if reset & TIMER4_PRECONDITION_RESET_TIMER_IP_MASK
+            != TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED
+        {
             return Err(SelfTestError::TimerResetAsserted);
         }
-        if reset & RESET_TIMER4_DEASSERTED == 0 {
+        debug_assert_eq!(
+            TIMER4_PRECONDITION_RESET_TIMER4_ADDRESS,
+            TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS
+        );
+        if reset & TIMER4_PRECONDITION_RESET_TIMER4_MASK
+            != TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED
+        {
             return Err(SelfTestError::Timer4ResetAsserted);
         }
-        if self.io.read(Register::TimerSource) & TIMER4_XTAL_SOURCE_SELECT != 0 {
+        if self.io.read(Register::TimerSource) & TIMER4_PRECONDITION_CLOCK_SOURCE_MASK
+            != TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED
+        {
             return Err(SelfTestError::WrongClockSource);
         }
         Ok(())
@@ -138,7 +154,8 @@ impl<I: TimerIo> Timer4<I> {
         self.io
             .write(Register::Timer4Control, CONTROL_STOPPED_MASKED);
         let _ = self.io.read(Register::Timer4Eoi);
-        self.io.write(Register::Timer4Load, TEST_PERIOD_TICKS);
+        self.io
+            .write(Register::Timer4Load, TIMER4_TEST_PERIOD_TICKS);
     }
 
     fn arm(&mut self) {
@@ -169,49 +186,93 @@ unsafe extern "C" {
 
 static TIMER4_FIRED: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn self_test() -> Result<(), SelfTestError> {
-    let mut timer = Timer4::new(Mmio);
+trait TimerRuntime {
+    fn reset_fired(&mut self);
+    fn fired(&mut self) -> bool;
+    fn irq_install(&mut self) -> i32;
+    fn irq_disable(&mut self);
+    fn ticks(&mut self) -> u32;
+    fn delay(&mut self, ticks: u32);
+}
 
+struct PlatformRuntime;
+
+impl TimerRuntime for PlatformRuntime {
+    fn reset_fired(&mut self) {
+        TIMER4_FIRED.store(false, Ordering::Release);
+    }
+
+    fn fired(&mut self) -> bool {
+        TIMER4_FIRED.load(Ordering::Acquire)
+    }
+
+    fn irq_install(&mut self) -> i32 {
+        // SAFETY: the C trampoline has static lifetime and installs the one
+        // generated-contract IRQ routed to C906L.
+        unsafe { c906l_timer4_irq_install() }
+    }
+
+    fn irq_disable(&mut self) {
+        // SAFETY: called only after irq_install succeeded for this fixed IRQ.
+        unsafe { c906l_timer4_irq_disable() };
+    }
+
+    fn ticks(&mut self) -> u32 {
+        // SAFETY: the scheduler is running in task context.
+        unsafe { c906l_ticks() }
+    }
+
+    fn delay(&mut self, ticks: u32) {
+        // SAFETY: the scheduler is running in task context.
+        unsafe { c906l_delay(ticks) };
+    }
+}
+
+fn self_test_with<I: TimerIo, R: TimerRuntime>(
+    timer: &mut Timer4<I>,
+    runtime: &mut R,
+) -> Result<(), SelfTestError> {
     // This is deliberately the first operation.  On validation failure no
     // Timer register, PLIC register, or shared clock/reset register is written.
     timer.validate_platform()?;
-    TIMER4_FIRED.store(false, Ordering::Release);
+    runtime.reset_fired();
     timer.prepare();
 
-    // SAFETY: the C trampoline has a static lifetime, installs exactly IRQ55,
-    // and calls c906l_timer4_interrupt with the vendor ISR ABI.
-    if unsafe { c906l_timer4_irq_install() } != 0 {
+    if runtime.irq_install() != 0 {
         timer.stop_and_clear();
         return Err(SelfTestError::InterruptRegistration);
     }
 
     timer.arm();
-    // SAFETY: the scheduler is running; both wrappers are valid in task context.
-    let deadline = unsafe { c906l_ticks() }.wrapping_add(TEST_TIMEOUT_RTOS_TICKS);
+    let deadline = runtime.ticks().wrapping_add(TIMER4_TEST_TIMEOUT_RTOS_TICKS);
+    let mut remaining_polls = TIMER4_TEST_TIMEOUT_RTOS_TICKS.saturating_add(1);
     let passed = loop {
-        if TIMER4_FIRED.load(Ordering::Acquire) {
+        if runtime.fired() {
             break true;
         }
-        // SAFETY: see above.  Wrapping comparison keeps the deadline valid
-        // across a FreeRTOS tick-count wrap.
-        if deadline_reached(unsafe { c906l_ticks() }, deadline) {
+        // The deadline is the normal bound.  The poll budget is an independent
+        // fail-safe if a broken platform tick ever stops advancing.
+        if deadline_reached(runtime.ticks(), deadline) || remaining_polls == 0 {
             break false;
         }
-        // SAFETY: one tick is finite and keeps the control task schedulable.
-        unsafe { c906l_delay(1) };
+        runtime.delay(1);
+        remaining_polls -= 1;
     };
 
     // Close the peripheral source before masking its PLIC input.  If the ISR
     // already ran, this is an idempotent second stop/clear of Timer4 only.
     timer.stop_and_clear();
-    // SAFETY: install succeeded above and IRQ is the same fixed IRQ55.
-    unsafe { c906l_timer4_irq_disable() };
+    runtime.irq_disable();
 
     if passed {
         Ok(())
     } else {
         Err(SelfTestError::Timeout)
     }
+}
+
+pub(crate) fn self_test() -> Result<(), SelfTestError> {
+    self_test_with(&mut Timer4::new(Mmio), &mut PlatformRuntime)
 }
 
 /// Called by the C IRQ55 trampoline.  The vendor dispatcher writes the PLIC
@@ -248,10 +309,11 @@ mod tests {
     impl FakeIo {
         fn ready() -> Self {
             Self {
-                xtal_gate: CLK_XTAL_MISC_GATE,
-                timer_gate: CLK_TIMER4_GATE,
-                reset: RESET_TIMER_IP_DEASSERTED | RESET_TIMER4_DEASSERTED,
-                source: 0,
+                xtal_gate: TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED,
+                timer_gate: TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED,
+                reset: TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED
+                    | TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED,
+                source: TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED,
                 operations: Vec::new(),
             }
         }
@@ -277,7 +339,7 @@ mod tests {
 
     #[test]
     fn timer4_registers_and_irq_are_exact() {
-        assert_eq!(IRQ, 55);
+        assert_eq!(TIMER4_IRQ, 55);
         assert_eq!(Register::ClockXtalMisc.address(), 0x0300_2000);
         assert_eq!(Register::ClockTimer4.address(), 0x0300_200c);
         assert_eq!(Register::ResetTimer.address(), 0x0300_3008);
@@ -302,7 +364,7 @@ mod tests {
                 Operation::Read(Register::TimerSource),
                 Operation::Write(Register::Timer4Control, CONTROL_STOPPED_MASKED),
                 Operation::Read(Register::Timer4Eoi),
-                Operation::Write(Register::Timer4Load, 2_500_000),
+                Operation::Write(Register::Timer4Load, TIMER4_TEST_PERIOD_TICKS),
             ]
         );
     }
@@ -312,11 +374,11 @@ mod tests {
         for fault in 0..5 {
             let mut io = FakeIo::ready();
             match fault {
-                0 => io.xtal_gate = 0,
-                1 => io.timer_gate = 0,
-                2 => io.reset &= !RESET_TIMER_IP_DEASSERTED,
-                3 => io.reset &= !RESET_TIMER4_DEASSERTED,
-                4 => io.source = TIMER4_XTAL_SOURCE_SELECT,
+                0 => io.xtal_gate ^= TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK,
+                1 => io.timer_gate ^= TIMER4_PRECONDITION_CLOCK_TIMER4_MASK,
+                2 => io.reset ^= TIMER4_PRECONDITION_RESET_TIMER_IP_MASK,
+                3 => io.reset ^= TIMER4_PRECONDITION_RESET_TIMER4_MASK,
+                4 => io.source ^= TIMER4_PRECONDITION_CLOCK_SOURCE_MASK,
                 _ => unreachable!(),
             }
             let mut timer = Timer4::new(io);
@@ -341,6 +403,119 @@ mod tests {
                 Operation::Read(Register::Timer4Eoi),
                 Operation::Write(Register::Timer4Control, CONTROL_STOPPED_MASKED),
             ]
+        );
+    }
+
+    #[derive(Default)]
+    struct FakeRuntime {
+        reset_fired_calls: usize,
+        fired_calls: usize,
+        install_calls: usize,
+        disable_calls: usize,
+        delay_calls: usize,
+        tick: u32,
+        install_result: i32,
+        fire_after_delays: Option<usize>,
+    }
+
+    impl TimerRuntime for FakeRuntime {
+        fn reset_fired(&mut self) {
+            self.reset_fired_calls += 1;
+        }
+
+        fn fired(&mut self) -> bool {
+            self.fired_calls += 1;
+            self.fire_after_delays
+                .is_some_and(|threshold| self.delay_calls >= threshold)
+        }
+
+        fn irq_install(&mut self) -> i32 {
+            self.install_calls += 1;
+            self.install_result
+        }
+
+        fn irq_disable(&mut self) {
+            self.disable_calls += 1;
+        }
+
+        fn ticks(&mut self) -> u32 {
+            self.tick
+        }
+
+        fn delay(&mut self, ticks: u32) {
+            self.delay_calls += 1;
+            self.tick = self.tick.wrapping_add(ticks);
+        }
+    }
+
+    #[test]
+    fn failed_precondition_never_touches_plic_or_irq_runtime() {
+        let mut io = FakeIo::ready();
+        io.xtal_gate ^= TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK;
+        let mut timer = Timer4::new(io);
+        let mut runtime = FakeRuntime::default();
+        assert_eq!(
+            self_test_with(&mut timer, &mut runtime),
+            Err(SelfTestError::ClockXtalMiscDisabled)
+        );
+        assert_eq!(runtime.reset_fired_calls, 0);
+        assert_eq!(runtime.install_calls, 0);
+        assert_eq!(runtime.disable_calls, 0);
+        assert_eq!(runtime.delay_calls, 0);
+        assert!(
+            timer
+                .io
+                .operations
+                .iter()
+                .all(|operation| matches!(operation, Operation::Read(_)))
+        );
+    }
+
+    #[test]
+    fn self_test_success_has_bounded_mmio_and_balanced_irq_lifetime() {
+        let mut timer = Timer4::new(FakeIo::ready());
+        let mut runtime = FakeRuntime {
+            fire_after_delays: Some(3),
+            ..FakeRuntime::default()
+        };
+        assert_eq!(self_test_with(&mut timer, &mut runtime), Ok(()));
+        assert_eq!(runtime.reset_fired_calls, 1);
+        assert_eq!(runtime.install_calls, 1);
+        assert_eq!(runtime.disable_calls, 1);
+        assert_eq!(runtime.delay_calls, 3);
+        assert!(timer.io.operations.len() < 16);
+    }
+
+    #[test]
+    fn self_test_timeout_is_independently_poll_bounded() {
+        let mut timer = Timer4::new(FakeIo::ready());
+        let mut runtime = FakeRuntime::default();
+        assert_eq!(
+            self_test_with(&mut timer, &mut runtime),
+            Err(SelfTestError::Timeout)
+        );
+        assert_eq!(runtime.install_calls, 1);
+        assert_eq!(runtime.disable_calls, 1);
+        assert!(runtime.delay_calls <= TIMER4_TEST_TIMEOUT_RTOS_TICKS as usize + 1);
+    }
+
+    #[test]
+    fn failed_irq_install_stops_timer_without_disabling_unowned_irq() {
+        let mut timer = Timer4::new(FakeIo::ready());
+        let mut runtime = FakeRuntime {
+            install_result: -1,
+            ..FakeRuntime::default()
+        };
+        assert_eq!(
+            self_test_with(&mut timer, &mut runtime),
+            Err(SelfTestError::InterruptRegistration)
+        );
+        assert_eq!(runtime.install_calls, 1);
+        assert_eq!(runtime.disable_calls, 0);
+        assert_eq!(runtime.delay_calls, 0);
+        assert_eq!(
+            timer.io.operations.last(),
+            Some(&Operation::Read(Register::Timer4Eoi))
         );
     }
 }

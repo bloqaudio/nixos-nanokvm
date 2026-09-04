@@ -1,19 +1,18 @@
-{
-  buildPackages,
-  lib,
-  rustPlatform,
-  stdenv,
-  peripherals ? [ ],
+{ buildPackages
+, lib
+, rustPlatform
+, stdenv
+, contract
+,
 }:
 
 let
-  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
   rustTarget = stdenv.hostPlatform.rust.rustcTarget;
   knownPeripherals = [ "timer4" ];
   unknownPeripherals = lib.filter
     (peripheral: !builtins.elem peripheral knownPeripherals)
-    peripherals;
-  enabledPeripherals = lib.sort builtins.lessThan (lib.unique peripherals);
+    contract.enabledPeripherals;
+  enabledPeripherals = contract.enabledPeripherals;
   timer4 = builtins.elem "timer4" enabledPeripherals;
 in
 assert lib.assertMsg (rustTarget == "riscv64gc-unknown-none-elf") ''
@@ -31,15 +30,9 @@ rustPlatform.buildRustPackage {
 
   cargoHash = "sha256-ZpK++hvy4Cxuha7pITzEgwvFOGVUmWXjguaES8azPU4=";
   strictDeps = true;
+  SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
 
   nativeBuildInputs = [ buildPackages.python3 ];
-
-  postPatch = ''
-    substituteInPlace src/lib.rs \
-      --replace-fail \
-        'const SHMEM_BASE: usize = 0x8ff0_0000;' \
-        'const SHMEM_BASE: usize = 0x${lib.toHexString memoryMap.sharedMemoryAddress};'
-  '';
 
   # The normal Cargo manifest remains an rlib so `cargo test` works on the
   # build host.  Only this target package requests the static archive consumed
@@ -73,6 +66,16 @@ rustPlatform.buildRustPackage {
 
   passthru = {
     inherit enabledPeripherals;
+    inherit (contract)
+      contractEpoch
+      contractSha256
+      dormantCapabilities
+      leaseMask
+      profileId
+      profileName
+      protocolVersion
+      requiredCapabilities
+      ;
   };
 
   meta = {

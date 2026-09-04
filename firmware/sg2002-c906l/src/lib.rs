@@ -4,85 +4,52 @@
 #[cfg(target_arch = "riscv64")]
 use core::arch::asm;
 use core::ffi::{c_int, c_void};
-use core::mem::size_of;
+#[cfg(test)]
+use core::mem::{align_of, size_of};
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, compiler_fence};
 use embedded_hal::delay::DelayNs;
 
+#[allow(dead_code)]
+mod contract {
+    include!(env!("SG2002_C906L_CONTRACT_RS"));
+}
+
+mod activation;
 mod rpmsg;
-#[cfg(any(feature = "timer4", test))]
+#[cfg(feature = "timer4")]
 mod timer4;
 
-const ABI_MAJOR: u16 = 1;
-const ABI_MINOR: u16 = 0;
-const SHMEM_BASE: usize = 0x8ff0_0000;
-const SHMEM_MAGIC: u32 = 0x4d56_4b4e; // "NKVM" in little-endian memory.
+use contract::{
+    ABI_MAJOR, ABI_MINOR, ACTIVATION_REQUIRED, ACTIVATION_RESULT_INTERNAL_FAILURE,
+    ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_DORMANT, ACTIVATION_STATE_INITIALIZING,
+    DORMANT_CAPABILITIES, EXPECTED_CAPABILITIES, FLAG_MAILBOX_LOCK_FAILURE, FLAG_REQUEST_DROPPED,
+    FLAG_RESPONSE_TIMEOUT, FLAG_UNEXPECTED_MAILBOX_CHANNEL, Message, OP_ACTIVATE_LEASES, OP_ERROR,
+    OP_GET_ABI, OP_GET_CAPABILITIES, OP_PING, OP_RESPONSE, SERVICE_CONTROL, SHMEM_MAGIC,
+    STATE_BOOTING, STATE_FAULT, STATE_RUNNING, STATUS_REGION_ADDRESS, STATUS_SIZE, Status,
+};
+
+#[cfg(test)]
+use contract::{CACHE_LINE_SIZE, MESSAGE_SIZE};
+
 const HEARTBEAT_TICKS: u32 = 20; // FreeRTOS runs at 200 Hz.
 
-const SERVICE_CONTROL: u8 = 1;
-const OP_PING: u8 = 0x01;
-const OP_GET_ABI: u8 = 0x02;
-const OP_GET_CAPABILITIES: u8 = 0x03;
-const OP_RESPONSE: u8 = 0x80;
-const OP_ERROR: u8 = 0xff;
-
-const CAP_MAILBOX: u64 = 1 << 0;
-const CAP_SHMEM_HEARTBEAT: u64 = 1 << 1;
-#[cfg(feature = "timer4")]
-const CAP_TIMER4_SELF_TEST: u64 = 1 << 2;
-const CAP_RPMSG: u64 = 1 << 3;
-
-const STATE_BOOTING: u32 = 1;
-const STATE_RUNNING: u32 = 2;
-const STATE_FAULT: u32 = 3;
-const FLAG_RESPONSE_TIMEOUT: u32 = 1 << 0;
-const FLAG_REQUEST_DROPPED: u32 = 1 << 1;
-#[cfg(feature = "timer4")]
-const FLAG_TIMER4_SELF_TEST_FAILED: u32 = 1 << 2;
-
-#[repr(C, align(64))]
-#[derive(Clone, Copy)]
-struct Status {
-    magic: u32,
-    abi_major: u16,
-    abi_minor: u16,
-    struct_size: u32,
-    state: u32,
-    generation: u32,
-    flags: u32,
-    heartbeat: u64,
-    capabilities: u64,
-    last_request: u64,
-    last_response: u64,
-    reserved: u64,
-}
-
-impl Status {
-    #[cfg(all(not(test), target_os = "none"))]
-    const fn zeroed() -> Self {
-        Self {
-            magic: 0,
-            abi_major: 0,
-            abi_minor: 0,
-            struct_size: 0,
-            state: 0,
-            generation: 0,
-            flags: 0,
-            heartbeat: 0,
-            capabilities: 0,
-            last_request: 0,
-            last_response: 0,
-            reserved: 0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Message {
-    service: u8,
-    opcode: u8,
-    sequence: u16,
-    value: u32,
+unsafe extern "C" {
+    fn c906l_platform_start(
+        control_task: extern "C" fn(*mut c_void),
+        rpmsg_task: extern "C" fn(*mut c_void),
+    ) -> c_int;
+    fn c906l_request_receive(word: *mut u64, timeout_ticks: u32) -> c_int;
+    fn c906l_response_send(word: u64) -> c_int;
+    fn c906l_request_drops() -> u32;
+    fn c906l_mailbox_lock_failures() -> u32;
+    fn c906l_unexpected_mailbox_events() -> u32;
+    fn c906l_ticks() -> u32;
+    fn c906l_cache_clean(address: usize, size: usize);
+    fn c906l_cache_invalidate(address: usize, size: usize);
+    fn c906l_delay(ticks: u32);
+    fn c906l_vq_kick_receive(vqid: *mut u32, timeout_ticks: u32) -> c_int;
+    fn c906l_vq_notify(vqid: u32) -> c_int;
 }
 
 impl Message {
@@ -102,7 +69,7 @@ impl Message {
             | ((self.value as u64) << 32)
     }
 
-    fn response(self, capabilities: u64) -> Self {
+    fn ordinary_response(self, capabilities: u64) -> Self {
         if self.service != SERVICE_CONTROL {
             return Self {
                 opcode: OP_ERROR,
@@ -130,29 +97,21 @@ impl Message {
             ..self
         }
     }
-}
 
-unsafe extern "C" {
-    fn c906l_platform_start(
-        control_task: extern "C" fn(*mut c_void),
-        rpmsg_task: extern "C" fn(*mut c_void),
-    ) -> c_int;
-    fn c906l_request_receive(word: *mut u64, timeout_ticks: u32) -> c_int;
-    fn c906l_response_send(word: u64) -> c_int;
-    fn c906l_request_drops() -> u32;
-    fn c906l_ticks() -> u32;
-    fn c906l_cache_clean(address: usize, size: usize);
-    fn c906l_cache_invalidate(address: usize, size: usize);
-    fn c906l_delay(ticks: u32);
-    fn c906l_vq_kick_receive(vqid: *mut u32, timeout_ticks: u32) -> c_int;
-    fn c906l_vq_notify(vqid: u32) -> c_int;
+    const fn activation_response(self, result: u32) -> Self {
+        Self {
+            opcode: OP_ACTIVATE_LEASES | OP_RESPONSE,
+            value: result,
+            ..self
+        }
+    }
 }
 
 fn status_ptr() -> *mut Status {
-    SHMEM_BASE as *mut Status
+    STATUS_REGION_ADDRESS as *mut Status
 }
 
-fn io_fence() {
+pub(crate) fn io_fence() {
     compiler_fence(Ordering::SeqCst);
     // SAFETY: this is a memory-ordering instruction with no operands.
     #[cfg(target_arch = "riscv64")]
@@ -161,72 +120,140 @@ fn io_fence() {
     };
 }
 
-fn publish(status: &Status) {
-    // SAFETY: the DT reserves this aligned status cacheline exclusively for
-    // C906L/Linux communication for the entire firmware lifetime.
-    unsafe {
-        write_volatile(status_ptr(), *status);
-        c906l_cache_clean(SHMEM_BASE, size_of::<Status>());
-    }
+pub(crate) fn clean(address: usize, size: usize) {
+    io_fence();
+    // SAFETY: callers provide a range wholly within the reserved C906L/Linux
+    // shared-memory carveout.
+    unsafe { c906l_cache_clean(address, size) };
     io_fence();
 }
 
+pub(crate) fn invalidate(address: usize, size: usize) {
+    // SAFETY: callers provide a range wholly within the reserved C906L/Linux
+    // shared-memory carveout.
+    unsafe { c906l_cache_invalidate(address, size) };
+    io_fence();
+}
+
+fn publish(status: &Status) {
+    // SAFETY: the DT reserves this aligned status cacheline exclusively for
+    // C906L/Linux communication for the entire firmware lifetime.
+    unsafe { write_volatile(status_ptr(), *status) };
+    clean(STATUS_REGION_ADDRESS, STATUS_SIZE);
+}
+
+#[cfg(all(not(test), target_os = "none"))]
+fn zero_status() -> Status {
+    Status {
+        magic: 0,
+        abi_major: 0,
+        abi_minor: 0,
+        struct_size: 0,
+        state: 0,
+        generation: 0,
+        flags: 0,
+        heartbeat: 0,
+        capabilities: 0,
+        last_request: 0,
+        last_response: 0,
+        activation_state: ACTIVATION_STATE_INITIALIZING,
+        activation_error: 0,
+        activation_attempts: 0,
+        activation_request_id: 0,
+    }
+}
+
 fn initial_status() -> Status {
-    // SAFETY: same reserved-memory invariant as publish().  Invalidation is
-    // required because the SG2002 interconnect is not hardware coherent.
-    unsafe {
-        c906l_cache_invalidate(SHMEM_BASE, size_of::<Status>());
-        io_fence();
-        let previous = read_volatile(status_ptr());
-        let generation = if previous.magic == SHMEM_MAGIC
-            && previous.abi_major == ABI_MAJOR
-            && previous.struct_size == size_of::<Status>() as u32
-        {
-            previous.generation.wrapping_add(1)
-        } else {
-            1
-        };
-        Status {
-            magic: SHMEM_MAGIC,
-            abi_major: ABI_MAJOR,
-            abi_minor: ABI_MINOR,
-            struct_size: size_of::<Status>() as u32,
-            state: STATE_BOOTING,
-            generation,
-            flags: 0,
-            heartbeat: 0,
-            capabilities: CAP_MAILBOX | CAP_SHMEM_HEARTBEAT | CAP_RPMSG,
-            last_request: 0,
-            last_response: 0,
-            reserved: 0,
-        }
+    invalidate(STATUS_REGION_ADDRESS, STATUS_SIZE);
+    // SAFETY: the status cacheline is permanently reserved and aligned.
+    let previous = unsafe { read_volatile(status_ptr()) };
+    let previous_generation = if previous.magic == SHMEM_MAGIC
+        && previous.abi_major == ABI_MAJOR
+        && previous.struct_size == STATUS_SIZE as u32
+    {
+        previous.generation
+    } else {
+        0
+    };
+    let mut generation = previous_generation.wrapping_add(1);
+    if generation == 0 {
+        generation = 1;
+    }
+
+    Status {
+        magic: SHMEM_MAGIC,
+        abi_major: ABI_MAJOR,
+        abi_minor: ABI_MINOR,
+        struct_size: STATUS_SIZE as u32,
+        state: STATE_BOOTING,
+        generation,
+        flags: 0,
+        heartbeat: 0,
+        capabilities: DORMANT_CAPABILITIES,
+        last_request: 0,
+        last_response: 0,
+        activation_state: ACTIVATION_STATE_INITIALIZING,
+        activation_error: 0,
+        activation_attempts: 0,
+        activation_request_id: 0,
     }
 }
 
 fn load_status() -> Status {
+    invalidate(STATUS_REGION_ADDRESS, STATUS_SIZE);
     // SAFETY: the status cacheline is permanently reserved and aligned.
-    unsafe {
-        c906l_cache_invalidate(SHMEM_BASE, size_of::<Status>());
-        io_fence();
-        read_volatile(status_ptr())
-    }
+    unsafe { read_volatile(status_ptr()) }
 }
 
 const fn deadline_reached(now: u32, deadline: u32) -> bool {
     now.wrapping_sub(deadline) as i32 >= 0
 }
 
+const fn mailbox_diagnostic_flags(
+    request_drops: u32,
+    lock_failures: u32,
+    unexpected_events: u32,
+) -> u32 {
+    (if request_drops != 0 {
+        FLAG_REQUEST_DROPPED
+    } else {
+        0
+    }) | (if lock_failures != 0 {
+        FLAG_MAILBOX_LOCK_FAILURE
+    } else {
+        0
+    }) | (if unexpected_events != 0 {
+        FLAG_UNEXPECTED_MAILBOX_CHANNEL
+    } else {
+        0
+    })
+}
+
+struct SharedStatusPublisher;
+
+impl activation::StatusPublisher for SharedStatusPublisher {
+    fn publish(&mut self, status: &Status) {
+        publish(status);
+    }
+}
+
 extern "C" fn control_task(_argument: *mut c_void) {
     let mut status = load_status();
-    #[cfg(feature = "timer4")]
-    match timer4::self_test() {
-        Ok(()) => status.capabilities |= CAP_TIMER4_SELF_TEST,
-        Err(_) => status.flags |= FLAG_TIMER4_SELF_TEST_FAILED,
-    }
+    status.state = STATE_RUNNING;
+    status.activation_state = if ACTIVATION_REQUIRED {
+        ACTIVATION_STATE_DORMANT
+    } else {
+        status.capabilities = EXPECTED_CAPABILITIES;
+        ACTIVATION_STATE_ACTIVE
+    };
+    publish(&status);
+
+    let mut accepted_request = None;
+    let mut request_source = activation::SharedRequestSource;
+    let mut leases = activation::HardwareLeases;
+    let mut publisher = SharedStatusPublisher;
     // SAFETY: xTaskGetTickCount is valid from a running FreeRTOS task.
     let mut next_heartbeat = unsafe { c906l_ticks() }.wrapping_add(HEARTBEAT_TICKS);
-    status.state = STATE_RUNNING;
-    publish(&status);
 
     loop {
         let mut request_word = 0_u64;
@@ -241,9 +268,23 @@ extern "C" fn control_task(_argument: *mut c_void) {
         // call, and the C shim writes exactly one u64 on success.
         let received = unsafe { c906l_request_receive(&mut request_word, wait) } == 0;
         if received {
-            let response = Message::decode(request_word).response(status.capabilities);
-            let response_word = response.encode();
+            let request = Message::decode(request_word);
             status.last_request = request_word;
+            let response =
+                if request.service == SERVICE_CONTROL && request.opcode == OP_ACTIVATE_LEASES {
+                    let result = activation::handle(
+                        request,
+                        &mut status,
+                        &mut accepted_request,
+                        &mut request_source,
+                        &mut leases,
+                        &mut publisher,
+                    );
+                    request.activation_response(result)
+                } else {
+                    request.ordinary_response(status.capabilities)
+                };
+            let response_word = response.encode();
             // SAFETY: fixed-width value crossing the audited C ABI.
             if unsafe { c906l_response_send(response_word) } == 0 {
                 status.last_response = response_word;
@@ -259,10 +300,13 @@ extern "C" fn control_task(_argument: *mut c_void) {
             next_heartbeat = now.wrapping_add(HEARTBEAT_TICKS);
         }
 
-        // SAFETY: atomic read of a monotonic diagnostic counter in the shim.
-        if unsafe { c906l_request_drops() } != 0 {
-            status.flags |= FLAG_REQUEST_DROPPED;
-        }
+        // SAFETY: naturally aligned monotonic u32 counters written with local
+        // IRQs masked by the C shim.
+        status.flags |= mailbox_diagnostic_flags(
+            unsafe { c906l_request_drops() },
+            unsafe { c906l_mailbox_lock_failures() },
+            unsafe { c906l_unexpected_mailbox_events() },
+        );
         publish(&status);
     }
 }
@@ -274,7 +318,7 @@ extern "C" fn rpmsg_task(_argument: *mut c_void) {
 /// Coarse FreeRTOS-backed delay for portable `embedded-hal` drivers.
 ///
 /// The scheduler tick is 5 ms. Sub-tick delays round up; timing-sensitive
-/// SG2002 peripherals will receive dedicated hardware-timer implementations.
+/// SG2002 peripherals receive dedicated hardware-timer implementations.
 pub struct FreeRtosDelay;
 
 impl DelayNs for FreeRtosDelay {
@@ -290,19 +334,32 @@ impl DelayNs for FreeRtosDelay {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn c906l_rust_main() -> ! {
-    // Linux attaches to a resource table installed by the already-running
-    // firmware. Publish it before RUNNING/capabilities can become visible.
+    // Publish the attach-only resource table before advertising RPMsg.  Lease
+    // profiles deliberately initialize and serve RPMsg while still dormant.
     rpmsg::initialize();
-    let status = initial_status();
+    let mut status = initial_status();
     publish(&status);
+
+    if !activation::publish_manifest(status.generation) {
+        status.flags |= contract::FLAG_MANIFEST_FAULT;
+        status.state = STATE_FAULT;
+        status.activation_error = ACTIVATION_RESULT_INTERNAL_FAILURE as u8;
+        publish(&status);
+        loop {
+            core::hint::spin_loop();
+        }
+    }
 
     // SAFETY: both tasks have the exact C ABI and never return. The shim owns
     // their queues and starts the scheduler only after all setup succeeds.
     let _error = unsafe { c906l_platform_start(control_task, rpmsg_task) };
 
-    let mut failed = status;
-    failed.state = STATE_FAULT;
-    publish(&failed);
+    // SAFETY: platform startup may have recorded a terminal lock failure
+    // before the scheduler and control task could publish diagnostics.
+    status.flags |= mailbox_diagnostic_flags(0, unsafe { c906l_mailbox_lock_failures() }, 0);
+    status.state = STATE_FAULT;
+    status.activation_error = ACTIVATION_RESULT_INTERNAL_FAILURE as u8;
+    publish(&status);
     loop {
         core::hint::spin_loop();
     }
@@ -311,12 +368,13 @@ pub extern "C" fn c906l_rust_main() -> ! {
 #[cfg(all(not(test), target_os = "none"))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
-    let mut failed = Status::zeroed();
+    let mut failed = zero_status();
     failed.magic = SHMEM_MAGIC;
     failed.abi_major = ABI_MAJOR;
     failed.abi_minor = ABI_MINOR;
-    failed.struct_size = size_of::<Status>() as u32;
+    failed.struct_size = STATUS_SIZE as u32;
     failed.state = STATE_FAULT;
+    failed.activation_error = ACTIVATION_RESULT_INTERNAL_FAILURE as u8;
     publish(&failed);
     loop {
         core::hint::spin_loop();
@@ -329,8 +387,9 @@ mod tests {
 
     #[test]
     fn status_is_one_cacheline() {
-        assert_eq!(size_of::<Status>(), 64);
-        assert_eq!(align_of::<Status>(), 64);
+        assert_eq!(size_of::<Message>(), MESSAGE_SIZE);
+        assert_eq!(size_of::<Status>(), STATUS_SIZE);
+        assert_eq!(align_of::<Status>(), CACHE_LINE_SIZE);
     }
 
     #[test]
@@ -353,7 +412,7 @@ mod tests {
             value: 0xfeed_beef,
         };
         assert_eq!(
-            request.response(CAP_MAILBOX),
+            request.ordinary_response(contract::CAP_MAILBOX),
             Message {
                 opcode: OP_PING | OP_RESPONSE,
                 ..request
@@ -369,12 +428,51 @@ mod tests {
             sequence: 1,
             value: 2,
         };
-        assert_eq!(request.response(0).opcode, OP_ERROR);
+        assert_eq!(request.ordinary_response(0).opcode, OP_ERROR);
+    }
+
+    #[test]
+    fn ordinary_control_operations_remain_available() {
+        let abi = Message {
+            service: SERVICE_CONTROL,
+            opcode: OP_GET_ABI,
+            sequence: 7,
+            value: 0,
+        }
+        .ordinary_response(0);
+        assert_eq!(abi.opcode, OP_GET_ABI | OP_RESPONSE);
+        assert_eq!(abi.sequence, 7);
+        assert_eq!(abi.value, ((ABI_MAJOR as u32) << 16) | ABI_MINOR as u32);
+
+        let capabilities = Message {
+            service: SERVICE_CONTROL,
+            opcode: OP_GET_CAPABILITIES,
+            sequence: 8,
+            value: 0,
+        }
+        .ordinary_response(DORMANT_CAPABILITIES);
+        assert_eq!(capabilities.opcode, OP_GET_CAPABILITIES | OP_RESPONSE);
+        assert_eq!(capabilities.value, DORMANT_CAPABILITIES as u32);
     }
 
     #[test]
     fn deadline_comparison_survives_tick_wrap() {
         assert!(!deadline_reached(u32::MAX - 2, 1));
         assert!(deadline_reached(1, u32::MAX - 2));
+    }
+
+    #[test]
+    fn terminal_mailbox_lock_failures_are_published_separately_from_drops() {
+        assert_eq!(mailbox_diagnostic_flags(0, 0, 0), 0);
+        assert_eq!(mailbox_diagnostic_flags(1, 0, 0), FLAG_REQUEST_DROPPED);
+        assert_eq!(mailbox_diagnostic_flags(0, 1, 0), FLAG_MAILBOX_LOCK_FAILURE);
+        assert_eq!(
+            mailbox_diagnostic_flags(0, 0, 1),
+            FLAG_UNEXPECTED_MAILBOX_CHANNEL
+        );
+        assert_eq!(
+            mailbox_diagnostic_flags(1, 1, 1),
+            FLAG_REQUEST_DROPPED | FLAG_MAILBOX_LOCK_FAILURE | FLAG_UNEXPECTED_MAILBOX_CHANNEL
+        );
     }
 }

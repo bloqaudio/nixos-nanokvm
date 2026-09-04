@@ -1,48 +1,30 @@
-{
-  lib,
-  stdenv,
-  kernel,
+{ buildPackages
+, lib
+, stdenv
+, kernel
+, contract
+,
 }:
 
-let
-  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
-  hex = value: "0x${lib.toHexString value}ULL";
-in
-assert lib.assertMsg (
-  memoryMap.resourceTableAddress == memoryMap.sharedMemoryAddress + 4096
-  && memoryMap.rpmsgVring0Address == memoryMap.sharedMemoryAddress + 8192
-  && memoryMap.rpmsgVring1Address == memoryMap.sharedMemoryAddress + 24576
-  && memoryMap.rpmsgBufferAddress == memoryMap.sharedMemoryAddress + 65536
-  && memoryMap.bulkAddress == memoryMap.sharedMemoryAddress + 327680
-  && memoryMap.bulkAddress + memoryMap.bulkSize
-    == memoryMap.sharedMemoryAddress + memoryMap.sharedMemorySize
-) "SG2002 C906L RPMsg subregions must exactly partition the shared carveout";
+assert lib.assertMsg (contract ? contractSha256 && contract ? profileName)
+  "sg2002-c906l-remoteproc requires a generated C906L contract package";
 stdenv.mkDerivation {
   pname = "sg2002-c906l-remoteproc";
-  version = "0.1.0-${kernel.modDirVersion}";
+  version = "0.2.0-${kernel.modDirVersion}";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
       ./Makefile
       ./sg2002-c906l-remoteproc.c
+      ./test_source.py
     ];
   };
 
   postPatch = ''
-    substituteInPlace sg2002-c906l-remoteproc.c \
-      --replace-fail '@SHMEM_ADDRESS@' '${hex memoryMap.sharedMemoryAddress}' \
-      --replace-fail '@SHMEM_SIZE@' '${hex memoryMap.sharedMemorySize}' \
-      --replace-fail '@RESOURCE_TABLE_OFFSET@' '${hex (memoryMap.resourceTableAddress - memoryMap.sharedMemoryAddress)}' \
-      --replace-fail '@RESOURCE_TABLE_SIZE@' '${hex memoryMap.resourceTableSize}' \
-      --replace-fail '@VRING0_OFFSET@' '${hex (memoryMap.rpmsgVring0Address - memoryMap.sharedMemoryAddress)}' \
-      --replace-fail '@VRING0_SIZE@' '${hex memoryMap.rpmsgVring0Size}' \
-      --replace-fail '@VRING1_OFFSET@' '${hex (memoryMap.rpmsgVring1Address - memoryMap.sharedMemoryAddress)}' \
-      --replace-fail '@VRING1_SIZE@' '${hex memoryMap.rpmsgVring1Size}' \
-      --replace-fail '@BUFFER_OFFSET@' '${hex (memoryMap.rpmsgBufferAddress - memoryMap.sharedMemoryAddress)}' \
-      --replace-fail '@BUFFER_SIZE@' '${hex memoryMap.rpmsgBufferSize}'
+    cp ${contract}/include/sg2002-c906l-kernel-contract.h .
   '';
 
-  nativeBuildInputs = kernel.moduleBuildDependencies;
+  nativeBuildInputs = kernel.moduleBuildDependencies ++ [ buildPackages.python3 ];
   hardeningDisable = [ "pic" "format" ];
 
   makeFlags = [
@@ -51,12 +33,33 @@ stdenv.mkDerivation {
     "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
   ];
 
+  postBuild = ''
+    python3 test_source.py sg2002-c906l-remoteproc.c \
+      ${contract}/share/sg2002-c906l/contract.json
+  '';
+
   installPhase = ''
     runHook preInstall
     install -Dm0644 sg2002-c906l-remoteproc.ko \
       "$out/lib/modules/${kernel.modDirVersion}/kernel/drivers/remoteproc/sg2002-c906l-remoteproc.ko"
     runHook postInstall
   '';
+
+  passthru = {
+    contractPackage = contract;
+    inherit
+      (contract)
+      contractEpoch
+      contractSha256
+      dormantCapabilities
+      leaseMask
+      manifestFlags
+      profileId
+      profileName
+      protocolVersion
+      requiredCapabilities
+      ;
+  };
 
   meta = {
     description = "Attach-only Linux remoteproc/RPMsg transport for SG2002 C906L";

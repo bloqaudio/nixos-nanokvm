@@ -16,11 +16,13 @@ with a bootable SD card inserted — no UART required. Flow:
      OpenSBI → U-Boot runs and fastboot usb 0 enumerates as VID 18d1:d00d.
   3. With a C906L-bearing FIP, choose the handoff from the observed reset
      state.  A core started after this invocation's FIP transfer is accepted
-     only after ABI, required-capability, and advancing-heartbeat checks.  A
-     held-reset core additionally gets an exact payload CRC before the vendor
-     reset/vector release sequence.  Attaching to a core started by an earlier
-     invocation requires explicit --accept-running-c906l consent and the same
-     live-status checks; its now-mutable payload cannot be CRC-verified.
+     only after two stable ABI 1.1 status/manifest snapshots exactly match the
+     packaged contract and their heartbeat advances.  A held-reset core also
+     gets an exact payload CRC before the vendor reset/vector release sequence.
+     Attaching to a core started by an earlier invocation requires explicit
+     --accept-running-c906l consent and the same identity/liveness proof; its
+     now-mutable payload cannot be CRC-verified.  This runner never activates a
+     peripheral lease: lease profiles must still report DORMANT before Linux.
   4. Optional diagnostic stop: `--uboot-only` leaves U-Boot in fastboot
      so the host can issue `fastboot oem run:<cmd>` commands.
   5. Host: `fastboot stage <FIT>` pushes the image to $fastboot_buf_addr.
@@ -36,10 +38,13 @@ import errno
 import os
 import re
 import socket
+import struct
 import subprocess
 import sys
 import time
 import zlib
+
+import sg2002_c906l_contract as c906l_contract
 
 
 FASTBOOT_BUF_ADDR = 0x82000000
@@ -70,20 +75,33 @@ ROM_PRODUCT_ID = 0x1000
 SG2002_DRAM_START = 0x80000000
 SG2002_DRAM_END = 0x90000000
 
-C906L_RESET_REG = 0x03003024
-C906L_RESET_BIT = 1 << 6
-C906L_SEC_SYS_REG = 0x020B0004
-C906L_SEC_ENABLE_BIT = 1 << 13
-C906L_VECTOR_LOW_REG = 0x020B0020
-C906L_VECTOR_HIGH_REG = 0x020B0024
+C906L_RESET_REG = c906l_contract.RESET_ADDRESS
+C906L_RESET_BIT = c906l_contract.RESET_MASK
+C906L_SEC_SYS_REG = c906l_contract.SECURITY_ENABLE_ADDRESS
+C906L_SEC_ENABLE_BIT = c906l_contract.SECURITY_ENABLE_MASK
+C906L_VECTOR_LOW_REG = c906l_contract.VECTOR_LOW_ADDRESS
+C906L_VECTOR_HIGH_REG = c906l_contract.VECTOR_HIGH_ADDRESS
 
-C906L_STATUS_SIZE = 64
-C906L_STATUS_MAGIC = 0x4D564B4E
-C906L_ABI_MAJOR = 1
-C906L_STATE_RUNNING = 2
-C906L_STATE_FAULT = 3
-C906L_CAP_SHMEM_HEARTBEAT = 1 << 1
+C906L_STATUS_SIZE = c906l_contract.STATUS_SIZE
+C906L_STATUS_MAGIC = c906l_contract.SHMEM_MAGIC
+C906L_ABI_MAJOR = c906l_contract.ABI_MAJOR
+C906L_ABI_MINOR = c906l_contract.ABI_MINOR
+C906L_STATE_RUNNING = c906l_contract.STATE_RUNNING
+C906L_STATE_FAULT = c906l_contract.STATE_FAULT
+C906L_CAP_SHMEM_HEARTBEAT = c906l_contract.CAP_SHMEM_HEARTBEAT
+C906L_MANIFEST_SIZE = c906l_contract.MANIFEST_SIZE
+C906L_SNAPSHOT_SIZE = C906L_STATUS_SIZE + C906L_MANIFEST_SIZE
+C906L_CONTRACT_SHA256 = bytes.fromhex(c906l_contract.CONTRACT_SHA256)
+C906L_CAPABILITY_WIRE_WIDTH = c906l_contract.CAPABILITY_WIRE_WIDTH
 C906L_MIN_CACHE_SCRATCH_SIZE = 1024 * 1024
+
+if (C906L_ABI_MAJOR, C906L_ABI_MINOR) != (1, 1):
+    raise RuntimeError(
+        "usb-boot-mainline supports exactly the SG2002 C906L ABI 1.1 contract"
+    )
+if c906l_contract.MANIFEST_ADDRESS != (
+        c906l_contract.SHMEM_ADDRESS + C906L_STATUS_SIZE):
+    raise RuntimeError("C906L status and manifest are not one contiguous snapshot")
 
 _CRC32_LINE = re.compile(
     r"CRC32 for\s+([0-9a-fA-F]+)\s+\.\.\.\s+"
@@ -124,26 +142,39 @@ class C906LStatus:
     capabilities: int
     last_request: int
     last_response: int
+    activation_state: int
+    activation_error: int
+    activation_attempts: int
+    activation_request_id: int
 
-    def readiness_error(self, required_capabilities=C906L_CAP_SHMEM_HEARTBEAT):
-        if self.magic != C906L_STATUS_MAGIC:
-            return "status magic is not NKVM"
-        if self.abi_major != C906L_ABI_MAJOR:
-            return (f"unsupported status ABI major {self.abi_major} "
-                    f"(expected {C906L_ABI_MAJOR})")
-        if self.struct_size != C906L_STATUS_SIZE:
-            return (f"status size is {self.struct_size}, expected "
-                    f"{C906L_STATUS_SIZE}")
-        if self.generation == 0:
-            return "status generation is zero"
-        missing = required_capabilities & ~self.capabilities
-        if missing:
-            return (f"firmware is missing required capabilities "
-                    f"0x{missing:x} (has 0x{self.capabilities:x}, "
-                    f"requires 0x{required_capabilities:x})")
-        if self.state != C906L_STATE_RUNNING:
-            return f"firmware state is {self.state}, not RUNNING"
-        return None
+
+@dataclass(frozen=True)
+class C906LManifest:
+    magic: int
+    format_major: int
+    format_minor: int
+    struct_size: int
+    generation: int
+    contract_epoch: int
+    profile_id: int
+    abi_major: int
+    abi_minor: int
+    capability_width: int
+    lease_width: int
+    final_capabilities: int
+    dormant_capabilities: int
+    lease_mask: int
+    flags: int
+    reserved0: int
+    contract_sha256: bytes
+    reserved1: bytes
+    commit: int
+
+
+@dataclass(frozen=True)
+class C906LSnapshot:
+    status: C906LStatus
+    manifest: C906LManifest
 
 
 def parse_int(value):
@@ -162,7 +193,7 @@ def validate_c906l_layout(firmware_size, run_address, shmem_address,
                           scratch_address, scratch_size):
     ranges = {
         "firmware": (run_address, firmware_size),
-        "status": (shmem_address, C906L_STATUS_SIZE),
+        "status and manifest": (shmem_address, C906L_SNAPSHOT_SIZE),
         "cache scratch": (scratch_address, scratch_size),
     }
     if firmware_size <= 0:
@@ -253,7 +284,168 @@ def decode_c906l_status(words):
         capabilities=words[8] | words[9] << 32,
         last_request=words[10] | words[11] << 32,
         last_response=words[12] | words[13] << 32,
+        activation_state=words[14] & 0xff,
+        activation_error=(words[14] >> 8) & 0xff,
+        activation_attempts=words[14] >> 16,
+        activation_request_id=words[15],
     )
+
+
+def decode_c906l_manifest(words):
+    if len(words) != C906L_MANIFEST_SIZE // 4:
+        raise C906LBringupError("C906L manifest dump is not exactly 128 bytes")
+    return C906LManifest(
+        magic=words[0],
+        format_major=words[1] & 0xffff,
+        format_minor=words[1] >> 16,
+        struct_size=words[2],
+        generation=words[3],
+        contract_epoch=words[4],
+        profile_id=words[5],
+        abi_major=words[6] & 0xffff,
+        abi_minor=words[6] >> 16,
+        capability_width=words[7] & 0xffff,
+        lease_width=words[7] >> 16,
+        final_capabilities=words[8] | words[9] << 32,
+        dormant_capabilities=words[10] | words[11] << 32,
+        lease_mask=words[12] | words[13] << 32,
+        flags=words[14],
+        reserved0=words[15],
+        contract_sha256=struct.pack("<8I", *words[16:24]),
+        reserved1=struct.pack("<7I", *words[24:31]),
+        commit=words[31],
+    )
+
+
+def decode_c906l_snapshot(words):
+    if len(words) != C906L_SNAPSHOT_SIZE // 4:
+        raise C906LBringupError("C906L snapshot has the wrong size")
+    status_words = C906L_STATUS_SIZE // 4
+    return C906LSnapshot(
+        status=decode_c906l_status(words[:status_words]),
+        manifest=decode_c906l_manifest(words[status_words:]),
+    )
+
+
+def _require_exact(name, actual, expected):
+    if actual != expected:
+        if isinstance(actual, int) and isinstance(expected, int):
+            detail = f"0x{actual:x}, expected 0x{expected:x}"
+        elif isinstance(actual, bytes) and isinstance(expected, bytes):
+            detail = f"{actual.hex()}, expected {expected.hex()}"
+        else:
+            detail = f"{actual!r}, expected {expected!r}"
+        raise C906LBringupError(f"C906L {name} is {detail}")
+
+
+def validate_c906l_snapshot(snapshot):
+    """Require one complete ABI 1.1 status/manifest identity snapshot."""
+    status = snapshot.status
+    manifest = snapshot.manifest
+
+    _require_exact("status magic", status.magic, C906L_STATUS_MAGIC)
+    _require_exact("status ABI major", status.abi_major, C906L_ABI_MAJOR)
+    _require_exact("status ABI minor", status.abi_minor, C906L_ABI_MINOR)
+    _require_exact("status size", status.struct_size, C906L_STATUS_SIZE)
+    _require_exact("status state", status.state, C906L_STATE_RUNNING)
+    if status.generation == 0:
+        raise C906LBringupError("C906L status generation is zero")
+    _require_exact("status flags", status.flags, 0)
+
+    expected_capabilities = (
+        c906l_contract.DORMANT_CAPABILITIES
+        if c906l_contract.ACTIVATION_REQUIRED
+        else c906l_contract.EXPECTED_CAPABILITIES
+    )
+    expected_activation_state = (
+        c906l_contract.ACTIVATION_STATE_DORMANT
+        if c906l_contract.ACTIVATION_REQUIRED
+        else c906l_contract.ACTIVATION_STATE_ACTIVE
+    )
+    _require_exact("status capabilities", status.capabilities,
+                   expected_capabilities)
+    _require_exact("activation state", status.activation_state,
+                   expected_activation_state)
+    _require_exact("activation error", status.activation_error,
+                   c906l_contract.ACTIVATION_RESULT_SUCCESS)
+    _require_exact("activation attempts", status.activation_attempts, 0)
+    _require_exact("activation request ID", status.activation_request_id, 0)
+
+    _require_exact("manifest magic", manifest.magic,
+                   c906l_contract.MANIFEST_MAGIC)
+    _require_exact("manifest format major", manifest.format_major,
+                   c906l_contract.MANIFEST_FORMAT_MAJOR)
+    _require_exact("manifest format minor", manifest.format_minor,
+                   c906l_contract.MANIFEST_FORMAT_MINOR)
+    _require_exact("manifest size", manifest.struct_size,
+                   c906l_contract.MANIFEST_SIZE)
+    _require_exact("manifest generation", manifest.generation,
+                   status.generation)
+    _require_exact("contract epoch", manifest.contract_epoch,
+                   c906l_contract.CONTRACT_EPOCH)
+    _require_exact("profile ID", manifest.profile_id,
+                   c906l_contract.PROFILE_ID)
+    _require_exact("manifest ABI major", manifest.abi_major,
+                   C906L_ABI_MAJOR)
+    _require_exact("manifest ABI minor", manifest.abi_minor,
+                   C906L_ABI_MINOR)
+    _require_exact("capability wire width", manifest.capability_width,
+                   C906L_CAPABILITY_WIRE_WIDTH)
+    _require_exact("lease wire width", manifest.lease_width,
+                   c906l_contract.LEASE_WIRE_WIDTH)
+    _require_exact("final capabilities", manifest.final_capabilities,
+                   c906l_contract.EXPECTED_CAPABILITIES)
+    _require_exact("dormant capabilities", manifest.dormant_capabilities,
+                   c906l_contract.DORMANT_CAPABILITIES)
+    _require_exact("lease mask", manifest.lease_mask,
+                   c906l_contract.LEASE_MASK)
+    _require_exact("manifest flags", manifest.flags,
+                   c906l_contract.MANIFEST_FLAGS)
+    _require_exact("manifest reserved0", manifest.reserved0, 0)
+    _require_exact("contract SHA-256", manifest.contract_sha256,
+                   C906L_CONTRACT_SHA256)
+    _require_exact("manifest reserved1", manifest.reserved1, bytes(28))
+    _require_exact("manifest commit", manifest.commit,
+                   c906l_contract.MANIFEST_COMMIT)
+
+
+def _stable_status_fields(status):
+    return (
+        status.magic,
+        status.abi_major,
+        status.abi_minor,
+        status.struct_size,
+        status.state,
+        status.generation,
+        status.flags,
+        status.capabilities,
+        status.last_request,
+        status.last_response,
+        status.activation_state,
+        status.activation_error,
+        status.activation_attempts,
+        status.activation_request_id,
+    )
+
+
+def validate_c906l_snapshot_pair(first, second):
+    """Reject torn/restarted identity and require a live forward heartbeat."""
+    validate_c906l_snapshot(first)
+    validate_c906l_snapshot(second)
+    if first.manifest != second.manifest:
+        raise C906LBringupError("C906L manifest changed between snapshots")
+    if _stable_status_fields(first.status) != _stable_status_fields(second.status):
+        raise C906LBringupError(
+            "C906L hot status changed outside the heartbeat between snapshots"
+        )
+    heartbeat_delta = (second.status.heartbeat - first.status.heartbeat) & (
+        (1 << 64) - 1
+    )
+    if heartbeat_delta == 0:
+        raise C906LBringupError("C906L heartbeat did not advance")
+    if heartbeat_delta >= 1 << 63:
+        raise C906LBringupError("C906L heartbeat moved backwards")
+    return second
 
 
 def apply_c906l_reset_sequence(run_address, read_u32, write_u32):
@@ -427,34 +619,37 @@ def main():
                         'mandatory.')
     p.add_argument('--c906l-run-address', type=parse_int,
                    help='physical DRAM address at which the FIP loaded the '
-                        'C906L firmware')
+                        'C906L firmware; if supplied, must exactly match the '
+                        'packaged canonical contract')
     p.add_argument('--c906l-shmem-address', type=parse_int,
-                   help='physical address of the 64-byte C906L status record')
+                   help='physical address of the C906L status record; if '
+                        'supplied, must exactly match the packaged contract')
     p.add_argument('--c906l-required-capabilities', type=parse_int,
-                   help='capability mask the matched firmware must advertise '
-                        'before Linux handoff')
+                   help='final capability mask; if supplied, must exactly '
+                        'match the packaged contract')
     p.add_argument('--c906l-cache-scratch-address', type=parse_int,
                    help='start of a safe, readable DRAM span used to evict '
                         "U-Boot's non-coherent cached status snapshot")
     p.add_argument('--c906l-cache-scratch-size', type=parse_int,
                    help='size of the cache-eviction span (at least 1 MiB)')
     p.add_argument('--c906l-ready-timeout', type=float, default=15.0,
-                   help='seconds to wait for a valid RUNNING status and two '
-                        'different heartbeat values (default: 15)')
+                   help='seconds to wait for two exact, stable ABI 1.1 status '
+                        'and manifest snapshots with a forward heartbeat '
+                        '(default: 15)')
     p.add_argument('--c906l-poll-interval', type=float, default=0.25,
                    help='seconds between status snapshots (default: 0.25)')
     p.add_argument('--accept-running-c906l', action='store_true',
                    help='explicitly attach to an already-running C906L after '
                         'independently proving the exact FIP image. The runner '
                         'does not CRC or reset the mutable live payload, but '
-                        'still requires its ABI, required capabilities, and '
-                        'advancing heartbeat')
+                        'still requires exact contract identity, expected '
+                        'activation state, and an advancing heartbeat')
     a = p.parse_args()
 
     if not a.uboot_only and not a.fit:
         p.error('fit is required unless --uboot-only is set')
 
-    c906l_layout = (
+    c906l_options = (
         a.c906l_run_address,
         a.c906l_shmem_address,
         a.c906l_required_capabilities,
@@ -462,14 +657,13 @@ def main():
         a.c906l_cache_scratch_size,
     )
     if a.c906l_firmware is None and any(value is not None
-                                        for value in c906l_layout):
+                                        for value in c906l_options):
         p.error('--c906l-firmware is required with any other --c906l-* '
                 'layout option')
-    if a.c906l_firmware is not None and any(value is None
-                                            for value in c906l_layout):
-        p.error('--c906l-run-address, --c906l-shmem-address, '
-                '--c906l-required-capabilities, '
-                '--c906l-cache-scratch-address and '
+    if a.c906l_firmware is not None and (
+            a.c906l_cache_scratch_address is None
+            or a.c906l_cache_scratch_size is None):
+        p.error('--c906l-cache-scratch-address and '
                 '--c906l-cache-scratch-size are all required with '
                 '--c906l-firmware')
     if a.c906l_firmware is not None and not os.path.isfile(a.c906l_firmware):
@@ -478,9 +672,25 @@ def main():
         p.error('--c906l-ready-timeout must be positive')
     if a.c906l_poll_interval <= 0:
         p.error('--c906l-poll-interval must be positive')
-    if (a.c906l_required_capabilities is not None
-            and not 0 < a.c906l_required_capabilities < 1 << 64):
-        p.error('--c906l-required-capabilities must be a nonzero u64 mask')
+    canonical_options = {
+        '--c906l-run-address': (
+            a.c906l_run_address, c906l_contract.FIRMWARE_ADDRESS),
+        '--c906l-shmem-address': (
+            a.c906l_shmem_address, c906l_contract.SHMEM_ADDRESS),
+        '--c906l-required-capabilities': (
+            a.c906l_required_capabilities,
+            c906l_contract.EXPECTED_CAPABILITIES),
+    }
+    for option, (actual, expected) in canonical_options.items():
+        if actual is not None and actual != expected:
+            p.error(
+                f'{option} is 0x{actual:x}, but this runner is packaged for '
+                f'0x{expected:x}'
+            )
+    if a.c906l_firmware is not None:
+        a.c906l_run_address = c906l_contract.FIRMWARE_ADDRESS
+        a.c906l_shmem_address = c906l_contract.SHMEM_ADDRESS
+        a.c906l_required_capabilities = c906l_contract.EXPECTED_CAPABILITIES
     if a.accept_running_c906l and a.c906l_firmware is None:
         p.error('--accept-running-c906l requires a C906L-bearing runner')
 
@@ -580,55 +790,63 @@ def main():
     def uboot_read_u32(address):
         return uboot_read_words(address, 1)[0]
 
-    def read_c906l_status():
+    def read_c906l_snapshot():
         # U-Boot has no dcache command in this configuration and SG2002 is not
         # hardware coherent.  A full, caller-declared safe span larger than
         # the cache is read before every snapshot to evict an old status line.
         uboot_crc32(a.c906l_cache_scratch_address,
                     a.c906l_cache_scratch_size)
         words = uboot_read_words(a.c906l_shmem_address,
-                                 C906L_STATUS_SIZE // 4)
-        return decode_c906l_status(words)
+                                 C906L_SNAPSHOT_SIZE // 4)
+        return decode_c906l_snapshot(words)
 
     def wait_for_c906l_ready():
         deadline = time.monotonic() + a.c906l_ready_timeout
         baseline = None
-        last_status = None
+        last_error = None
         while time.monotonic() < deadline:
-            status = read_c906l_status()
-            last_status = status
-            if status.magic == C906L_STATUS_MAGIC:
-                if status.state == C906L_STATE_FAULT:
+            snapshot = read_c906l_snapshot()
+            try:
+                validate_c906l_snapshot(snapshot)
+            except C906LBringupError as exc:
+                if baseline is not None:
                     raise C906LBringupError(
-                        f"C906L reported FAULT (flags=0x{status.flags:x})"
+                        f"second C906L identity snapshot is invalid: {exc}"
+                    ) from exc
+                last_error = exc
+            else:
+                if baseline is None:
+                    baseline = snapshot
+                    log(
+                        "C906L: exact ABI 1.1 identity observed: "
+                        f"profile={c906l_contract.PROFILE_NAME}, "
+                        f"generation={snapshot.status.generation}, "
+                        f"heartbeat={snapshot.status.heartbeat}"
                     )
-                if status.state == C906L_STATE_RUNNING:
-                    readiness_error = status.readiness_error(
-                        a.c906l_required_capabilities
-                    )
-                    if readiness_error:
-                        raise C906LBringupError(readiness_error)
-                    if baseline is None or baseline.generation != status.generation:
-                        baseline = status
-                        log("C906L: RUNNING status observed: "
-                            f"generation={status.generation}, "
-                            f"heartbeat={status.heartbeat}")
-                    elif baseline.heartbeat != status.heartbeat:
-                        log("C906L: heartbeat advanced: "
-                            f"{baseline.heartbeat} -> {status.heartbeat}")
-                        return status
+                else:
+                    try:
+                        ready = validate_c906l_snapshot_pair(
+                            baseline, snapshot
+                        )
+                    except C906LBringupError as exc:
+                        if "heartbeat did not advance" not in str(exc):
+                            raise
+                        last_error = exc
+                        baseline = snapshot
+                    else:
+                        log(
+                            "C906L: stable contract identity and heartbeat "
+                            f"progress proven: {baseline.status.heartbeat} -> "
+                            f"{ready.status.heartbeat}"
+                        )
+                        return ready
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(a.c906l_poll_interval, remaining))
 
-        detail = "no valid status observed"
-        if last_status is not None:
-            detail = (f"last status magic=0x{last_status.magic:08x} "
-                      f"state={last_status.state} "
-                      f"generation={last_status.generation} "
-                      f"heartbeat={last_status.heartbeat}")
+        detail = str(last_error) if last_error else "no valid snapshot observed"
         raise C906LBringupError(
-            f"C906L did not reach RUNNING with an advancing heartbeat "
+            f"C906L did not prove exact identity and a live heartbeat "
             f"within {a.c906l_ready_timeout:g}s ({detail})"
         )
 
@@ -654,7 +872,8 @@ def main():
             else:
                 log("C906L: explicit attach to an already-running core; "
                     "payload CRC cannot be checked after firmware mutates "
-                    "its data, so requiring ABI/capabilities/heartbeat")
+                    "its data, so requiring exact contract identity, "
+                    "activation state, and heartbeat progress")
             wait_for_c906l_ready()
             return
         if a.skip_fip:

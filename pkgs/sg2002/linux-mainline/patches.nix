@@ -21,6 +21,17 @@
 #   dropWhen        free-form: condition under which we can remove it
 #   notes           free-form rationale beyond what the patch header says
 let
+  c906lContract = builtins.fromJSON (
+    builtins.readFile ../c906l-contract/contract.json
+  );
+  c906lMailbox = c906lContract.soc.mailbox;
+  c906lHwspin = c906lMailbox.hardwareSpinlock;
+  cv1800MailboxPatch =
+    ./patches/0064-mailbox-cv1800-serialize-shared-register-access.patch;
+  cv1800MailboxPatchLines = builtins.filter builtins.isString (
+    builtins.split "\n" (builtins.readFile cv1800MailboxPatch)
+  );
+
   patch =
     { name
     , patch
@@ -258,9 +269,26 @@ let
       name = "media-sophgo-recover-from-sg2002-csi-frame-errors";
       patch = ./patches/0063-media-sophgo-recover-from-SG2002-CSI-frame-errors.patch;
     })
+    (patch {
+      name = "mailbox-cv1800-serialize-shared-register-access";
+      patch = cv1800MailboxPatch;
+    })
   ];
 
   meta = {
+    "mailbox-cv1800-serialize-shared-register-access" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "the upstream CV1800 mailbox driver serializes register access with the field-4 cross-core hardware lock";
+      notes = ''
+        Protects the complete Linux TX and threaded-RX transactions with the
+        SG2002 mailbox hardware spinlock at mailbox + 0xd0 (vendor bank +0xc0,
+        field 4). Linux uses nonzero low-byte tokens while C906L uses the
+        disjoint high-byte namespace. Receive payloads are copied before ACK,
+        callbacks run unlocked, and bounded lock contention is retried without
+        wedging mailbox-core queued requests.
+      '';
+    };
     "media-sophgo-recover-from-sg2002-csi-frame-errors" = {
       origin = "local";
       upstreamStatus = "local-only";
@@ -788,6 +816,27 @@ let
     };
   };
 in
+assert c906lMailbox.processorCount == 4;
+assert c906lMailbox.slotCount == 8;
+assert c906lHwspin.registerOffset == "0x000000c0";
+assert c906lHwspin.registerCount == 8;
+assert c906lHwspin.registerStride == 4;
+assert c906lHwspin.accessWidth == 2;
+assert c906lHwspin.mailboxField == 4;
+assert c906lHwspin.tokenWidth == 8;
+assert c906lHwspin.linuxTokenShift == 0;
+assert c906lHwspin.c906lTokenShift == 8;
+assert c906lHwspin.taskAcquireAttempts == 1024;
+assert c906lHwspin.irqAcquireAttempts == 64;
+assert builtins.elem "+#define MAILBOX_MAX_CPU\t\t4" cv1800MailboxPatchLines;
+assert builtins.elem " #define MAILBOX_MAX_CHAN\t8" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_BANK_OFFSET\t0x00c0" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_FIELD\t4" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_TASK_ATTEMPTS\t1024" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_IRQ_ATTEMPTS\t64" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_LINUX_TOKEN_MASK\tGENMASK(7, 0)" cv1800MailboxPatchLines;
+assert builtins.elem "+#define MBOX_HWLOCK_RTOS_TOKEN_MASK\tGENMASK(15, 8)" cv1800MailboxPatchLines;
+assert builtins.elem "+static_assert(MBOX_HWLOCK_REG == 0x00d0);" cv1800MailboxPatchLines;
 {
   inherit patches meta;
 }

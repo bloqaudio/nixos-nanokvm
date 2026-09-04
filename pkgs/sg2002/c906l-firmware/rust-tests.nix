@@ -1,25 +1,29 @@
-{
-  lib,
-  rustfmt,
-  rustPlatform,
+{ lib
+, rustfmt
+, rustPlatform
+, contract
+,
 }:
 
 let
-  memoryMap = import ../c906l-memory-map.nix { inherit lib; };
+  knownPeripherals = [ "timer4" ];
+  unknownPeripherals = lib.filter
+    (peripheral: !builtins.elem peripheral knownPeripherals)
+    contract.enabledPeripherals;
+  timer4 = builtins.elem "timer4" contract.enabledPeripherals;
 in
+assert lib.assertMsg (unknownPeripherals == [ ]) ''
+  Unknown SG2002 C906L Rust test peripheral(s):
+  ${lib.concatStringsSep ", " unknownPeripherals}
+'';
 rustPlatform.buildRustPackage {
   pname = "sg2002-c906l-rust-tests";
   version = "0.1.0";
   src = ../../../firmware/sg2002-c906l;
   cargoHash = "sha256-ZpK++hvy4Cxuha7pITzEgwvFOGVUmWXjguaES8azPU4=";
   nativeCheckInputs = [ rustfmt ];
-
-  postPatch = ''
-    substituteInPlace src/lib.rs \
-      --replace-fail \
-        'const SHMEM_BASE: usize = 0x8ff0_0000;' \
-        'const SHMEM_BASE: usize = 0x${lib.toHexString memoryMap.sharedMemoryAddress};'
-  '';
+  SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
+  cargoTestFlags = lib.optionals timer4 [ "--features" "timer4" ];
 
   preCheck = ''
     cargo fmt --all --check
@@ -32,6 +36,10 @@ rustPlatform.buildRustPackage {
     touch "$out"
     runHook postInstall
   '';
+
+  passthru = {
+    inherit (contract) contractSha256 enabledPeripherals profileName;
+  };
 
   meta = {
     description = "Host-side protocol and layout tests for SG2002 C906L firmware";

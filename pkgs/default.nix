@@ -207,9 +207,12 @@ in
   sg2002-c906l-contract-timer4 =
     final.sg2002-c906l-contract-for [ "timer4" ];
   sg2002-c906l-rust-for = peripherals:
+    let
+      contract = final.sg2002-c906l-contract-for peripherals;
+    in
     (riscv64Embedded.callPackage ./sg2002/c906l-firmware/rust.nix {
+      inherit contract;
       rustPlatform = c906lRustPlatform;
-      inherit peripherals;
     }).overrideAttrs
       (old: {
         # rustPlatform intersects package platforms with rustc's hosted
@@ -218,16 +221,31 @@ in
       });
   sg2002-c906l-rust = final.sg2002-c906l-rust-for [ ];
   sg2002-c906l-rust-timer4 = final.sg2002-c906l-rust-for [ "timer4" ];
-  sg2002-c906l-rust-tests =
-    final.buildPackages.callPackage ./sg2002/c906l-firmware/rust-tests.nix { };
-  sg2002-c906l-control-for = kernel:
-    cross.callPackage ./sg2002/c906l-control { inherit kernel; };
-  sg2002-c906l-remoteproc-for = kernel:
-    cross.callPackage ./sg2002/c906l-remoteproc { inherit kernel; };
-  sg2002-c906l-ctl = final.callPackage ./sg2002/c906l-cli { };
+  sg2002-c906l-rust-tests-for = peripherals:
+    final.buildPackages.callPackage ./sg2002/c906l-firmware/rust-tests.nix {
+      contract = final.sg2002-c906l-contract-for peripherals;
+    };
+  sg2002-c906l-rust-tests = final.sg2002-c906l-rust-tests-for [ ];
+  sg2002-c906l-rust-tests-timer4 =
+    final.sg2002-c906l-rust-tests-for [ "timer4" ];
+  sg2002-c906l-control-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-control { inherit contract kernel; };
+  sg2002-c906l-remoteproc-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-remoteproc { inherit contract kernel; };
+  sg2002-c906l-ctl-for = contract:
+    final.callPackage ./sg2002/c906l-cli {
+      inherit contract;
+    };
+  sg2002-c906l-ctl =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract;
+  sg2002-c906l-ctl-timer4 =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer4;
   sg2002-c906l-firmware-for = peripherals:
+    let
+      contract = final.sg2002-c906l-contract-for peripherals;
+    in
     final.buildPackages.callPackage ./sg2002/c906l-firmware {
-      inherit riscv64Embedded peripherals;
+      inherit contract riscv64Embedded;
       sg2002-c906l-rust = final.sg2002-c906l-rust-for peripherals;
     };
   sg2002-c906l-firmware = final.sg2002-c906l-firmware-for [ ];
@@ -408,9 +426,22 @@ in
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
   sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline { };
-  sg2002-c906l-control = final.sg2002-c906l-control-for final.sg2002-kernel-mainline;
+  sg2002-c906l-control =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract;
   sg2002-c906l-remoteproc =
-    final.sg2002-c906l-remoteproc-for final.sg2002-kernel-mainline;
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract;
+  sg2002-c906l-control-timer4 =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer4;
+  sg2002-c906l-remoteproc-timer4 =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer4;
   # Keep the normal mainline kernel's Bluetooth stack disabled.  The AIC
   # HCI transport is experimental on this board, so only its explicit
   # consumer pays for bluetooth.ko and its protocol dependencies.
@@ -497,6 +528,7 @@ in
 
   sg2002-usb-boot-for = mainlineFip:
     final.callPackage ./sg2002/usb-boot {
+      c906lContract = mainlineFip.c906lContract;
       sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
       sg2002-fip = final.sg2002-fip;
       sg2002-fip-mainline-uboot = mainlineFip;
@@ -506,6 +538,7 @@ in
   # Parameterised runners are mainline-only so their generic executable can
   # never silently select the unrelated vendor FIP.
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
+    c906lContract = final.sg2002-c906l-contract;
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
     sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-fastboot;
@@ -518,6 +551,7 @@ in
   # PicoClaw's board-private U-Boot splash reachable without changing any
   # other SG2002 USB boot path.
   sg2002-usb-boot-picoclaw-splash = final.callPackage ./sg2002/usb-boot {
+    c906lContract = final.sg2002-c906l-contract;
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
     sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-picoclaw-splash;

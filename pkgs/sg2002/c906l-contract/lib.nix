@@ -96,7 +96,8 @@ let
         "${groupName} contains a key that cannot be emitted safely")
       (require (allUnique macroNames)
         "${groupName} contains colliding generated identifiers")
-    ] true;
+    ]
+      true;
 
   expectedMessage = {
     size = 8;
@@ -165,28 +166,32 @@ let
     { name = "contractSha256"; offset = 48; width = 32; }
     { name = "reserved"; offset = 80; width = 44; }
     { name = "commit"; offset = 124; width = 4; }
-    ];
+  ];
 
   validateFields = recordName: record:
     let
-      result = lib.foldl' (state: field:
-        let
-          fieldEnd = field.offset + field.width;
-        in
-        builtins.deepSeq [
-          (require (builtins.isString field.name && field.name != "")
-            "${recordName} contains an unnamed field")
-          (require (field.offset == state.next)
-            "${recordName}.${field.name} starts at ${toString field.offset}, expected ${toString state.next}")
-          (require (builtins.elem field.width [ 1 2 4 8 28 32 44 ])
-            "${recordName}.${field.name} has unsupported width ${toString field.width}")
-          (require (fieldEnd <= record.size)
-            "${recordName}.${field.name} extends past the record")
-        ] {
-          next = fieldEnd;
-          fieldNames = state.fieldNames ++ [ field.name ];
-        }
-      ) { next = 0; fieldNames = [ ]; } record.fields;
+      result = lib.foldl'
+        (state: field:
+          let
+            fieldEnd = field.offset + field.width;
+          in
+          builtins.deepSeq [
+            (require (builtins.isString field.name && field.name != "")
+              "${recordName} contains an unnamed field")
+            (require (field.offset == state.next)
+              "${recordName}.${field.name} starts at ${toString field.offset}, expected ${toString state.next}")
+            (require (builtins.elem field.width [ 1 2 4 8 28 32 44 ])
+              "${recordName}.${field.name} has unsupported width ${toString field.width}")
+            (require (fieldEnd <= record.size)
+              "${recordName}.${field.name} extends past the record")
+          ]
+            {
+              next = fieldEnd;
+              fieldNames = state.fieldNames ++ [ field.name ];
+            }
+        )
+        { next = 0; fieldNames = [ ]; }
+        record.fields;
     in
     builtins.deepSeq [
       (require (powerOfTwo record.alignment)
@@ -197,7 +202,8 @@ let
         "${recordName} fields do not exactly fill its declared size")
       (require (allUnique result.fieldNames)
         "${recordName} contains duplicate field names")
-    ] true;
+    ]
+      true;
 
   validateBits = groupName: width: entries:
     let bits = map (entry: entry.bit) (values entries);
@@ -205,7 +211,8 @@ let
       (require (allUnique bits) "${groupName} contains duplicate bit assignments")
       (require (lib.all (bit: builtins.isInt bit && bit >= 0 && bit < width) bits)
         "${groupName} contains a bit outside its ${toString width}-bit field")
-    ] true;
+    ]
+      true;
 
   dramStart = contract.soc.dram.address;
   dramEnd = dramStart + contract.soc.dram.size;
@@ -216,20 +223,34 @@ let
   orderedRegions = lib.sort
     (left: right: left.offset < right.offset)
     (values shared.regions);
-  regionPartition = lib.foldl' (state: region:
-    builtins.deepSeq [
-      (require (region.size > 0) "shared-memory regions must not be empty")
-      (require (lib.mod region.offset pageSize == 0
-        && lib.mod region.size pageSize == 0)
-        "shared-memory regions must be page-aligned")
-      (require (region.offset == state.next)
-        "shared-memory regions overlap or leave a hole at offset ${toString state.next}")
-    ] { next = region.offset + region.size; }
-  ) { next = 0; } orderedRegions;
+  regionPartition = lib.foldl'
+    (state: region:
+      builtins.deepSeq [
+        (require (region.size > 0) "shared-memory regions must not be empty")
+        (require
+          (lib.mod region.offset pageSize == 0
+            && lib.mod region.size pageSize == 0)
+          "shared-memory regions must be page-aligned")
+        (require (region.offset == state.next)
+          "shared-memory regions overlap or leave a hole at offset ${toString state.next}")
+      ]
+        { next = region.offset + region.size; }
+    )
+    { next = 0; }
+    orderedRegions;
 
   mailbox = contract.soc.mailbox;
   mailboxChannels = values mailbox.channels;
   mailboxProcessorIds = values mailbox.processorIds;
+  mailboxHwspin = mailbox.hardwareSpinlock;
+  mailboxHwspinBase = mailbox.address + mailboxHwspin.registerOffset;
+  mailboxHwspinEnd = mailboxHwspinBase
+    + mailboxHwspin.registerCount * mailboxHwspin.registerStride;
+  mailboxHwspinTokenValueMask = pow2 mailboxHwspin.tokenWidth - 1;
+  mailboxHwspinLinuxTokenMask = mailboxHwspinTokenValueMask
+    * pow2 mailboxHwspin.linuxTokenShift;
+  mailboxHwspinC906lTokenMask = mailboxHwspinTokenValueMask
+    * pow2 mailboxHwspin.c906lTokenShift;
   rpmsg = contract.rpmsg;
   resourceRegion = shared.regions.${rpmsg.resourceTable.region};
   vring0Region = shared.regions.${rpmsg.vrings.driverToDeviceRegion};
@@ -257,21 +278,27 @@ let
         peripheral.sharedPreconditions)
       (require (allUnique registerAddresses)
         "peripheral `${peripheralName}` contains duplicate register addresses")
-      (require (lib.all (address: address >= bankStart && address + 4 <= bankEnd)
-        registerAddresses)
+      (require
+        (lib.all (address: address >= bankStart && address + 4 <= bankEnd)
+          registerAddresses)
         "peripheral `${peripheralName}` register lies outside its bank")
-      (require (lib.all (precondition:
-        precondition.access == "read-only"
-        && builtins.bitAnd precondition.expected precondition.mask
-          == precondition.expected
-      ) (values peripheral.sharedPreconditions))
+      (require
+        (lib.all
+          (precondition:
+            precondition.access == "read-only"
+            && builtins.bitAnd precondition.expected precondition.mask
+            == precondition.expected
+          )
+          (values peripheral.sharedPreconditions))
         "peripheral `${peripheralName}` has an invalid shared-register precondition")
-      (require (peripheral.selfTest.clockHz > 0
-        && peripheral.selfTest.periodTicks > 0
-        && peripheral.selfTest.timeoutRtosTicks > 0
-        && peripheral.selfTest.rtosTickHz > 0)
+      (require
+        (peripheral.selfTest.clockHz > 0
+          && peripheral.selfTest.periodTicks > 0
+          && peripheral.selfTest.timeoutRtosTicks > 0
+          && peripheral.selfTest.rtosTickHz > 0)
         "peripheral `${peripheralName}` self-test timing must be positive")
-    ] true;
+    ]
+      true;
 
   validatePeripheral = peripheralName: peripheral:
     builtins.deepSeq [
@@ -281,15 +308,17 @@ let
         "peripheral `${peripheralName}` has no kind")
       (require (builtins.hasAttr peripheral.capability contract.abi.capabilities)
         "peripheral `${peripheralName}` names an unknown capability")
-      (require (builtins.isInt peripheral.leaseBit
-        && peripheral.leaseBit >= 0
-        && peripheral.leaseBit < contract.activation.leaseWireWidth)
+      (require
+        (builtins.isInt peripheral.leaseBit
+          && peripheral.leaseBit >= 0
+          && peripheral.leaseBit < contract.activation.leaseWireWidth)
         "peripheral `${peripheralName}` has an invalid lease bit")
       (if peripheral.kind == "dw-apb-timer-channel" then
         validateTimerPeripheral peripheralName peripheral
       else
         fail "peripheral `${peripheralName}` has unsupported kind `${peripheral.kind}`")
-    ] true;
+    ]
+      true;
 
   baseCapabilities = contract.profiles.base.capabilities;
 
@@ -325,14 +354,19 @@ let
         "profile `${profileName}` names unknown capabilities: ${lib.concatStringsSep ", " unknownCapabilities}")
       (require (missingLeaseCapabilities == [ ])
         "profile `${profileName}` omits a selected peripheral capability")
-      (require (
-        lib.sort builtins.lessThan profile.capabilities
+      (require
+        (
+          lib.sort builtins.lessThan profile.capabilities
           == lib.sort builtins.lessThan expectedCapabilities
-      ) "profile `${profileName}` capabilities are not exactly its base and lease capabilities")
-    ] true;
+        ) "profile `${profileName}` capabilities are not exactly its base and lease capabilities")
+    ]
+      true;
 
   validation = [
     (require (contract.schemaVersion == 1) "unsupported schemaVersion")
+    # Hardware protocol metadata and additive status-flag meanings are covered
+    # by the semantic digest.  They do not change ABI 1.1's wire layouts or
+    # framing, so this addition deliberately does not advance contractEpoch.
     (require (contract.contractEpoch == 2)
       "ABI 1.1 requires contractEpoch 2")
     (require (contract.abi.endianness == "little") "only the little-endian ABI is supported")
@@ -376,56 +410,70 @@ let
       "ABI 1.1 activation opcode must remain 0x04")
     (require (allUnique (values contract.activation.states))
       "activation states are not unique")
+    (require
+      (lib.all (value: value >= 0 && value < pow2 8)
+        (values contract.activation.states))
+      "activation states must fit their u8 status field")
     (require (allUnique (values contract.activation.results))
       "activation results are not unique")
-    (require (allUnique
-      (map (peripheral: peripheral.leaseBit) (values contract.peripherals)))
+    (require
+      (lib.all (value: value >= 0 && value < pow2 8)
+        (values contract.activation.results))
+      "activation results must fit their u8 status field")
+    (require
+      (allUnique
+        (map (peripheral: peripheral.leaseBit) (values contract.peripherals)))
       "peripheral lease bits are not unique")
-    (require (builtins.hasAttr "base" contract.profiles
-      && contract.profiles.base.peripherals == [ ])
+    (require
+      (builtins.hasAttr "base" contract.profiles
+        && contract.profiles.base.peripherals == [ ])
       "profiles.base must exist and have no peripheral leases")
-    (require (builtins.match "^[A-Za-z0-9._-]+$"
-      contract.rpmsg.echoService.name != null)
+    (require
+      (builtins.match "^[A-Za-z0-9._-]+$"
+        contract.rpmsg.echoService.name != null)
       "RPMsg service name cannot be emitted safely")
     (require (powerOfTwo contract.soc.cacheLineSize)
       "cacheLineSize must be a power of two")
     (require (contract.abi.status.size == contract.soc.cacheLineSize)
       "status must occupy exactly one cache line")
-    (require (
-      contract.activation.leaseWireWidth > 0
-      && contract.activation.leaseWireWidth == 32
-    ) "lease wire width must fit the stable 32-bit profile identifier")
-    (require (
-      contract.activation.manifest.offset == contract.abi.status.size
-      && contract.activation.manifest.size == 128
-      && contract.activation.manifest.alignment == contract.soc.cacheLineSize
-      && lib.mod contract.activation.manifest.offset
-        contract.soc.cacheLineSize == 0
-      && lib.mod contract.activation.manifest.size
-        contract.soc.cacheLineSize == 0
-      && contract.activation.request.offset
-        == contract.activation.manifest.offset
+    (require
+      (
+        contract.activation.leaseWireWidth > 0
+          && contract.activation.leaseWireWidth == 32
+      ) "lease wire width must fit the stable 32-bit profile identifier")
+    (require
+      (
+        contract.activation.manifest.offset == contract.abi.status.size
+          && contract.activation.manifest.size == 128
+          && contract.activation.manifest.alignment == contract.soc.cacheLineSize
+          && lib.mod contract.activation.manifest.offset
+          contract.soc.cacheLineSize == 0
+          && lib.mod contract.activation.manifest.size
+          contract.soc.cacheLineSize == 0
+          && contract.activation.request.offset
+          == contract.activation.manifest.offset
           + contract.activation.manifest.size
-      && contract.activation.request.size == 128
-      && contract.activation.request.alignment == contract.soc.cacheLineSize
-      && lib.mod contract.activation.request.offset
-        contract.soc.cacheLineSize == 0
-      && lib.mod contract.activation.request.size
-        contract.soc.cacheLineSize == 0
-      && contract.activation.request.offset + contract.activation.request.size
-        <= shared.regions.status.size
-    ) "ABI-1.1 records do not form disjoint cacheline-owned status-page ranges")
-    (require (
-      contract.activation.manifest.magic == 826493774
-      && contract.activation.manifest.formatMajor == 1
-      && contract.activation.manifest.formatMinor == 0
-      && contract.activation.manifest.commit == 1414090051
-      && contract.activation.request.magic == 826362702
-      && contract.activation.request.formatMajor == 1
-      && contract.activation.request.formatMinor == 0
-      && contract.activation.request.commit == 827016001
-      && contract.activation.linuxResponseTimeoutMs > 0
-    ) "ABI-1.1 manifest or activation framing constants changed")
+          && contract.activation.request.size == 128
+          && contract.activation.request.alignment == contract.soc.cacheLineSize
+          && lib.mod contract.activation.request.offset
+          contract.soc.cacheLineSize == 0
+          && lib.mod contract.activation.request.size
+          contract.soc.cacheLineSize == 0
+          && contract.activation.request.offset + contract.activation.request.size
+          <= shared.regions.status.size
+      ) "ABI-1.1 records do not form disjoint cacheline-owned status-page ranges")
+    (require
+      (
+        contract.activation.manifest.magic == 826493774
+          && contract.activation.manifest.formatMajor == 1
+          && contract.activation.manifest.formatMinor == 0
+          && contract.activation.manifest.commit == 1414090051
+          && contract.activation.request.magic == 826362702
+          && contract.activation.request.formatMajor == 1
+          && contract.activation.request.formatMinor == 0
+          && contract.activation.request.commit == 827016001
+          && contract.activation.linuxResponseTimeoutMs > 0
+      ) "ABI-1.1 manifest or activation framing constants changed")
     (require (firmwareEnd == shared.address)
       "firmware and shared memory must be contiguous")
     (require (sharedEnd == dramEnd)
@@ -436,38 +484,88 @@ let
       "shared-memory regions do not exactly fill the carveout")
     (require (shared.regions.status.size >= contract.abi.status.size)
       "status region is smaller than the status ABI")
-    (require (mailbox.slotSize == contract.abi.message.size)
-      "mailbox slot size and message ABI size differ")
+    (require
+      (
+        mailbox.slotCount == 8
+          && mailbox.slotSize == contract.abi.message.size
+      ) "mailbox slot geometry changed")
     (require (allUnique mailboxChannels) "mailbox channels are not unique")
-    (require (lib.all (channel: channel >= 0 && channel < mailbox.slotCount)
-      mailboxChannels) "mailbox channel exceeds the hardware slot count")
+    (require
+      (lib.all (channel: channel >= 0 && channel < mailbox.slotCount)
+        mailboxChannels) "mailbox channel exceeds the hardware slot count")
     (require (allUnique mailboxProcessorIds) "mailbox processor IDs are not unique")
-    (require (mailbox.payloadAddress >= mailbox.address
-      && mailbox.payloadAddress + mailbox.slotCount * mailbox.slotSize
+    (require
+      (
+        mailbox.processorCount == 4
+          && lib.all
+          (processor:
+            processor >= 0 && processor < mailbox.processorCount
+          )
+          mailboxProcessorIds
+      ) "mailbox processor geometry changed")
+    (require
+      (mailbox.payloadAddress >= mailbox.address
+        && mailbox.payloadAddress + mailbox.slotCount * mailbox.slotSize
         <= mailbox.address + mailbox.size)
       "mailbox payload slots lie outside the controller range")
+    (require
+      (
+        mailboxHwspin.registerOffset == 192
+          && mailboxHwspin.registerCount == 8
+          && mailboxHwspin.registerStride == 4
+          && mailboxHwspin.accessWidth == 2
+          && mailboxHwspin.mailboxField == 4
+      ) "mailbox hardware-spinlock register geometry changed")
+    (require
+      (
+        mailboxHwspinBase >= mailbox.address
+          && mailboxHwspinEnd <= mailbox.address + mailbox.size
+          && mailboxHwspin.mailboxField < mailboxHwspin.registerCount
+      ) "mailbox hardware-spinlock fields lie outside the controller range")
+    (require
+      (
+        mailboxHwspin.tokenWidth == 8
+          && mailboxHwspin.linuxTokenShift == 0
+          && mailboxHwspin.c906lTokenShift == 8
+          && builtins.bitAnd mailboxHwspinLinuxTokenMask
+          mailboxHwspinC906lTokenMask == 0
+          && mailboxHwspinLinuxTokenMask + mailboxHwspinC906lTokenMask
+          < pow2 (8 * mailboxHwspin.accessWidth)
+      ) "mailbox hardware-spinlock token namespaces changed")
+    (require
+      (
+        mailboxHwspin.taskAcquireAttempts > 0
+          && mailboxHwspin.irqAcquireAttempts > 0
+          && mailboxHwspin.irqConsecutiveDeferralLimit > 0
+          && mailboxHwspin.irqAcquireAttempts
+          <= mailboxHwspin.taskAcquireAttempts
+      ) "mailbox hardware-spinlock acquisition bounds are invalid")
     (require (rpmsg.resourceTable.serializedSize <= resourceRegion.size)
       "RPMsg resource table does not fit its region")
-    (require (
-      rpmsg.resourceTable.version == 1
-      && rpmsg.resourceTable.entries == 1
-      && rpmsg.resourceTable.entryOffset == 20
-      && rpmsg.resourceTable.configLength == 0
-      && rpmsg.resourceTable.vringCount == 2
-      && rpmsg.resourceTable.serializedSize == 88
-    ) "RPMsg resource table does not match the frozen two-vring layout")
+    (require
+      (
+        rpmsg.resourceTable.version == 1
+          && rpmsg.resourceTable.entries == 1
+          && rpmsg.resourceTable.entryOffset == 20
+          && rpmsg.resourceTable.configLength == 0
+          && rpmsg.resourceTable.vringCount == 2
+          && rpmsg.resourceTable.serializedSize == 88
+      ) "RPMsg resource table does not match the frozen two-vring layout")
     (require (powerOfTwo rpmsg.vrings.alignment)
       "RPMsg vring alignment must be a power of two")
     (require (powerOfTwo rpmsg.vrings.descriptors)
       "RPMsg descriptor count must be a power of two")
-    (require (driverRingBytes <= rpmsg.vrings.driverBytes
-      && rpmsg.vrings.driverBytes <= rpmsg.vrings.usedOffset)
+    (require
+      (driverRingBytes <= rpmsg.vrings.driverBytes
+        && rpmsg.vrings.driverBytes <= rpmsg.vrings.usedOffset)
       "RPMsg driver ring does not fit before the used ring")
-    (require (rpmsg.vrings.usedOffset + usedRingBytes <= vring0Region.size
-      && rpmsg.vrings.usedOffset + usedRingBytes <= vring1Region.size)
+    (require
+      (rpmsg.vrings.usedOffset + usedRingBytes <= vring0Region.size
+        && rpmsg.vrings.usedOffset + usedRingBytes <= vring1Region.size)
       "RPMsg used ring does not fit its reserved region")
-    (require (rpmsg.buffers.payloadSize
-      == rpmsg.buffers.bufferSize - rpmsg.buffers.headerSize)
+    (require
+      (rpmsg.buffers.payloadSize
+        == rpmsg.buffers.bufferSize - rpmsg.buffers.headerSize)
       "RPMsg payload size does not match buffer minus header")
     (require (lib.mod bufferRegion.size rpmsg.buffers.bufferSize == 0)
       "RPMsg buffer region is not an integral number of buffers")
@@ -480,17 +578,21 @@ let
   validated = builtins.deepSeq validation contract;
 
   capabilityMask = capabilityNames:
-    lib.foldl' (mask: capabilityName:
-      mask + pow2 validated.abi.capabilities.${capabilityName}.bit
-    ) 0 capabilityNames;
+    lib.foldl'
+      (mask: capabilityName:
+        mask + pow2 validated.abi.capabilities.${capabilityName}.bit
+      ) 0
+      capabilityNames;
 
   resolvePeripheralsUnchecked = profileName: peripherals:
     let
       sortedPeripherals = lib.sort builtins.lessThan peripherals;
-      selectedLeases = builtins.listToAttrs (map (name: {
-        inherit name;
-        value = validated.peripherals.${name};
-      }) sortedPeripherals);
+      selectedLeases = builtins.listToAttrs (map
+        (name: {
+          inherit name;
+          value = validated.peripherals.${name};
+        })
+        sortedPeripherals);
       sortedCapabilities = lib.sort builtins.lessThan (lib.unique
         (baseCapabilities ++ map
           (name: validated.peripherals.${name}.capability)
@@ -528,7 +630,8 @@ let
       canonicalJson = builtins.toJSON resolvedContract;
       digestJson = builtins.toJSON (stripDocumentation resolvedContract);
       sha256 = builtins.hashString "sha256" digestJson;
-    in {
+    in
+    {
       _profileIdFits = require (profileId < pow2 32)
         "profile identifier does not fit 32 bits";
       inherit
@@ -544,7 +647,7 @@ let
         sha256
         sortedCapabilities
         sortedPeripherals
-      ;
+        ;
     };
 
   resolveProfileUnchecked = profileName:
@@ -569,7 +672,7 @@ let
       matchingProfiles = lib.filter
         (profileName:
           lib.sort builtins.lessThan validated.profiles.${profileName}.peripherals
-            == sorted)
+          == sorted)
         (names validated.profiles);
       profileName =
         if builtins.length matchingProfiles == 1 then

@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt;
-use std::path::Path;
+use std::fs::File;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
@@ -8,26 +11,40 @@ use rustix::fd::OwnedFd;
 use rustix::fs::{Mode, OFlags, open};
 use rustix::io::{Errno, read, write};
 
-pub const SERVICE_CONTROL: u8 = 1;
-pub const OP_PING: u8 = 0x01;
-pub const OP_GET_ABI: u8 = 0x02;
-pub const OP_GET_CAPABILITIES: u8 = 0x03;
-pub const OP_RESPONSE: u8 = 0x80;
-pub const OP_ERROR: u8 = 0xff;
-
-pub const ABI_MAJOR: u16 = 1;
-pub const CAP_MAILBOX: u32 = 1 << 0;
-pub const CAP_SHMEM_HEARTBEAT: u32 = 1 << 1;
-pub const CAP_TIMER4_SELF_TEST: u32 = 1 << 2;
-pub const CAP_RPMSG: u32 = 1 << 3;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Message {
-    pub service: u8,
-    pub opcode: u8,
-    pub sequence: u16,
-    pub value: u32,
+#[allow(dead_code)]
+mod contract {
+    include!(env!("SG2002_C906L_CONTRACT_RS"));
 }
+
+pub use contract::Message;
+
+pub const SERVICE_CONTROL: u8 = contract::SERVICE_CONTROL;
+pub const OP_PING: u8 = contract::OP_PING;
+pub const OP_GET_ABI: u8 = contract::OP_GET_ABI;
+pub const OP_GET_CAPABILITIES: u8 = contract::OP_GET_CAPABILITIES;
+pub const OP_RESPONSE: u8 = contract::OP_RESPONSE;
+pub const OP_ERROR: u8 = contract::OP_ERROR;
+
+pub const ABI_MAJOR: u16 = contract::ABI_MAJOR;
+pub const ABI_MINOR: u16 = contract::ABI_MINOR;
+pub const CAP_MAILBOX: u32 = contract::CAP_MAILBOX as u32;
+pub const CAP_SHMEM_HEARTBEAT: u32 = contract::CAP_SHMEM_HEARTBEAT as u32;
+pub const CAP_TIMER4_SELF_TEST: u32 = contract::CAP_TIMER4_SELF_TEST as u32;
+pub const CAP_RPMSG: u32 = contract::CAP_RPMSG as u32;
+pub const EXPECTED_CAPABILITIES: u64 = contract::EXPECTED_CAPABILITIES;
+pub const PROFILE_NAME: &str = contract::PROFILE_NAME;
+pub const CONTRACT_SHA256_HEX: &str = contract::CONTRACT_SHA256_HEX;
+pub const CONTRACT_SHA256: [u8; 32] = contract::CONTRACT_SHA256;
+pub const CONTRACT_EPOCH: u32 = contract::CONTRACT_EPOCH;
+pub const PROFILE_ID: u32 = contract::PROFILE_ID;
+pub const DORMANT_CAPABILITIES: u64 = contract::DORMANT_CAPABILITIES;
+pub const LEASE_MASK: u64 = contract::LEASE_MASK;
+pub const MANIFEST_FLAGS: u32 = contract::MANIFEST_FLAGS;
+pub const ACTIVATION_REQUIRED: bool = contract::ACTIVATION_REQUIRED;
+pub const ACTIVATION_STATE_ACTIVE: u8 = contract::ACTIVATION_STATE_ACTIVE;
+pub const ACTIVATION_RESULT_SUCCESS: u32 = contract::ACTIVATION_RESULT_SUCCESS;
+const _: () = assert!(EXPECTED_CAPABILITIES <= u32::MAX as u64);
+pub const EXPECTED_CAPABILITIES_U32: u32 = EXPECTED_CAPABILITIES as u32;
 
 impl Message {
     pub fn encode(self) -> [u8; 8] {
@@ -61,6 +78,80 @@ pub struct AbiVersion {
     pub minor: u16,
 }
 
+impl fmt::Display for AbiVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.major, self.minor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivationOutcome {
+    NotRequired,
+    AlreadyActive,
+    Completed,
+    RecoveredLostResponse,
+}
+
+impl fmt::Display for ActivationOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotRequired => "not-required",
+            Self::AlreadyActive => "already-active",
+            Self::Completed => "completed",
+            Self::RecoveredLostResponse => "recovered-lost-response",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractIdentity {
+    pub profile: String,
+    pub profile_id: u32,
+    pub sha256: [u8; 32],
+    pub epoch: u32,
+    pub abi: AbiVersion,
+    pub final_capabilities: u64,
+    pub dormant_capabilities: u64,
+    pub lease_mask: u64,
+    pub manifest_flags: u32,
+    pub activation_required: bool,
+}
+
+impl ContractIdentity {
+    pub fn compiled() -> Self {
+        Self {
+            profile: PROFILE_NAME.to_owned(),
+            profile_id: PROFILE_ID,
+            sha256: CONTRACT_SHA256,
+            epoch: CONTRACT_EPOCH,
+            abi: AbiVersion {
+                major: ABI_MAJOR,
+                minor: ABI_MINOR,
+            },
+            final_capabilities: EXPECTED_CAPABILITIES,
+            dormant_capabilities: DORMANT_CAPABILITIES,
+            lease_mask: LEASE_MASK,
+            manifest_flags: MANIFEST_FLAGS,
+            activation_required: ACTIVATION_REQUIRED,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActivationStatus {
+    pub driver_outcome: ActivationOutcome,
+    pub state: u8,
+    pub error: u8,
+    pub attempts: u16,
+    pub request_id: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlState {
+    pub contract: ContractIdentity,
+    pub activation: ActivationStatus,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LatencyStats {
     pub count: usize,
@@ -92,15 +183,47 @@ fn nearest_rank(sorted: &[Duration], percentile: usize) -> Duration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
     Transport(String),
+    SysfsRead {
+        path: PathBuf,
+        detail: String,
+    },
+    MalformedSysfs {
+        attribute: &'static str,
+        detail: String,
+    },
+    UnstableSysfs,
+    ContractMismatch {
+        field: &'static str,
+        detail: String,
+    },
+    ActivationMismatch(String),
     Timeout(&'static str),
     ShortWrite(usize),
     ShortRead(usize),
-    UnexpectedService { expected: u8, actual: u8 },
-    UnexpectedOpcode { expected: u8, actual: u8 },
-    UnexpectedSequence { expected: u16, actual: u16 },
-    UnexpectedValue { expected: u32, actual: u32 },
-    RemoteError { sequence: u16, value: u32 },
-    DataPlaneLength { actual: usize, expected: usize },
+    UnexpectedService {
+        expected: u8,
+        actual: u8,
+    },
+    UnexpectedOpcode {
+        expected: u8,
+        actual: u8,
+    },
+    UnexpectedSequence {
+        expected: u16,
+        actual: u16,
+    },
+    UnexpectedValue {
+        expected: u32,
+        actual: u32,
+    },
+    RemoteError {
+        sequence: u16,
+        value: u32,
+    },
+    DataPlaneLength {
+        actual: usize,
+        expected: usize,
+    },
     DataPlaneMismatch(usize),
     InvalidArgument(&'static str),
 }
@@ -109,6 +232,23 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(detail) => write!(formatter, "transport error: {detail}"),
+            Self::SysfsRead { path, detail } => {
+                write!(formatter, "cannot read {}: {detail}", path.display())
+            }
+            Self::MalformedSysfs { attribute, detail } => {
+                write!(formatter, "malformed {attribute} sysfs attribute: {detail}")
+            }
+            Self::UnstableSysfs => formatter
+                .write_str("contract or activation sysfs attribute changed between snapshots"),
+            Self::ContractMismatch { field, detail } => {
+                write!(
+                    formatter,
+                    "compiled contract mismatch for {field}: {detail}"
+                )
+            }
+            Self::ActivationMismatch(detail) => {
+                write!(formatter, "activation state mismatch: {detail}")
+            }
             Self::Timeout(phase) => write!(formatter, "timed out waiting for {phase}"),
             Self::ShortWrite(count) => {
                 write!(
@@ -154,6 +294,434 @@ impl fmt::Display for Error {
 }
 
 impl StdError for Error {}
+
+fn malformed(attribute: &'static str, detail: impl Into<String>) -> Error {
+    Error::MalformedSysfs {
+        attribute,
+        detail: detail.into(),
+    }
+}
+
+fn parse_fields<'a>(
+    attribute: &'static str,
+    input: &'a str,
+    expected: &[&'static str],
+) -> Result<BTreeMap<&'a str, &'a str>, Error> {
+    let line = input
+        .strip_suffix('\n')
+        .ok_or_else(|| malformed(attribute, "record is not newline-terminated"))?;
+    if line.is_empty() || line.contains('\n') || line.contains('\r') {
+        return Err(malformed(
+            attribute,
+            "record is empty or contains extra lines",
+        ));
+    }
+
+    let mut fields = BTreeMap::new();
+    for entry in line.split(' ') {
+        if entry.is_empty() {
+            return Err(malformed(
+                attribute,
+                "fields are not separated by one space",
+            ));
+        }
+        let (name, value) = entry
+            .split_once('=')
+            .ok_or_else(|| malformed(attribute, format!("field {entry:?} has no '='")))?;
+        if name.is_empty() || value.is_empty() || value.contains('=') {
+            return Err(malformed(attribute, format!("invalid field {entry:?}")));
+        }
+        if !expected.contains(&name) {
+            return Err(malformed(attribute, format!("unknown field {name:?}")));
+        }
+        if fields.insert(name, value).is_some() {
+            return Err(malformed(attribute, format!("duplicate field {name:?}")));
+        }
+    }
+    for name in expected {
+        if !fields.contains_key(name) {
+            return Err(malformed(attribute, format!("missing field {name:?}")));
+        }
+    }
+    Ok(fields)
+}
+
+fn parse_decimal<T>(attribute: &'static str, field: &'static str, text: &str) -> Result<T, Error>
+where
+    T: std::str::FromStr + fmt::Display,
+{
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(malformed(attribute, format!("{field} is not decimal")));
+    }
+    let value = text
+        .parse::<T>()
+        .map_err(|_| malformed(attribute, format!("{field} is out of range")))?;
+    if value.to_string() != text {
+        return Err(malformed(
+            attribute,
+            format!("{field} is not canonically encoded"),
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_fixed_hex(
+    attribute: &'static str,
+    field: &'static str,
+    text: &str,
+    digits: usize,
+) -> Result<u64, Error> {
+    let Some(hex) = text.strip_prefix("0x") else {
+        return Err(malformed(attribute, format!("{field} has no 0x prefix")));
+    };
+    if hex.len() != digits
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(malformed(
+            attribute,
+            format!("{field} is not {digits}-digit lowercase hexadecimal"),
+        ));
+    }
+    u64::from_str_radix(hex, 16)
+        .map_err(|_| malformed(attribute, format!("{field} is out of range")))
+}
+
+fn parse_abi(attribute: &'static str, text: &str) -> Result<AbiVersion, Error> {
+    let (major, minor) = text
+        .split_once('.')
+        .ok_or_else(|| malformed(attribute, "abi has no major.minor separator"))?;
+    if minor.contains('.') {
+        return Err(malformed(attribute, "abi contains multiple separators"));
+    }
+    Ok(AbiVersion {
+        major: parse_decimal(attribute, "abi major", major)?,
+        minor: parse_decimal(attribute, "abi minor", minor)?,
+    })
+}
+
+fn parse_digest(attribute: &'static str, text: &str) -> Result<[u8; 32], Error> {
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(malformed(
+            attribute,
+            "sha256 is not 64-digit lowercase hexadecimal",
+        ));
+    }
+    let mut digest = [0_u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
+            .map_err(|_| malformed(attribute, "sha256 contains invalid hexadecimal"))?;
+    }
+    Ok(digest)
+}
+
+fn format_digest(digest: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    let mut result = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut result, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    result
+}
+
+pub fn parse_contract_attribute(input: &str) -> Result<ContractIdentity, Error> {
+    const ATTRIBUTE: &str = "contract";
+    const FIELDS: &[&str] = &[
+        "profile",
+        "profile_id",
+        "sha256",
+        "epoch",
+        "abi",
+        "final_capabilities",
+        "dormant_capabilities",
+        "lease_mask",
+        "manifest_flags",
+        "activation_required",
+    ];
+    let fields = parse_fields(ATTRIBUTE, input, FIELDS)?;
+    let profile = fields["profile"];
+    if profile.is_empty()
+        || !profile.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit() && index > 0
+                || byte == b'-' && index > 0
+        })
+    {
+        return Err(malformed(ATTRIBUTE, "profile is not a canonical slug"));
+    }
+    let activation_required = match fields["activation_required"] {
+        "0" => false,
+        "1" => true,
+        _ => {
+            return Err(malformed(
+                ATTRIBUTE,
+                "activation_required is not exactly 0 or 1",
+            ));
+        }
+    };
+    Ok(ContractIdentity {
+        profile: profile.to_owned(),
+        profile_id: parse_decimal(ATTRIBUTE, "profile_id", fields["profile_id"])?,
+        sha256: parse_digest(ATTRIBUTE, fields["sha256"])?,
+        epoch: parse_decimal(ATTRIBUTE, "epoch", fields["epoch"])?,
+        abi: parse_abi(ATTRIBUTE, fields["abi"])?,
+        final_capabilities: parse_fixed_hex(
+            ATTRIBUTE,
+            "final_capabilities",
+            fields["final_capabilities"],
+            16,
+        )?,
+        dormant_capabilities: parse_fixed_hex(
+            ATTRIBUTE,
+            "dormant_capabilities",
+            fields["dormant_capabilities"],
+            16,
+        )?,
+        lease_mask: parse_fixed_hex(ATTRIBUTE, "lease_mask", fields["lease_mask"], 16)?,
+        manifest_flags: u32::try_from(parse_fixed_hex(
+            ATTRIBUTE,
+            "manifest_flags",
+            fields["manifest_flags"],
+            8,
+        )?)
+        .expect("eight hexadecimal digits always fit u32"),
+        activation_required,
+    })
+}
+
+pub fn parse_activation_attribute(input: &str) -> Result<ActivationStatus, Error> {
+    const ATTRIBUTE: &str = "activation";
+    const FIELDS: &[&str] = &["driver_outcome", "state", "error", "attempts", "request_id"];
+    let fields = parse_fields(ATTRIBUTE, input, FIELDS)?;
+    let driver_outcome = match fields["driver_outcome"] {
+        "not-required" => ActivationOutcome::NotRequired,
+        "already-active" => ActivationOutcome::AlreadyActive,
+        "completed" => ActivationOutcome::Completed,
+        "recovered-lost-response" => ActivationOutcome::RecoveredLostResponse,
+        unknown => {
+            return Err(malformed(
+                ATTRIBUTE,
+                format!("unknown driver_outcome {unknown:?}"),
+            ));
+        }
+    };
+    Ok(ActivationStatus {
+        driver_outcome,
+        state: parse_decimal(ATTRIBUTE, "state", fields["state"])?,
+        error: parse_decimal(ATTRIBUTE, "error", fields["error"])?,
+        attempts: parse_decimal(ATTRIBUTE, "attempts", fields["attempts"])?,
+        request_id: parse_decimal(ATTRIBUTE, "request_id", fields["request_id"])?,
+    })
+}
+
+impl fmt::Display for ContractIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "profile={} profile_id={} sha256={} epoch={} abi={} \
+             final_capabilities=0x{:016x} dormant_capabilities=0x{:016x} \
+             lease_mask=0x{:016x} manifest_flags=0x{:08x} activation_required={}",
+            self.profile,
+            self.profile_id,
+            format_digest(&self.sha256),
+            self.epoch,
+            self.abi,
+            self.final_capabilities,
+            self.dormant_capabilities,
+            self.lease_mask,
+            self.manifest_flags,
+            u8::from(self.activation_required),
+        )
+    }
+}
+
+impl fmt::Display for ActivationStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "driver_outcome={} state={} error={} attempts={} request_id={}",
+            self.driver_outcome, self.state, self.error, self.attempts, self.request_id,
+        )
+    }
+}
+
+fn read_attribute(directory: &Path, name: &'static str) -> Result<String, Error> {
+    let path = directory.join(name);
+    let mut file = File::open(&path).map_err(|error| Error::SysfsRead {
+        path: path.clone(),
+        detail: error.to_string(),
+    })?;
+    let mut bytes = Vec::with_capacity(512);
+    file.by_ref()
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|error| Error::SysfsRead {
+            path,
+            detail: error.to_string(),
+        })?;
+    if bytes.len() > 4096 {
+        return Err(malformed(name, "record exceeds one sysfs page"));
+    }
+    String::from_utf8(bytes).map_err(|_| malformed(name, "record is not UTF-8"))
+}
+
+fn read_stable_attribute(directory: &Path, name: &'static str) -> Result<String, Error> {
+    let first = read_attribute(directory, name)?;
+    let second = read_attribute(directory, name)?;
+    if first != second {
+        return Err(Error::UnstableSysfs);
+    }
+    Ok(first)
+}
+
+pub fn read_contract(directory: &Path) -> Result<ContractIdentity, Error> {
+    parse_contract_attribute(&read_stable_attribute(directory, "contract")?)
+}
+
+pub fn read_activation(directory: &Path) -> Result<ActivationStatus, Error> {
+    parse_activation_attribute(&read_stable_attribute(directory, "activation")?)
+}
+
+pub fn read_control_state(directory: &Path) -> Result<ControlState, Error> {
+    let first_contract = read_attribute(directory, "contract")?;
+    let first_activation = read_attribute(directory, "activation")?;
+    let second_contract = read_attribute(directory, "contract")?;
+    let second_activation = read_attribute(directory, "activation")?;
+    if first_contract != second_contract || first_activation != second_activation {
+        return Err(Error::UnstableSysfs);
+    }
+    Ok(ControlState {
+        contract: parse_contract_attribute(&first_contract)?,
+        activation: parse_activation_attribute(&first_activation)?,
+    })
+}
+
+fn contract_mismatch(
+    field: &'static str,
+    actual: impl fmt::Display,
+    expected: impl fmt::Display,
+) -> Error {
+    Error::ContractMismatch {
+        field,
+        detail: format!("got {actual}, expected {expected}"),
+    }
+}
+
+pub fn validate_compiled_contract(actual: &ContractIdentity) -> Result<(), Error> {
+    let expected = ContractIdentity::compiled();
+    if actual.profile != expected.profile {
+        return Err(contract_mismatch(
+            "profile",
+            &actual.profile,
+            &expected.profile,
+        ));
+    }
+    if actual.profile_id != expected.profile_id {
+        return Err(contract_mismatch(
+            "profile_id",
+            actual.profile_id,
+            expected.profile_id,
+        ));
+    }
+    if actual.sha256 != expected.sha256 {
+        return Err(contract_mismatch(
+            "sha256",
+            format_digest(&actual.sha256),
+            format_digest(&expected.sha256),
+        ));
+    }
+    if actual.epoch != expected.epoch {
+        return Err(contract_mismatch("epoch", actual.epoch, expected.epoch));
+    }
+    if actual.abi != expected.abi {
+        return Err(contract_mismatch("abi", actual.abi, expected.abi));
+    }
+    if actual.final_capabilities != expected.final_capabilities {
+        return Err(contract_mismatch(
+            "final_capabilities",
+            format_args!("0x{:016x}", actual.final_capabilities),
+            format_args!("0x{:016x}", expected.final_capabilities),
+        ));
+    }
+    if actual.dormant_capabilities != expected.dormant_capabilities {
+        return Err(contract_mismatch(
+            "dormant_capabilities",
+            format_args!("0x{:016x}", actual.dormant_capabilities),
+            format_args!("0x{:016x}", expected.dormant_capabilities),
+        ));
+    }
+    if actual.lease_mask != expected.lease_mask {
+        return Err(contract_mismatch(
+            "lease_mask",
+            format_args!("0x{:016x}", actual.lease_mask),
+            format_args!("0x{:016x}", expected.lease_mask),
+        ));
+    }
+    if actual.manifest_flags != expected.manifest_flags {
+        return Err(contract_mismatch(
+            "manifest_flags",
+            format_args!("0x{:08x}", actual.manifest_flags),
+            format_args!("0x{:08x}", expected.manifest_flags),
+        ));
+    }
+    if actual.activation_required != expected.activation_required {
+        return Err(contract_mismatch(
+            "activation_required",
+            u8::from(actual.activation_required),
+            u8::from(expected.activation_required),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_activation(
+    contract: &ContractIdentity,
+    activation: &ActivationStatus,
+) -> Result<(), Error> {
+    if activation.state != ACTIVATION_STATE_ACTIVE {
+        return Err(Error::ActivationMismatch(format!(
+            "state is {}, expected ACTIVE ({ACTIVATION_STATE_ACTIVE})",
+            activation.state
+        )));
+    }
+    if u32::from(activation.error) != ACTIVATION_RESULT_SUCCESS {
+        return Err(Error::ActivationMismatch(format!(
+            "error is {}, expected SUCCESS ({ACTIVATION_RESULT_SUCCESS})",
+            activation.error
+        )));
+    }
+    if contract.activation_required {
+        if activation.driver_outcome == ActivationOutcome::NotRequired {
+            return Err(Error::ActivationMismatch(
+                "lease profile reports driver_outcome=not-required".to_owned(),
+            ));
+        }
+        if activation.attempts == 0 || activation.request_id == 0 {
+            return Err(Error::ActivationMismatch(
+                "lease profile has no completed activation attempt/request".to_owned(),
+            ));
+        }
+    } else if activation.driver_outcome != ActivationOutcome::NotRequired
+        || activation.attempts != 0
+        || activation.request_id != 0
+    {
+        return Err(Error::ActivationMismatch(
+            "base profile has unexpected activation history".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_control_state(state: &ControlState) -> Result<(), Error> {
+    validate_compiled_contract(&state.contract)?;
+    validate_activation(&state.contract, &state.activation)
+}
 
 pub trait Transport {
     fn exchange(&mut self, request: [u8; 8], timeout: Duration) -> Result<[u8; 8], Error>;
@@ -475,6 +1043,163 @@ impl<T: Transport> Client<T> {
 mod tests {
     use super::*;
 
+    fn valid_activation() -> ActivationStatus {
+        if ACTIVATION_REQUIRED {
+            ActivationStatus {
+                driver_outcome: ActivationOutcome::Completed,
+                state: ACTIVATION_STATE_ACTIVE,
+                error: ACTIVATION_RESULT_SUCCESS as u8,
+                attempts: 1,
+                request_id: 0x1234,
+            }
+        } else {
+            ActivationStatus {
+                driver_outcome: ActivationOutcome::NotRequired,
+                state: ACTIVATION_STATE_ACTIVE,
+                error: ACTIVATION_RESULT_SUCCESS as u8,
+                attempts: 0,
+                request_id: 0,
+            }
+        }
+    }
+
+    #[test]
+    fn generated_contract_is_exact_abi_1_1_and_round_trips_sysfs() {
+        assert_eq!((ABI_MAJOR, ABI_MINOR), (1, 1));
+        let expected = ContractIdentity::compiled();
+        let encoded = format!("{expected}\n");
+        assert_eq!(parse_contract_attribute(&encoded).unwrap(), expected);
+
+        let activation = valid_activation();
+        let encoded = format!("{activation}\n");
+        assert_eq!(parse_activation_attribute(&encoded).unwrap(), activation);
+        validate_control_state(&ControlState {
+            contract: expected,
+            activation,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn contract_rejects_duplicate_missing_unknown_and_malformed_fields() {
+        let canonical = format!("{}\n", ContractIdentity::compiled());
+        let without_newline = canonical.trim_end_matches('\n');
+        let duplicate = format!("{without_newline} profile={PROFILE_NAME}\n");
+        assert!(
+            parse_contract_attribute(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate")
+        );
+
+        let missing = canonical
+            .split(' ')
+            .filter(|field| !field.starts_with("epoch="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            parse_contract_attribute(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("missing")
+        );
+
+        let unknown = format!("{without_newline} extra=0\n");
+        assert!(
+            parse_contract_attribute(&unknown)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown")
+        );
+
+        for malformed in [
+            without_newline.to_owned(),
+            canonical.replace("profile_id=", "profile_id=00"),
+            canonical.replace("sha256=", "sha256=ABCDEF"),
+            canonical.replace(" epoch=", "  epoch="),
+            format!("{canonical}\n"),
+        ] {
+            assert!(
+                parse_contract_attribute(&malformed).is_err(),
+                "accepted {malformed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn activation_rejects_duplicate_missing_unknown_and_malformed_fields() {
+        let canonical = format!("{}\n", valid_activation());
+        let without_newline = canonical.trim_end_matches('\n');
+        let duplicate = format!("{without_newline} state={}\n", ACTIVATION_STATE_ACTIVE);
+        assert!(
+            parse_activation_attribute(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate")
+        );
+        let missing = canonical.replacen("error=0 ", "", 1);
+        assert!(
+            parse_activation_attribute(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("missing")
+        );
+        let unknown = format!("{without_newline} extra=0\n");
+        assert!(
+            parse_activation_attribute(&unknown)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown")
+        );
+        assert!(
+            parse_activation_attribute(
+                "driver_outcome=bogus state=4 error=0 attempts=0 request_id=0\n"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_activation_attribute(
+                "driver_outcome=not-required state=04 error=0 attempts=0 request_id=0\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn every_compiled_identity_field_and_activation_policy_is_checked() {
+        let expected = ContractIdentity::compiled();
+        let mut mismatch = expected.clone();
+        mismatch.sha256[0] ^= 1;
+        assert!(
+            validate_compiled_contract(&mismatch)
+                .unwrap_err()
+                .to_string()
+                .contains("sha256")
+        );
+        mismatch = expected.clone();
+        mismatch.final_capabilities ^= 1;
+        assert!(
+            validate_compiled_contract(&mismatch)
+                .unwrap_err()
+                .to_string()
+                .contains("final_capabilities")
+        );
+
+        let mut activation = valid_activation();
+        activation.state ^= 1;
+        assert!(validate_activation(&expected, &activation).is_err());
+        activation = valid_activation();
+        activation.error = 1;
+        assert!(validate_activation(&expected, &activation).is_err());
+        activation = valid_activation();
+        if ACTIVATION_REQUIRED {
+            activation.request_id = 0;
+        } else {
+            activation.attempts = 1;
+        }
+        assert!(validate_activation(&expected, &activation).is_err());
+    }
+
     #[derive(Default)]
     struct EchoTransport {
         requests: Vec<Message>,
@@ -489,8 +1214,8 @@ mod tests {
             self.requests.push(request);
             self.timeouts.push(timeout);
             let value = match request.opcode {
-                OP_GET_ABI => u32::from(ABI_MAJOR) << 16,
-                OP_GET_CAPABILITIES => CAP_MAILBOX | CAP_SHMEM_HEARTBEAT,
+                OP_GET_ABI => u32::from(ABI_MAJOR) << 16 | u32::from(ABI_MINOR),
+                OP_GET_CAPABILITIES => EXPECTED_CAPABILITIES_U32,
                 _ if self.wrong_value => request.value ^ 1,
                 _ => request.value,
             };
@@ -525,11 +1250,14 @@ mod tests {
         let timeout = Duration::from_millis(20);
         assert_eq!(
             client.abi(timeout).unwrap(),
-            AbiVersion { major: 1, minor: 0 }
+            AbiVersion {
+                major: ABI_MAJOR,
+                minor: ABI_MINOR,
+            }
         );
         assert_eq!(
             client.capabilities(timeout).unwrap(),
-            CAP_MAILBOX | CAP_SHMEM_HEARTBEAT
+            EXPECTED_CAPABILITIES_U32
         );
         assert_eq!(client.ping(0xdead_beef, timeout).unwrap(), 0xdead_beef);
         let transport = client.into_inner();

@@ -4,12 +4,14 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use sg2002_c906l_ctl::{
-    ABI_MAJOR, CAP_MAILBOX, CAP_RPMSG, CAP_SHMEM_HEARTBEAT, CAP_TIMER4_SELF_TEST, Client,
-    DeviceTransport, LatencyStats, RpmsgEcho,
+    ABI_MAJOR, ABI_MINOR, CAP_MAILBOX, CAP_RPMSG, CAP_SHMEM_HEARTBEAT, CAP_TIMER4_SELF_TEST,
+    Client, DeviceTransport, EXPECTED_CAPABILITIES_U32, LatencyStats, RpmsgEcho, read_activation,
+    read_contract, read_control_state, validate_control_state,
 };
 
 const DEFAULT_DEVICE: &str = "/dev/sg2002-c906l-control";
 const DEFAULT_RPMSG_DEVICE: &str = "/dev/rpmsg0";
+const DEFAULT_SYSFS: &str = "/sys/class/misc/sg2002-c906l-control/device";
 const DEFAULT_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_BENCHMARK_COUNT: usize = 1_000;
@@ -24,11 +26,15 @@ Usage: sg2002-c906l-ctl [OPTIONS] [COMMAND]\n\
 Options:\n\
   --device PATH       Control device (default: /dev/sg2002-c906l-control)\n\
   --rpmsg-device PATH RPMsg echo device (default: /dev/rpmsg0)\n\
+  --sysfs PATH        Control sysfs directory\n\
+                      (default: /sys/class/misc/sg2002-c906l-control/device)\n\
   --timeout-ms MS     Per-transaction deadline, 1..60000 (default: 1000)\n\
   -h, --help          Show this help\n\
 \n\
 Commands:\n\
-  check               Query ABI/capabilities and ping (default)\n\
+  check               Validate contract/activation, exact ABI/caps, ping (default)\n\
+  contract            Read and strictly decode the kernel contract identity\n\
+  activation          Read and strictly decode the activation result\n\
   abi                 Query the firmware ABI version\n\
   capabilities        Query and decode capability bits\n\
   ping [VALUE]        Round-trip a u32 value (decimal or 0x-prefixed)\n\
@@ -41,6 +47,8 @@ Commands:\n\
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Command {
     Check,
+    Contract,
+    Activation,
     Abi,
     Capabilities,
     Ping(u32),
@@ -53,6 +61,7 @@ enum Command {
 struct Config {
     device: PathBuf,
     rpmsg_device: PathBuf,
+    sysfs: PathBuf,
     timeout: Duration,
     command: Command,
 }
@@ -76,6 +85,7 @@ fn take_value(arguments: &[String], index: &mut usize, option: &str) -> Result<S
 fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
     let mut device = PathBuf::from(DEFAULT_DEVICE);
     let mut rpmsg_device = PathBuf::from(DEFAULT_RPMSG_DEVICE);
+    let mut sysfs = PathBuf::from(DEFAULT_SYSFS);
     let mut timeout_ms = DEFAULT_TIMEOUT_MS;
     let mut positional = Vec::new();
     let mut index = 0;
@@ -89,6 +99,10 @@ fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
             }
             "--rpmsg-device" => {
                 rpmsg_device = take_value(&arguments, &mut index, "--rpmsg-device")?.into();
+                index += 1;
+            }
+            "--sysfs" => {
+                sysfs = take_value(&arguments, &mut index, "--sysfs")?.into();
                 index += 1;
             }
             "--timeout-ms" => {
@@ -122,6 +136,8 @@ fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
     let second_value_argument = positional.get(2);
     let command = match command_name {
         "check" if value_argument.is_none() => Command::Check,
+        "contract" if value_argument.is_none() => Command::Contract,
+        "activation" if value_argument.is_none() => Command::Activation,
         "abi" if value_argument.is_none() => Command::Abi,
         "capabilities" | "caps" if value_argument.is_none() => Command::Capabilities,
         "ping" if second_value_argument.is_none() => {
@@ -147,7 +163,7 @@ fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
                 payload_size,
             }
         }
-        "check" | "abi" | "capabilities" | "caps" => {
+        "check" | "contract" | "activation" | "abi" | "capabilities" | "caps" => {
             return Err(format!("unexpected argument: {}", positional[1]));
         }
         "ping" | "bench" | "stress" | "rpmsg-check" => {
@@ -159,6 +175,7 @@ fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
     Ok(Some(Config {
         device,
         rpmsg_device,
+        sysfs,
         timeout: Duration::from_millis(timeout_ms),
         command,
     }))
@@ -234,6 +251,16 @@ fn print_latency(stats: LatencyStats) {
 }
 
 fn run(config: Config) -> Result<(), String> {
+    if config.command == Command::Contract {
+        let contract = read_contract(&config.sysfs).map_err(|error| error.to_string())?;
+        println!("{contract}");
+        return Ok(());
+    }
+    if config.command == Command::Activation {
+        let activation = read_activation(&config.sysfs).map_err(|error| error.to_string())?;
+        println!("{activation}");
+        return Ok(());
+    }
     if let Command::RpmsgCheck(payload_size) = config.command {
         let mut echo = RpmsgEcho::open(&config.rpmsg_device).map_err(|error| error.to_string())?;
         let payload = (0..payload_size)
@@ -259,6 +286,13 @@ fn run(config: Config) -> Result<(), String> {
         return Ok(());
     }
 
+    if config.command == Command::Check {
+        let state = read_control_state(&config.sysfs).map_err(|error| error.to_string())?;
+        validate_control_state(&state).map_err(|error| error.to_string())?;
+        println!("contract={}", state.contract);
+        println!("activation={}", state.activation);
+    }
+
     let transport = DeviceTransport::open(&config.device).map_err(|error| error.to_string())?;
     let mut client = Client::new(transport);
 
@@ -267,10 +301,10 @@ fn run(config: Config) -> Result<(), String> {
             let abi = client
                 .abi(config.timeout)
                 .map_err(|error| error.to_string())?;
-            if abi.major != ABI_MAJOR {
+            if abi.major != ABI_MAJOR || abi.minor != ABI_MINOR {
                 return Err(format!(
-                    "unsupported firmware ABI {}.{} (expected major {ABI_MAJOR})",
-                    abi.major, abi.minor
+                    "firmware ABI {}.{} does not exactly match compiled ABI {ABI_MAJOR}.{ABI_MINOR}",
+                    abi.major, abi.minor,
                 ));
             }
             println!("abi={}.{}", abi.major, abi.minor);
@@ -278,10 +312,9 @@ fn run(config: Config) -> Result<(), String> {
             let capabilities = client
                 .capabilities(config.timeout)
                 .map_err(|error| error.to_string())?;
-            let required = CAP_MAILBOX | CAP_SHMEM_HEARTBEAT | CAP_RPMSG;
-            if capabilities & required != required {
+            if capabilities != EXPECTED_CAPABILITIES_U32 {
                 return Err(format!(
-                    "required capabilities missing: got 0x{capabilities:08x}, need 0x{required:08x}"
+                    "firmware capabilities 0x{capabilities:08x} do not exactly match compiled capabilities 0x{EXPECTED_CAPABILITIES_U32:08x}"
                 ));
             }
             println!(
@@ -322,7 +355,10 @@ fn run(config: Config) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
             print_latency(stats);
         }
-        Command::RpmsgCheck(_) | Command::RpmsgBenchmark { .. } => unreachable!(),
+        Command::Contract
+        | Command::Activation
+        | Command::RpmsgCheck(_)
+        | Command::RpmsgBenchmark { .. } => unreachable!(),
     }
     Ok(())
 }
@@ -365,6 +401,7 @@ mod tests {
             Some(Config {
                 device: DEFAULT_DEVICE.into(),
                 rpmsg_device: DEFAULT_RPMSG_DEVICE.into(),
+                sysfs: DEFAULT_SYSFS.into(),
                 timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
                 command: Command::Check,
             })
@@ -386,6 +423,7 @@ mod tests {
             Some(Config {
                 device: "/tmp/fake-control".into(),
                 rpmsg_device: DEFAULT_RPMSG_DEVICE.into(),
+                sysfs: DEFAULT_SYSFS.into(),
                 timeout: Duration::from_millis(100),
                 command: Command::Benchmark(10_000),
             })
@@ -412,6 +450,7 @@ mod tests {
             Some(Config {
                 device: DEFAULT_DEVICE.into(),
                 rpmsg_device: "/tmp/rpmsg-test".into(),
+                sysfs: DEFAULT_SYSFS.into(),
                 timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
                 command: Command::RpmsgBenchmark {
                     count: 10_000,

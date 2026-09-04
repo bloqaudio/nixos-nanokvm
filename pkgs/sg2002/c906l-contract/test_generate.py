@@ -102,6 +102,28 @@ class ContractGenerationTests(unittest.TestCase):
         self.assertEqual(vrings["deviceToDriverRegion"], "rpmsgVring0")
         self.assertEqual(vrings["driverToDeviceRegion"], "rpmsgVring1")
 
+    def test_mailbox_hardware_spinlock_matches_vendor_protocol(self) -> None:
+        mailbox = self.base["soc"]["mailbox"]
+        hwspin = mailbox["hardwareSpinlock"]
+        base = mailbox["address"] + hwspin["registerOffset"]
+        register = base + hwspin["mailboxField"] * hwspin["registerStride"]
+        self.assertEqual(base, 0x019000C0)
+        self.assertEqual(register, 0x019000D0)
+        self.assertEqual(hwspin["registerCount"], 8)
+        self.assertEqual(hwspin["registerStride"], 4)
+        self.assertEqual(hwspin["accessWidth"], 2)
+        self.assertEqual(hwspin["mailboxField"], 4)
+        self.assertEqual(mailbox["processorCount"], 4)
+        self.assertEqual(hwspin["tokenWidth"], 8)
+        self.assertEqual(hwspin["linuxTokenShift"], 0)
+        self.assertEqual(hwspin["c906lTokenShift"], 8)
+        self.assertGreater(hwspin["taskAcquireAttempts"], 0)
+        self.assertGreater(hwspin["irqAcquireAttempts"], 0)
+        self.assertEqual(hwspin["irqConsecutiveDeferralLimit"], 16)
+        self.assertLessEqual(
+            hwspin["irqAcquireAttempts"], hwspin["taskAcquireAttempts"]
+        )
+
     def test_wire_layout_fixtures_are_exact(self) -> None:
         message = struct.pack("<BBHI", 1, 3, 0x1234, 0x89ABCDEF)
         self.assertEqual(message, bytes.fromhex("01 03 34 12 ef cd ab 89"))
@@ -203,6 +225,22 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertNotIn("SG2002_C906L_HAVE_TIMER4", header)
             self.assertIn("SG2002_C906L_STATUS_SIZE 64U", header)
             self.assertIn("SG2002_C906L_ABI_MINOR 1U", header)
+            self.assertIn("SG2002_C906L_CAPABILITY_WIRE_WIDTH 64U", header)
+            self.assertIn("SG2002_C906L_MAILBOX_PROCESSOR_COUNT 4U", header)
+            self.assertIn(
+                "SG2002_C906L_MAILBOX_CHANNEL_MASK UINT32_C(0x00000007)",
+                header,
+            )
+            self.assertIn(
+                "SG2002_C906L_MAILBOX_HWSPIN_ADDRESS "
+                "UINT64_C(0x00000000019000d0)",
+                header,
+            )
+            self.assertIn(
+                "SG2002_C906L_MAILBOX_HWSPIN_C906L_TOKEN_MASK "
+                "UINT32_C(0x0000ff00)",
+                header,
+            )
             self.assertIn("SG2002_C906L_CONTRACT_EPOCH 2U", header)
             self.assertIn("SG2002_C906L_MANIFEST_SIZE 128U", header)
             self.assertIn("SG2002_C906L_ACTIVATION_REQUEST_SIZE 128U", header)
@@ -225,6 +263,18 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertIn("pub const VIRTIO_RPMSG_FEATURES: u32 = 0x00000001;", rust)
             self.assertIn("pub const RSC_TABLE_SERIALIZED_SIZE: usize = 88;", rust)
             self.assertIn("pub const MAILBOX_C906L_IRQ: u32 = 61;", rust)
+            self.assertIn("pub const MAILBOX_PROCESSOR_COUNT: usize = 4;", rust)
+            self.assertIn("pub const MAILBOX_CHANNEL_MASK: u8 = 0x07;", rust)
+            self.assertIn(
+                "pub const MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT: u32 = 16;",
+                rust,
+            )
+            self.assertIn(
+                "pub const MAILBOX_HWSPIN_ADDRESS: usize = 0x019000d0;", rust
+            )
+            self.assertIn(
+                "pub const MAILBOX_HWSPIN_C906L_TOKEN_MASK: u16 = 0xff00;", rust
+            )
             self.assertIn("pub const RESET_ADDRESS: usize = 0x03003024;", rust)
             dts = generated["dts/sg2002-c906l-contract.dtsi"].decode()
             self.assertIn("mboxes = <&mailbox 0 2>;", dts)
@@ -235,6 +285,14 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertIn(self.base_sha256[:16], dts.replace(" ", ""))
             python = generated["python/sg2002_c906l_contract.py"].decode()
             compile(python, "sg2002_c906l_contract.py", "exec")
+            self.assertIn("CAPABILITY_WIRE_WIDTH = 64", python)
+            self.assertIn(
+                "MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT = 16", python
+            )
+            self.assertIn("MAILBOX_HWSPIN_FIELD = 4", python)
+            self.assertIn("MAILBOX_PROCESSOR_COUNT = 4", python)
+            self.assertIn("MAILBOX_CHANNEL_MASK = 0x07", python)
+            self.assertIn("MAILBOX_HWSPIN_ADDRESS = 0x019000d0", python)
             self.assertIn("MANIFEST_SIZE = 128", python)
 
     def test_generated_constant_names_are_unique(self) -> None:

@@ -263,12 +263,13 @@
       # initrd rescue require site inputs; they remain available as modules and
       # legacyPackages artifacts without pretending to be standalone configs.
       flatBoardSystems =
-        builtins.listToAttrs (map
-          (entry: {
-            name = lib.concatStringsSep "-" entry.path;
-            value = lib.getAttrFromPath entry.path boardSystems;
-          })
-          (builtins.filter (entry: entry.kernel == "mainline") catalog))
+        builtins.listToAttrs
+          (map
+            (entry: {
+              name = lib.concatStringsSep "-" entry.path;
+              value = lib.getAttrFromPath entry.path boardSystems;
+            })
+            (builtins.filter (entry: entry.kernel == "mainline") catalog))
         // {
           k3-pico-itx-recovery-sd = k3BoardSystems.k3."pico-itx"."recovery-sd";
           k3-pico-itx-kexec-installer = k3BoardSystems.k3."pico-itx"."kexec-installer";
@@ -603,8 +604,11 @@
             sg2002-c906l-firmware
             sg2002-c906l-firmware-timer4
             sg2002-c906l-control
+            sg2002-c906l-control-timer4
             sg2002-c906l-remoteproc
+            sg2002-c906l-remoteproc-timer4
             sg2002-c906l-ctl
+            sg2002-c906l-ctl-timer4
             sg2002-c906l-rust
             sg2002-c906l-rust-timer4
             sg2002-alsa-kernel-test
@@ -647,16 +651,22 @@
           sg2002-c906l-contract-generator =
             pkgs.sg2002-c906l-contract.tests.generator;
           sg2002-c906l-rust = pkgs.sg2002-c906l-rust-tests;
+          sg2002-c906l-rust-timer4 = pkgs.sg2002-c906l-rust-tests-timer4;
           sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
           sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
           sg2002-c906l-control = pkgs.sg2002-c906l-control;
+          sg2002-c906l-control-timer4 = pkgs.sg2002-c906l-control-timer4;
           sg2002-c906l-remoteproc = pkgs.sg2002-c906l-remoteproc;
+          sg2002-c906l-remoteproc-timer4 = pkgs.sg2002-c906l-remoteproc-timer4;
           sg2002-c906l-ctl = pkgs.sg2002-c906l-ctl;
+          sg2002-c906l-ctl-timer4 = pkgs.sg2002-c906l-ctl-timer4;
           sg2002-c906l-fip-disabled = pkgs.sg2002-fip-mainline-fastboot;
           sg2002-c906l-fip = pkgs.sg2002-fip-mainline-fastboot-c906l;
           sg2002-c906l-fip-timer4 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer4;
           sg2002-c906l-uboot = pkgs.sg2002-uboot-mainline-fastboot-c906l;
           sg2002-c906l-runner = pkgs.sg2002-usb-boot-c906l.tests.runner;
+          sg2002-c906l-runner-timer4 =
+            pkgs.sg2002-usb-boot-c906l-timer4.tests.runner;
           sg2002-c906l-dtb = pkgs.sg2002-dtb-mainline-nowifi-c906l;
           sg2002-c906l-dtb-timer4 =
             pkgs.sg2002-dtb-mainline-nowifi-c906l-timer4;

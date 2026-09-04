@@ -11,8 +11,8 @@ let
 in
 assert base.expectedCapabilities == 11;
 assert timer4.expectedCapabilities == 15;
-assert base.sha256 == "bffc269cedbd5e7b1e681749fbac5f2f67b3a8193d9b9828874a64c26a3d53ef";
-assert timer4.sha256 == "49ddcde2653c3b194ad2349654f6d984a1bc5f0baf55e0d0dcbbc6cfd5bbf97e";
+assert base.sha256 == "f1168ec929220e57889c1d5c6218f4422600cf2f53c831a55bebf5ede0017a43";
+assert timer4.sha256 == "6ef871536468cc39e3931fa9c529710c5c4627cdea6cd81e96b16db3565e3060";
 assert base.sha256 != timer4.sha256;
 assert base.sortedPeripherals == [ ];
 assert timer4.sortedPeripherals == [ "timer4" ];

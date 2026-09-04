@@ -33,7 +33,21 @@ def main() -> None:
     parser.add_argument("fip", type=Path)
     parser.add_argument("--rtos", type=Path)
     parser.add_argument("--rtos-runaddr", type=lambda value: int(value, 0), default=0)
+    parser.add_argument("--rtos-contract-sha256")
     args = parser.parse_args()
+
+    if bool(args.rtos) != bool(args.rtos_contract_sha256):
+        raise ValueError(
+            "--rtos and --rtos-contract-sha256 must be supplied together"
+        )
+    expected_digest = b""
+    if args.rtos_contract_sha256:
+        try:
+            expected_digest = bytes.fromhex(args.rtos_contract_sha256)
+        except ValueError as exc:
+            raise ValueError("C906L contract SHA-256 is not hexadecimal") from exc
+        if len(expected_digest) != 32:
+            raise ValueError("C906L contract SHA-256 is not exactly 32 bytes")
 
     blob = args.fip.read_bytes()
     if not blob.startswith(b"CVBL01"):
@@ -60,9 +74,14 @@ def main() -> None:
             f"C906L run address is {rtos_runaddr:#x}, expected {args.rtos_runaddr:#x}"
         )
 
-    expected_rtos = b"" if args.rtos is None else padded(args.rtos.read_bytes())
+    raw_rtos = b"" if args.rtos is None else args.rtos.read_bytes()
+    expected_rtos = padded(raw_rtos)
     if actual_rtos != expected_rtos:
         raise ValueError("packed C906L firmware differs from its input")
+    if expected_digest and expected_digest not in raw_rtos:
+        raise ValueError(
+            "C906L firmware does not contain its declared semantic contract SHA-256"
+        )
     if blob[p2_offset + 32 : p2_offset + 36] != checksum(expected_rtos):
         raise ValueError("C906L firmware checksum is invalid")
     if bool(expected_rtos) != bool(rtos_runaddr):

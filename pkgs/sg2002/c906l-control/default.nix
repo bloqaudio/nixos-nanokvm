@@ -1,21 +1,30 @@
-{
-  lib,
-  stdenv,
-  kernel,
+{ buildPackages
+, lib
+, stdenv
+, kernel
+, contract
+,
 }:
 
+assert lib.assertMsg (contract ? contractSha256 && contract ? profileName)
+  "sg2002-c906l-control requires a generated C906L contract package";
 stdenv.mkDerivation {
   pname = "sg2002-c906l-control";
-  version = "0.1.0-${kernel.modDirVersion}";
+  version = "0.2.0-${kernel.modDirVersion}";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
       ./Makefile
       ./sg2002-c906l-control.c
+      ./test_source.py
     ];
   };
 
-  nativeBuildInputs = kernel.moduleBuildDependencies;
+  postPatch = ''
+    cp ${contract}/include/sg2002-c906l-kernel-contract.h .
+  '';
+
+  nativeBuildInputs = kernel.moduleBuildDependencies ++ [ buildPackages.python3 ];
   hardeningDisable = [ "pic" "format" ];
 
   makeFlags = [
@@ -24,12 +33,33 @@ stdenv.mkDerivation {
     "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
   ];
 
+  postBuild = ''
+    python3 test_source.py sg2002-c906l-control.c \
+      ${contract}/share/sg2002-c906l/contract.json
+  '';
+
   installPhase = ''
     runHook preInstall
     install -Dm0644 sg2002-c906l-control.ko \
       "$out/lib/modules/${kernel.modDirVersion}/kernel/drivers/misc/sg2002-c906l-control.ko"
     runHook postInstall
   '';
+
+  passthru = {
+    contractPackage = contract;
+    inherit
+      (contract)
+      contractEpoch
+      contractSha256
+      dormantCapabilities
+      leaseMask
+      manifestFlags
+      profileId
+      profileName
+      protocolVersion
+      requiredCapabilities
+      ;
+  };
 
   meta = {
     description = "Linux mailbox control endpoint for the SG2002 C906L";

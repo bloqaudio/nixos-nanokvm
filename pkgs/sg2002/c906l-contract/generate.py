@@ -124,6 +124,11 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
     abi = contract["abi"]
     soc = contract["soc"]
     mailbox = soc["mailbox"]
+    hwspin = mailbox["hardwareSpinlock"]
+    hwspin_base = mailbox["address"] + hwspin["registerOffset"]
+    hwspin_address = hwspin_base + hwspin["mailboxField"] * hwspin["registerStride"]
+    hwspin_token_value_mask = (1 << hwspin["tokenWidth"]) - 1
+    mailbox_channel_mask = sum(1 << channel for channel in mailbox["channels"].values())
     memory = contract["memory"]
     rpmsg = contract["rpmsg"]
     profile = contract["profile"]
@@ -141,6 +146,7 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
         f"#define {prefix}SHMEM_MAGIC {c_value(abi['magic'], kernel=kernel)}",
         f"#define {prefix}MESSAGE_SIZE {abi['message']['size']}U",
         f"#define {prefix}STATUS_SIZE {abi['status']['size']}U",
+        f"#define {prefix}CAPABILITY_WIRE_WIDTH {abi['capabilityWireWidth']}U",
         f"#define {prefix}CACHE_LINE_SIZE {soc['cacheLineSize']}U",
         f"#define {prefix}EXPECTED_CAPABILITIES "
         f"{c_value(profile['expectedCapabilities'], kernel=kernel, bits=64)}",
@@ -227,10 +233,39 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
             f"#define {prefix}MAILBOX_PAYLOAD_ADDRESS "
             f"{c_value(mailbox['payloadAddress'], kernel=kernel, bits=64)}",
             f"#define {prefix}MAILBOX_SLOT_COUNT {mailbox['slotCount']}U",
+            f"#define {prefix}MAILBOX_PROCESSOR_COUNT {mailbox['processorCount']}U",
+            f"#define {prefix}MAILBOX_CHANNEL_MASK "
+            f"{c_value(mailbox_channel_mask, kernel=kernel)}",
             f"#define {prefix}LINUX_CPU_ID {mailbox['processorIds']['linux']}U",
             f"#define {prefix}RTOS_CPU_ID {mailbox['processorIds']['c906l']}U",
             f"#define {prefix}MAILBOX_LINUX_IRQ {mailbox['interrupts']['linux']}U",
             f"#define {prefix}MAILBOX_C906L_IRQ {mailbox['interrupts']['c906l']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_BASE_ADDRESS "
+            f"{c_value(hwspin_base, kernel=kernel, bits=64)}",
+            f"#define {prefix}MAILBOX_HWSPIN_REGISTER_COUNT "
+            f"{hwspin['registerCount']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_REGISTER_STRIDE "
+            f"{hwspin['registerStride']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_ACCESS_WIDTH "
+            f"{hwspin['accessWidth']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_FIELD {hwspin['mailboxField']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_ADDRESS "
+            f"{c_value(hwspin_address, kernel=kernel, bits=64)}",
+            f"#define {prefix}MAILBOX_HWSPIN_TOKEN_WIDTH {hwspin['tokenWidth']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_LINUX_TOKEN_SHIFT "
+            f"{hwspin['linuxTokenShift']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_C906L_TOKEN_SHIFT "
+            f"{hwspin['c906lTokenShift']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_LINUX_TOKEN_MASK "
+            f"{c_value(hwspin_token_value_mask << hwspin['linuxTokenShift'], kernel=kernel)}",
+            f"#define {prefix}MAILBOX_HWSPIN_C906L_TOKEN_MASK "
+            f"{c_value(hwspin_token_value_mask << hwspin['c906lTokenShift'], kernel=kernel)}",
+            f"#define {prefix}MAILBOX_HWSPIN_TASK_ACQUIRE_ATTEMPTS "
+            f"{hwspin['taskAcquireAttempts']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS "
+            f"{hwspin['irqAcquireAttempts']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT "
+            f"{hwspin['irqConsecutiveDeferralLimit']}U",
         ]
     )
     for name, channel in mailbox["channels"].items():
@@ -519,6 +554,11 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
     abi = contract["abi"]
     soc = contract["soc"]
     mailbox = soc["mailbox"]
+    hwspin = mailbox["hardwareSpinlock"]
+    hwspin_base = mailbox["address"] + hwspin["registerOffset"]
+    hwspin_address = hwspin_base + hwspin["mailboxField"] * hwspin["registerStride"]
+    hwspin_token_value_mask = (1 << hwspin["tokenWidth"]) - 1
+    mailbox_channel_mask = sum(1 << channel for channel in mailbox["channels"].values())
     memory = contract["memory"]
     rpmsg = contract["rpmsg"]
     profile = contract["profile"]
@@ -596,10 +636,26 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
             f"pub const MAILBOX_SIZE: usize = {hex_literal(mailbox['size'])};",
             f"pub const MAILBOX_PAYLOAD_ADDRESS: usize = {hex_literal(mailbox['payloadAddress'])};",
             f"pub const MAILBOX_SLOT_COUNT: usize = {mailbox['slotCount']};",
+            f"pub const MAILBOX_PROCESSOR_COUNT: usize = {mailbox['processorCount']};",
+            f"pub const MAILBOX_CHANNEL_MASK: u8 = {hex_literal(mailbox_channel_mask, 2)};",
             f"pub const LINUX_CPU_ID: usize = {mailbox['processorIds']['linux']};",
             f"pub const RTOS_CPU_ID: usize = {mailbox['processorIds']['c906l']};",
             f"pub const MAILBOX_LINUX_IRQ: u32 = {mailbox['interrupts']['linux']};",
             f"pub const MAILBOX_C906L_IRQ: u32 = {mailbox['interrupts']['c906l']};",
+            f"pub const MAILBOX_HWSPIN_BASE_ADDRESS: usize = {hex_literal(hwspin_base)};",
+            f"pub const MAILBOX_HWSPIN_REGISTER_COUNT: usize = {hwspin['registerCount']};",
+            f"pub const MAILBOX_HWSPIN_REGISTER_STRIDE: usize = {hwspin['registerStride']};",
+            f"pub const MAILBOX_HWSPIN_ACCESS_WIDTH: usize = {hwspin['accessWidth']};",
+            f"pub const MAILBOX_HWSPIN_FIELD: usize = {hwspin['mailboxField']};",
+            f"pub const MAILBOX_HWSPIN_ADDRESS: usize = {hex_literal(hwspin_address)};",
+            f"pub const MAILBOX_HWSPIN_TOKEN_WIDTH: u32 = {hwspin['tokenWidth']};",
+            f"pub const MAILBOX_HWSPIN_LINUX_TOKEN_SHIFT: u32 = {hwspin['linuxTokenShift']};",
+            f"pub const MAILBOX_HWSPIN_C906L_TOKEN_SHIFT: u32 = {hwspin['c906lTokenShift']};",
+            f"pub const MAILBOX_HWSPIN_LINUX_TOKEN_MASK: u16 = {hex_literal(hwspin_token_value_mask << hwspin['linuxTokenShift'], 4)};",
+            f"pub const MAILBOX_HWSPIN_C906L_TOKEN_MASK: u16 = {hex_literal(hwspin_token_value_mask << hwspin['c906lTokenShift'], 4)};",
+            f"pub const MAILBOX_HWSPIN_TASK_ACQUIRE_ATTEMPTS: u32 = {hwspin['taskAcquireAttempts']};",
+            f"pub const MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS: u32 = {hwspin['irqAcquireAttempts']};",
+            f"pub const MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT: u32 = {hwspin['irqConsecutiveDeferralLimit']};",
         ]
     )
     for name, channel in mailbox["channels"].items():
@@ -791,6 +847,11 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
     abi = contract["abi"]
     soc = contract["soc"]
     mailbox = soc["mailbox"]
+    hwspin = mailbox["hardwareSpinlock"]
+    hwspin_base = mailbox["address"] + hwspin["registerOffset"]
+    hwspin_address = hwspin_base + hwspin["mailboxField"] * hwspin["registerStride"]
+    hwspin_token_value_mask = (1 << hwspin["tokenWidth"]) - 1
+    mailbox_channel_mask = sum(1 << channel for channel in mailbox["channels"].values())
     core_control = soc["coreControl"]
     memory = contract["memory"]
     rpmsg = contract["rpmsg"]
@@ -803,6 +864,7 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         f"CONTRACT_EPOCH = {contract['contractEpoch']}",
         f"ABI_MAJOR = {abi['major']}",
         f"ABI_MINOR = {abi['minor']}",
+        f"CAPABILITY_WIRE_WIDTH = {abi['capabilityWireWidth']}",
         f"SHMEM_MAGIC = {hex_literal(abi['magic'])}",
         f"MESSAGE_SIZE = {abi['message']['size']}",
         f"STATUS_SIZE = {abi['status']['size']}",
@@ -824,11 +886,27 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         f"MAILBOX_SIZE = {hex_literal(mailbox['size'])}",
         f"MAILBOX_PAYLOAD_ADDRESS = {hex_literal(mailbox['payloadAddress'])}",
         f"MAILBOX_SLOT_COUNT = {mailbox['slotCount']}",
+        f"MAILBOX_PROCESSOR_COUNT = {mailbox['processorCount']}",
+        f"MAILBOX_CHANNEL_MASK = {hex_literal(mailbox_channel_mask, 2)}",
         f"MAILBOX_SLOT_SIZE = {mailbox['slotSize']}",
         f"LINUX_CPU_ID = {mailbox['processorIds']['linux']}",
         f"RTOS_CPU_ID = {mailbox['processorIds']['c906l']}",
         f"MAILBOX_LINUX_IRQ = {mailbox['interrupts']['linux']}",
         f"MAILBOX_C906L_IRQ = {mailbox['interrupts']['c906l']}",
+        f"MAILBOX_HWSPIN_BASE_ADDRESS = {hex_literal(hwspin_base)}",
+        f"MAILBOX_HWSPIN_REGISTER_COUNT = {hwspin['registerCount']}",
+        f"MAILBOX_HWSPIN_REGISTER_STRIDE = {hwspin['registerStride']}",
+        f"MAILBOX_HWSPIN_ACCESS_WIDTH = {hwspin['accessWidth']}",
+        f"MAILBOX_HWSPIN_FIELD = {hwspin['mailboxField']}",
+        f"MAILBOX_HWSPIN_ADDRESS = {hex_literal(hwspin_address)}",
+        f"MAILBOX_HWSPIN_TOKEN_WIDTH = {hwspin['tokenWidth']}",
+        f"MAILBOX_HWSPIN_LINUX_TOKEN_SHIFT = {hwspin['linuxTokenShift']}",
+        f"MAILBOX_HWSPIN_C906L_TOKEN_SHIFT = {hwspin['c906lTokenShift']}",
+        f"MAILBOX_HWSPIN_LINUX_TOKEN_MASK = {hex_literal(hwspin_token_value_mask << hwspin['linuxTokenShift'], 4)}",
+        f"MAILBOX_HWSPIN_C906L_TOKEN_MASK = {hex_literal(hwspin_token_value_mask << hwspin['c906lTokenShift'], 4)}",
+        f"MAILBOX_HWSPIN_TASK_ACQUIRE_ATTEMPTS = {hwspin['taskAcquireAttempts']}",
+        f"MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS = {hwspin['irqAcquireAttempts']}",
+        f"MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT = {hwspin['irqConsecutiveDeferralLimit']}",
         f"RESET_ADDRESS = {hex_literal(core_control['reset']['address'])}",
         f"RESET_MASK = {hex_literal(1 << core_control['reset']['bit'])}",
         f"RESET_RELEASED_WHEN_SET = {core_control['reset']['releasedWhenSet']}",

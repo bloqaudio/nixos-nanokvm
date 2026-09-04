@@ -1,23 +1,32 @@
-{
-  config,
-  lib,
-  pkgs,
-  ...
+{ config
+, lib
+, pkgs
+, ...
 }:
 
 let
   cfg = config.sg2002.auxCore;
   contract = pkgs.sg2002-c906l-contract-for cfg.peripherals;
-  controlModule = pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel;
-  remoteprocModule = pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel;
+  controlModule =
+    pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel contract;
+  remoteprocModule =
+    pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel contract;
   memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix { inherit lib; };
   inherit (memoryMap) firmwareAddress sharedMemoryAddress;
   carveoutSize = memoryMap.firmwareSize;
   firmwareContractFields = [
+    "c906lContract"
+    "contractEpoch"
+    "contractSha256"
+    "dormantCapabilities"
+    "enabledPeripherals"
     "firmwareAddress"
     "firmwareFile"
     "firmwareSize"
-    "enabledPeripherals"
+    "leaseMask"
+    "manifestFlags"
+    "profileId"
+    "profileName"
     "protocolVersion"
     "requiredCapabilities"
     "sharedMemoryAddress"
@@ -26,10 +35,18 @@ let
   firmwareHasContract = lib.all (name: builtins.hasAttr name cfg.firmware) firmwareContractFields;
   expectedCapabilities = contract.requiredCapabilities;
   firmwareContractMatches = firmwareHasContract
+    && toString cfg.firmware.c906lContract == toString contract
+    && cfg.firmware.contractEpoch == contract.contractEpoch
+    && cfg.firmware.contractSha256 == contract.contractSha256
+    && cfg.firmware.dormantCapabilities == contract.dormantCapabilities
+    && cfg.firmware.enabledPeripherals == contract.enabledPeripherals
     && cfg.firmware.firmwareAddress == firmwareAddress
     && cfg.firmware.firmwareSize == carveoutSize
-    && cfg.firmware.enabledPeripherals == lib.sort builtins.lessThan (lib.unique cfg.peripherals)
-    && cfg.firmware.protocolVersion.major == 1
+    && cfg.firmware.leaseMask == contract.leaseMask
+    && cfg.firmware.manifestFlags == contract.manifestFlags
+    && cfg.firmware.profileId == contract.profileId
+    && cfg.firmware.profileName == contract.profileName
+    && cfg.firmware.protocolVersion == contract.protocolVersion
     && cfg.firmware.requiredCapabilities == expectedCapabilities
     && cfg.firmware.sharedMemoryAddress == sharedMemoryAddress
     && cfg.firmware.sharedMemorySize == memoryMap.sharedMemorySize;
@@ -135,17 +152,17 @@ in
         assertion = firmwareHasContract;
         message = ''
           sg2002.auxCore.firmware must expose firmwareAddress, firmwareFile,
-          firmwareSize, enabledPeripherals, protocolVersion,
-          requiredCapabilities,
-          sharedMemoryAddress, and sharedMemorySize passthru attributes
+          firmwareSize, enabledPeripherals, shared-memory layout, and the
+          complete generated contract identity in passthru attributes
         '';
       }
       {
         assertion = firmwareContractMatches;
         message = ''
           sg2002.auxCore.firmware must match the DT contract: firmware at
-          0x8fe00000/1MiB, shared memory at 0x8ff00000/1MiB, ABI major 1,
-          and exactly the configured peripheral lease set
+          0x8fe00000/1MiB, shared memory at 0x8ff00000/1MiB, and the exact
+          ABI, digest, profile, capabilities, lease mask, manifest flags,
+          and configured peripheral lease set
         '';
       }
       {
@@ -182,6 +199,6 @@ in
       "sg2002-c906l-control"
       "sg2002-c906l-remoteproc"
     ];
-    environment.systemPackages = [ pkgs.sg2002-c906l-ctl ];
+    environment.systemPackages = [ (pkgs.sg2002-c906l-ctl-for contract) ];
   };
 }

@@ -8,51 +8,31 @@
 use core::mem::{offset_of, size_of};
 use core::ptr::{read_volatile, write_volatile};
 
-use super::{
-    SHMEM_BASE, c906l_cache_clean, c906l_cache_invalidate, c906l_delay, c906l_vq_kick_receive,
-    c906l_vq_notify, io_fence,
+use super::{c906l_delay, c906l_vq_kick_receive, c906l_vq_notify, clean, invalidate};
+use crate::contract::{
+    BULK_REGION_ADDRESS as BULK_BASE, BULK_REGION_SIZE as BULK_SIZE,
+    RESOURCE_TABLE_REGION_ADDRESS as RESOURCE_TABLE_BASE,
+    RESOURCE_TABLE_REGION_SIZE as RESOURCE_TABLE_SIZE, RPMSG_BUFFER_BYTES,
+    RPMSG_BUFFER_REGION_ADDRESS as RPMSG_BUFFER_BASE,
+    RPMSG_BUFFER_REGION_SIZE as RPMSG_BUFFER_SIZE, RPMSG_ECHO_ADDRESS, RPMSG_HEADER_BYTES,
+    RPMSG_NS_ADDRESS, RPMSG_NS_CREATE, RPMSG_PAYLOAD_BYTES, RPMSG_SERVICE_NAME,
+    RPMSG_VRING0_REGION_ADDRESS as VRING0_BASE, RPMSG_VRING0_REGION_SIZE as VRING_SIZE,
+    RPMSG_VRING1_REGION_ADDRESS as VRING1_BASE, RSC_CONFIG_LENGTH, RSC_GUEST_FEATURES_INITIAL,
+    RSC_STATUS_INITIAL, RSC_TABLE_ENTRIES, RSC_TABLE_ENTRY_OFFSET, RSC_TABLE_SERIALIZED_SIZE,
+    RSC_TABLE_VERSION, RSC_VDEV, RSC_VDEV_NOTIFY_ID_INITIAL, RSC_VRING_COUNT, SHMEM_ADDRESS,
+    SHMEM_SIZE, VIRTIO_DRIVER_OK, VIRTIO_ID_RPMSG, VIRTIO_RPMSG_FEATURES,
+    VRING_ALIGN as RING_ALIGN, VRING_DESC_F_INDIRECT, VRING_DESC_F_NEXT, VRING_DESC_F_WRITE,
+    VRING_DESCRIPTORS as RING_NUM, VRING_DRIVER_BYTES as RING_DRIVER_BYTES,
+    VRING_NOTIFY_ID_INITIAL, VRING_PHYSICAL_ADDRESS_INITIAL, VRING_USED_OFFSET as RING_USED_OFFSET,
 };
-
-const RESOURCE_TABLE_BASE: usize = SHMEM_BASE + 0x1000;
-const RESOURCE_TABLE_SIZE: usize = 0x1000;
-const VRING0_BASE: usize = SHMEM_BASE + 0x2000;
-const VRING1_BASE: usize = SHMEM_BASE + 0x6000;
-const VRING_SIZE: usize = 0x4000;
-const RPMSG_BUFFER_BASE: usize = SHMEM_BASE + 0x1_0000;
-const RPMSG_BUFFER_SIZE: usize = 0x4_0000;
-const BULK_BASE: usize = SHMEM_BASE + 0x5_0000;
-const BULK_SIZE: usize = 0xb_0000;
 
 const _: () = {
     assert!(RESOURCE_TABLE_BASE + RESOURCE_TABLE_SIZE == VRING0_BASE);
     assert!(VRING0_BASE + VRING_SIZE <= VRING1_BASE);
     assert!(VRING1_BASE + VRING_SIZE <= RPMSG_BUFFER_BASE);
     assert!(RPMSG_BUFFER_BASE + RPMSG_BUFFER_SIZE == BULK_BASE);
-    assert!(BULK_BASE + BULK_SIZE == SHMEM_BASE + 0x10_0000);
+    assert!(BULK_BASE + BULK_SIZE == SHMEM_ADDRESS + SHMEM_SIZE);
 };
-
-const RING_NUM: usize = 256;
-const RING_ALIGN: u32 = 4096;
-const RING_DRIVER_BYTES: usize = 0x2000;
-const RING_USED_OFFSET: usize = 0x2000;
-const RPMSG_BUFFER_BYTES: usize = 512;
-const RPMSG_HEADER_BYTES: usize = 16;
-const RPMSG_PAYLOAD_BYTES: usize = RPMSG_BUFFER_BYTES - RPMSG_HEADER_BYTES;
-
-const RSC_VDEV: u32 = 3;
-const VIRTIO_ID_RPMSG: u32 = 7;
-const VIRTIO_RPMSG_F_NS: u32 = 1 << 0;
-const VIRTIO_CONFIG_S_DRIVER_OK: u8 = 1 << 2;
-const FW_RSC_ADDR_ANY: u32 = u32::MAX;
-
-const VRING_DESC_F_NEXT: u16 = 1;
-const VRING_DESC_F_WRITE: u16 = 2;
-const VRING_DESC_F_INDIRECT: u16 = 4;
-
-const RPMSG_NS_ADDRESS: u32 = 53;
-const RPMSG_ECHO_ADDRESS: u32 = 0x400;
-const RPMSG_NS_CREATE: u32 = 0;
-const RPMSG_SERVICE_NAME: &[u8] = b"rpmsg_chrdev";
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -123,7 +103,7 @@ const _: [(); 20] = [(); size_of::<ResourceTableHeader>()];
 const _: [(); 24] = [(); size_of::<VdevHeader>()];
 const _: [(); 20] = [(); size_of::<VringResource>()];
 const _: [(); 68] = [(); size_of::<RpmsgResource>()];
-const _: [(); 88] = [(); size_of::<ResourceTable>()];
+const _: [(); RSC_TABLE_SERIALIZED_SIZE] = [(); size_of::<ResourceTable>()];
 const _: [(); 16] = [(); size_of::<Descriptor>()];
 const _: [(); 16] = [(); size_of::<RpmsgHeader>()];
 const _: [(); 44] = [(); offset_of!(ResourceTable, rpmsg.vdev.status)];
@@ -131,21 +111,21 @@ const _: [(); 44] = [(); offset_of!(ResourceTable, rpmsg.vdev.status)];
 const fn initial_resource_table() -> ResourceTable {
     ResourceTable {
         header: ResourceTableHeader {
-            version: 1,
-            entries: 1,
+            version: RSC_TABLE_VERSION,
+            entries: RSC_TABLE_ENTRIES,
             reserved: [0; 2],
-            offsets: [size_of::<ResourceTableHeader>() as u32],
+            offsets: [RSC_TABLE_ENTRY_OFFSET],
         },
         rpmsg: RpmsgResource {
             resource_type: RSC_VDEV,
             vdev: VdevHeader {
                 id: VIRTIO_ID_RPMSG,
-                notify_id: 0,
-                device_features: VIRTIO_RPMSG_F_NS,
-                guest_features: 0,
-                config_len: 0,
-                status: 0,
-                vring_count: 2,
+                notify_id: RSC_VDEV_NOTIFY_ID_INITIAL,
+                device_features: VIRTIO_RPMSG_FEATURES,
+                guest_features: RSC_GUEST_FEATURES_INITIAL,
+                config_len: RSC_CONFIG_LENGTH,
+                status: RSC_STATUS_INITIAL,
+                vring_count: RSC_VRING_COUNT,
                 reserved: [0; 2],
             },
             vrings: [
@@ -153,33 +133,19 @@ const fn initial_resource_table() -> ResourceTable {
                     device_address: VRING0_BASE as u32,
                     align: RING_ALIGN,
                     descriptors: RING_NUM as u32,
-                    notify_id: FW_RSC_ADDR_ANY,
-                    physical_address: 0,
+                    notify_id: VRING_NOTIFY_ID_INITIAL,
+                    physical_address: VRING_PHYSICAL_ADDRESS_INITIAL,
                 },
                 VringResource {
                     device_address: VRING1_BASE as u32,
                     align: RING_ALIGN,
                     descriptors: RING_NUM as u32,
-                    notify_id: FW_RSC_ADDR_ANY,
-                    physical_address: 0,
+                    notify_id: VRING_NOTIFY_ID_INITIAL,
+                    physical_address: VRING_PHYSICAL_ADDRESS_INITIAL,
                 },
             ],
         },
     }
-}
-
-fn invalidate(address: usize, size: usize) {
-    // SAFETY: all callers pass a subrange of the permanently reserved shared
-    // DDR area.  The vendor primitive rounds as required by the C906 cache.
-    unsafe { c906l_cache_invalidate(address, size) };
-    io_fence();
-}
-
-fn clean(address: usize, size: usize) {
-    io_fence();
-    // SAFETY: same shared-DDR invariant as `invalidate`.
-    unsafe { c906l_cache_clean(address, size) };
-    io_fence();
 }
 
 fn read_u8(address: usize) -> u8 {
@@ -257,7 +223,7 @@ fn vdev_online() -> bool {
     let status = read_u8(RESOURCE_TABLE_BASE + offset_of!(ResourceTable, rpmsg.vdev.status));
     let negotiated =
         read_u32(RESOURCE_TABLE_BASE + offset_of!(ResourceTable, rpmsg.vdev.guest_features));
-    status & VIRTIO_CONFIG_S_DRIVER_OK != 0 && negotiated & !VIRTIO_RPMSG_F_NS == 0
+    status & VIRTIO_DRIVER_OK != 0 && negotiated & !VIRTIO_RPMSG_FEATURES == 0
 }
 
 fn descriptor(ring: usize, index: u16) -> Descriptor {
@@ -548,13 +514,13 @@ mod tests {
     #[test]
     fn resource_table_matches_linux_uapi_layout() {
         let table = initial_resource_table();
-        assert_eq!(size_of::<ResourceTable>(), 88);
-        assert_eq!(table.header.version, 1);
-        assert_eq!(table.header.entries, 1);
-        assert_eq!(table.header.offsets, [20]);
+        assert_eq!(size_of::<ResourceTable>(), RSC_TABLE_SERIALIZED_SIZE);
+        assert_eq!(table.header.version, RSC_TABLE_VERSION);
+        assert_eq!(table.header.entries, RSC_TABLE_ENTRIES);
+        assert_eq!(table.header.offsets, [RSC_TABLE_ENTRY_OFFSET]);
         assert_eq!(table.rpmsg.resource_type, RSC_VDEV);
         assert_eq!(table.rpmsg.vdev.id, VIRTIO_ID_RPMSG);
-        assert_eq!(table.rpmsg.vdev.vring_count, 2);
+        assert_eq!(table.rpmsg.vdev.vring_count, RSC_VRING_COUNT);
         assert_eq!(table.rpmsg.vrings[0].device_address, VRING0_BASE as u32);
         assert_eq!(table.rpmsg.vrings[1].device_address, VRING1_BASE as u32);
     }
@@ -565,7 +531,7 @@ mod tests {
         assert!(VRING0_BASE + VRING_SIZE <= VRING1_BASE);
         assert!(VRING1_BASE + VRING_SIZE <= RPMSG_BUFFER_BASE);
         assert_eq!(RPMSG_BUFFER_BASE + RPMSG_BUFFER_SIZE, BULK_BASE);
-        assert_eq!(BULK_BASE + BULK_SIZE, SHMEM_BASE + 0x10_0000);
+        assert_eq!(BULK_BASE + BULK_SIZE, SHMEM_ADDRESS + SHMEM_SIZE);
     }
 
     #[test]
