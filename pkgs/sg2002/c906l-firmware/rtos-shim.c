@@ -53,10 +53,29 @@ _Static_assert(MBOX_INT_C906_2ND == SG2002_C906L_MAILBOX_C906L_IRQ,
 /* The pinned BSP implements this API but its installed header omits it. */
 extern void disable_irq(unsigned int irqn);
 
+#if defined(SG2002_C906L_HAVE_TIMER4) || \
+	defined(SG2002_C906L_HAVE_TIMER5) || \
+	defined(SG2002_C906L_HAVE_TIMER6) || \
+	defined(SG2002_C906L_HAVE_TIMER7)
 #ifdef SG2002_C906L_HAVE_TIMER4
-/* SoC Timer4 is the timer IP's one-based Timer5 register group. */
 #if TIMER_INTR_4 != SG2002_C906L_TIMER4_IRQ
 #error "cv181x C906L Timer4 IRQ routing changed"
+#endif
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER5
+#if TIMER_INTR_5 != SG2002_C906L_TIMER5_IRQ
+#error "cv181x C906L Timer5 IRQ routing changed"
+#endif
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER6
+#if TIMER_INTR_6 != SG2002_C906L_TIMER6_IRQ
+#error "cv181x C906L Timer6 IRQ routing changed"
+#endif
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER7
+#if TIMER_INTR_7 != SG2002_C906L_TIMER7_IRQ
+#error "cv181x C906L Timer7 IRQ routing changed"
+#endif
 #endif
 #endif
 
@@ -82,7 +101,10 @@ static volatile uint32_t unexpected_mailbox_events;
 static uint8_t mailbox_lock_counter;
 
 extern void c906l_rust_main(void) __attribute__((noreturn));
-#ifdef SG2002_C906L_HAVE_TIMER4
+#if defined(SG2002_C906L_HAVE_TIMER4) || \
+	defined(SG2002_C906L_HAVE_TIMER5) || \
+	defined(SG2002_C906L_HAVE_TIMER6) || \
+	defined(SG2002_C906L_HAVE_TIMER7)
 extern int c906l_timer_interrupt(uint32_t channel, uint32_t irq);
 #endif
 
@@ -260,31 +282,121 @@ static int mailbox_isr(int irqn, void *priv)
 	return lock_result;
 }
 
+#if defined(SG2002_C906L_HAVE_TIMER4) || \
+	defined(SG2002_C906L_HAVE_TIMER5) || \
+	defined(SG2002_C906L_HAVE_TIMER6) || \
+	defined(SG2002_C906L_HAVE_TIMER7)
+/*
+ * Each trampoline synchronously lets Rust read the channel EOI register and
+ * mask/disable that channel.  Only after it returns can the vendor dispatcher
+ * complete the PLIC claim.
+ */
 #ifdef SG2002_C906L_HAVE_TIMER4
 static int timer4_isr(int irqn, void *priv)
 {
-	/*
-	 * Rust reads Timer4's per-channel EOI and masks/disables the channel
-	 * before returning.  The vendor dispatcher completes the PLIC claim only
-	 * after this trampoline returns.
-	 */
 	if ((uint32_t)irqn != SG2002_C906L_TIMER4_IRQ || priv != NULL)
 		return -1;
 	return c906l_timer_interrupt(4U, SG2002_C906L_TIMER4_IRQ);
 }
+#endif
+
+#ifdef SG2002_C906L_HAVE_TIMER5
+static int timer5_isr(int irqn, void *priv)
+{
+	if ((uint32_t)irqn != SG2002_C906L_TIMER5_IRQ || priv != NULL)
+		return -1;
+	return c906l_timer_interrupt(5U, SG2002_C906L_TIMER5_IRQ);
+}
+#endif
+
+#ifdef SG2002_C906L_HAVE_TIMER6
+static int timer6_isr(int irqn, void *priv)
+{
+	if ((uint32_t)irqn != SG2002_C906L_TIMER6_IRQ || priv != NULL)
+		return -1;
+	return c906l_timer_interrupt(6U, SG2002_C906L_TIMER6_IRQ);
+}
+#endif
+
+#ifdef SG2002_C906L_HAVE_TIMER7
+static int timer7_isr(int irqn, void *priv)
+{
+	if ((uint32_t)irqn != SG2002_C906L_TIMER7_IRQ || priv != NULL)
+		return -1;
+	return c906l_timer_interrupt(7U, SG2002_C906L_TIMER7_IRQ);
+}
+#endif
 
 int c906l_timer_irq_install(uint32_t channel, uint32_t irq)
 {
-	if (channel != 4U || irq != SG2002_C906L_TIMER4_IRQ)
+	switch (channel) {
+#ifdef SG2002_C906L_HAVE_TIMER4
+	case 4U:
+		if (irq != SG2002_C906L_TIMER4_IRQ)
+			return -1;
+		return request_irq(SG2002_C906L_TIMER4_IRQ, timer4_isr, 0,
+				   "c906l-timer4", NULL);
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER5
+	case 5U:
+		if (irq != SG2002_C906L_TIMER5_IRQ)
+			return -1;
+		return request_irq(SG2002_C906L_TIMER5_IRQ, timer5_isr, 0,
+				   "c906l-timer5", NULL);
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER6
+	case 6U:
+		if (irq != SG2002_C906L_TIMER6_IRQ)
+			return -1;
+		return request_irq(SG2002_C906L_TIMER6_IRQ, timer6_isr, 0,
+				   "c906l-timer6", NULL);
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER7
+	case 7U:
+		if (irq != SG2002_C906L_TIMER7_IRQ)
+			return -1;
+		return request_irq(SG2002_C906L_TIMER7_IRQ, timer7_isr, 0,
+				   "c906l-timer7", NULL);
+#endif
+	default:
 		return -1;
-	return request_irq(SG2002_C906L_TIMER4_IRQ, timer4_isr, 0,
-			   "c906l-timer4", NULL);
+	}
 }
 
 void c906l_timer_irq_disable(uint32_t channel, uint32_t irq)
 {
-	if (channel == 4U && irq == SG2002_C906L_TIMER4_IRQ)
+	switch (channel) {
+#ifdef SG2002_C906L_HAVE_TIMER4
+	case 4U:
+		if (irq != SG2002_C906L_TIMER4_IRQ)
+			return;
 		disable_irq(SG2002_C906L_TIMER4_IRQ);
+		return;
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER5
+	case 5U:
+		if (irq != SG2002_C906L_TIMER5_IRQ)
+			return;
+		disable_irq(SG2002_C906L_TIMER5_IRQ);
+		return;
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER6
+	case 6U:
+		if (irq != SG2002_C906L_TIMER6_IRQ)
+			return;
+		disable_irq(SG2002_C906L_TIMER6_IRQ);
+		return;
+#endif
+#ifdef SG2002_C906L_HAVE_TIMER7
+	case 7U:
+		if (irq != SG2002_C906L_TIMER7_IRQ)
+			return;
+		disable_irq(SG2002_C906L_TIMER7_IRQ);
+		return;
+#endif
+	default:
+		return;
+	}
 }
 #endif
 

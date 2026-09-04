@@ -62,7 +62,6 @@ def main() -> None:
         "SG2002_C906L_MAILBOX_HWSPIN_TASK_ACQUIRE_ATTEMPTS",
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS",
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT",
-        "SG2002_C906L_HAVE_TIMER4",
         "c906l_local_irq_save",
         "mailbox_lock_failures++",
         "mailbox_irq_lock_deferrals++",
@@ -77,13 +76,87 @@ def main() -> None:
         "SG2002_C906L_TIMER4\n" not in source,
         "legacy out-of-band Timer4 build define remains",
     )
-    for token in (
-        "c906l_timer_interrupt(uint32_t channel, uint32_t irq)",
-        "c906l_timer_irq_install(uint32_t channel, uint32_t irq)",
-        "c906l_timer_irq_disable(uint32_t channel, uint32_t irq)",
-        "channel != 4U || irq != SG2002_C906L_TIMER4_IRQ",
-    ):
-        require(token in source, f"missing generic timer IRQ invariant: {token}")
+    timer_guard = """#if defined(SG2002_C906L_HAVE_TIMER4) || \\
+\tdefined(SG2002_C906L_HAVE_TIMER5) || \\
+\tdefined(SG2002_C906L_HAVE_TIMER6) || \\
+\tdefined(SG2002_C906L_HAVE_TIMER7)"""
+    require(
+        source.count(timer_guard) == 3,
+        "timer validation, declaration, and plumbing are not guarded by all leases",
+    )
+
+    peripheral_leases = contract["peripheralLeases"]
+    for peripheral_name, lease in peripheral_leases.items():
+        match = re.fullmatch(r"timer([4-7])", peripheral_name)
+        require(match is not None, f"unsupported C IRQ lease: {peripheral_name}")
+        channel = int(match.group(1))
+        require(
+            lease["kind"] == "dw-apb-timer-channel"
+            and lease["bank"]["channel"] == channel,
+            f"{peripheral_name} is not the expected timer channel",
+        )
+        macro = f"SG2002_C906L_TIMER{channel}_IRQ"
+        have_macro = f"SG2002_C906L_HAVE_TIMER{channel}"
+        trampoline = f"timer{channel}_isr"
+        require(
+            source.count(f"#ifdef {have_macro}\n\tcase {channel}U:") == 2,
+            f"{peripheral_name} install/disable cases are not selection-guarded",
+        )
+        for token in (
+            f"#ifdef {have_macro}",
+            f"#if TIMER_INTR_{channel} != {macro}",
+            f"static int {trampoline}(int irqn, void *priv)",
+            f"if ((uint32_t)irqn != {macro} || priv != NULL)",
+            f"return c906l_timer_interrupt({channel}U, {macro});",
+            f"return request_irq({macro}, {trampoline}, 0,",
+            f"disable_irq({macro});",
+        ):
+            require(token in source, f"missing {peripheral_name} IRQ invariant: {token}")
+
+    if peripheral_leases:
+        for token in (
+            "c906l_timer_interrupt(uint32_t channel, uint32_t irq)",
+            "c906l_timer_irq_install(uint32_t channel, uint32_t irq)",
+            "c906l_timer_irq_disable(uint32_t channel, uint32_t irq)",
+            "mask/disable that channel",
+            "complete the PLIC claim",
+        ):
+            require(token in source, f"missing generic timer IRQ invariant: {token}")
+
+        install_start, install_end = function_span(source, "c906l_timer_irq_install")
+        install = source[install_start:install_end]
+        disable_start, disable_end = function_span(source, "c906l_timer_irq_disable")
+        disable = source[disable_start:disable_end]
+        require(
+            "switch (channel)" in install and "switch (channel)" in disable,
+            "generic timer IRQ operations do not dispatch by channel",
+        )
+        require(
+            "request_irq(" not in install[: install.index("switch (channel)")]
+            and "disable_irq(" not in disable[: disable.index("switch (channel)")],
+            "timer IRQ operation has a side effect before channel validation",
+        )
+        require(
+            re.search(r"default:\s*return -1;", install) is not None
+            and re.search(r"default:\s*return;", disable) is not None,
+            "generic timer IRQ operations do not reject unselected channels",
+        )
+        for peripheral_name, lease in peripheral_leases.items():
+            channel = lease["bank"]["channel"]
+            macro = f"SG2002_C906L_TIMER{channel}_IRQ"
+            for operation, body, rejection in (
+                ("install", install, "return -1;"),
+                ("disable", disable, "return;"),
+            ):
+                case = re.search(
+                    rf"case {channel}U:\s*if \(irq != {macro}\)\s*"
+                    rf"{re.escape(rejection)}",
+                    body,
+                )
+                require(
+                    case is not None,
+                    f"{operation} does not reject a mismatched {peripheral_name} IRQ",
+                )
 
     protected = {
         name: function_span(source, name)
