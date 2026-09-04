@@ -16,6 +16,7 @@
 , dtc
 , gcc
 , linuxSrc
+, python3
 ,
 }:
 let
@@ -57,6 +58,36 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  leaseGuardTests = runCommand "sg2002-c906l-dtb-lease-guard-tests"
+    {
+      nativeBuildInputs = [ dtc python3 ];
+    } ''
+    for fixture in enabled-overlap disabled-overlap non-overlap; do
+      dtc -q -I dts -O dtb \
+        -o "$TMPDIR/$fixture.dtb" \
+        ${./fixtures}/c906l-lease-$fixture.dts
+    done
+
+    if python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/enabled-overlap.dtb" \
+      >"$TMPDIR/enabled.stdout" 2>"$TMPDIR/enabled.stderr"; then
+      echo "enabled overlapping Linux node unexpectedly passed" >&2
+      exit 1
+    fi
+    grep -F \
+      "enabled Linux node /soc/timer-channel@50 MMIO [0x30a0050,0x30a0064) overlaps C906L lease [0x30a0050,0x30a0064)" \
+      "$TMPDIR/enabled.stderr"
+
+    python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/disabled-overlap.dtb"
+    python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/non-overlap.dtb"
+    touch "$out"
+  '';
+
   # Contract-specific DT for the FSBL-started C906L.  Its FIP and this DTB are
   # an atomic pair: Linux must never allocate from the final 2 MiB while the
   # auxiliary core is executing there, and Linux must never activate a lease
@@ -73,7 +104,7 @@ let
     in
     runCommand "${name}-${contract.profileName}.dtb"
       {
-        nativeBuildInputs = [ dtc ];
+        nativeBuildInputs = [ dtc python3 ];
         passthru = c906lMemoryMap // {
           inherit
             (contract)
@@ -88,6 +119,7 @@ let
             protocolVersion
             requiredCapabilities
             ;
+          tests.leaseGuard = leaseGuardTests;
         };
       } ''
       cp ${unchecked} "$out"
@@ -138,6 +170,9 @@ let
         "vq-kick vq-notify"
       test "$(fdtget -t s "$out" /soc/mailbox@1900000 compatible)" = \
         "sophgo,cv1800b-mailbox"
+      python3 ${./verify-c906l-leases.py} \
+        --dtc ${dtc}/bin/dtc \
+        --dtb "$out"
     '';
 
   dtbNoWifiC906LFor = buildC906LDtb
@@ -230,7 +265,7 @@ let
     in
     runCommand "sg2002-nanokvm-pcie-nowifi-c906l-${contract.profileName}-verified.dtb"
       {
-        nativeBuildInputs = [ dtc ];
+        nativeBuildInputs = [ dtc python3 ];
         passthru = c906lMemoryMap // {
           inherit
             (contract)
@@ -245,6 +280,7 @@ let
             protocolVersion
             requiredCapabilities
             ;
+          tests.leaseGuard = leaseGuardTests;
         };
       } ''
       cp ${composed} "$out"

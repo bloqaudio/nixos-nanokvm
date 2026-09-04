@@ -1182,6 +1182,66 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def linux_dt_lease_resources(
+    contract: dict[str, Any],
+) -> tuple[list[tuple[str, int, int]], list[tuple[str, int]]]:
+    """Return physical MMIO ranges and C906L-local IRQs for the final-DT guard.
+
+    New peripheral kinds should carry explicit ``linuxLease.mmioRanges``.  The
+    timer fallback keeps ABI-1.1's already-published contract digest stable
+    while deriving the exact 0x14-byte DesignWare channel aperture rather than
+    claiming or disabling the shared 64 KiB timer bank.
+    """
+
+    ranges: list[tuple[str, int, int]] = []
+    irqs: list[tuple[str, int]] = []
+    for name in contract["profile"]["peripherals"]:
+        peripheral = contract["peripheralLeases"][name]
+        linux_lease = peripheral["linuxLease"]
+        explicit_ranges = linux_lease.get("mmioRanges")
+        if explicit_ranges is not None:
+            require(isinstance(explicit_ranges, list), f"{name} MMIO ranges are not a list")
+            resource_ranges = [
+                (entry["address"], entry["size"]) for entry in explicit_ranges
+            ]
+        elif peripheral["kind"] == "dw-apb-timer-channel":
+            channel_size = 0x14
+            address = peripheral["bank"]["address"] + (
+                peripheral["bank"]["channel"] * channel_size
+            )
+            resource_ranges = [(address, channel_size)]
+            for register_name, register in peripheral["registers"].items():
+                require(
+                    address <= register["address"] < address + channel_size,
+                    f"{name} {register_name} register lies outside its channel lease",
+                )
+        else:
+            raise ValueError(
+                f"{name} ({peripheral['kind']}) needs explicit linuxLease.mmioRanges"
+            )
+
+        require(resource_ranges, f"{name} has no Linux-excluded MMIO range")
+        for address, size in resource_ranges:
+            require(isinstance(address, int), f"{name} MMIO address is not an integer")
+            require(isinstance(size, int), f"{name} MMIO size is not an integer")
+            require(0 <= address < 1 << 64, f"{name} MMIO address does not fit u64")
+            require(0 < size < 1 << 64, f"{name} MMIO size does not fit u64")
+            require(address + size <= 1 << 64, f"{name} MMIO range exceeds u64")
+            ranges.append((name, address, size))
+
+        irq = peripheral["irq"]
+        require(isinstance(irq, int) and 0 <= irq < 1 << 32, f"{name} C906L IRQ is invalid")
+        irqs.append((name, irq))
+
+    for index, (_name, address, size) in enumerate(ranges):
+        for other_name, other_address, other_size in ranges[index + 1 :]:
+            require(
+                address + size <= other_address or other_address + other_size <= address,
+                f"C906L MMIO leases overlap near {other_name}",
+            )
+    return ranges, irqs
+
+
 def render_dts(contract: dict[str, Any], digest: str) -> str:
     memory = contract["memory"]
     mailbox = contract["soc"]["mailbox"]
@@ -1189,9 +1249,23 @@ def render_dts(contract: dict[str, Any], digest: str) -> str:
     abi_word = contract["abi"]["major"] << 16 | contract["abi"]["minor"]
     digest_cells = " ".join(f"{byte:02x}" for byte in bytes.fromhex(digest))
     lease_property = ""
+    lease_resource_properties = ""
     if profile["peripherals"]:
         leases = ", ".join(f'"{name}"' for name in profile["peripherals"])
         lease_property = f"\n\t\tsophgo,leased-peripherals = {leases};"
+        mmio_ranges, c906l_irqs = linux_dt_lease_resources(contract)
+        range_cells = " ".join(
+            f"{hex_literal(address, 16)} {hex_literal(size, 16)}"
+            for _owner, address, size in mmio_ranges
+        )
+        range_owners = ", ".join(f'"{owner}"' for owner, _address, _size in mmio_ranges)
+        irq_cells = " ".join(str(irq) for _owner, irq in c906l_irqs)
+        irq_owners = ", ".join(f'"{owner}"' for owner, _irq in c906l_irqs)
+        lease_resource_properties = f"""
+\t\tsophgo,c906l-leased-mmio-ranges = /bits/ 64 <{range_cells}>;
+\t\tsophgo,c906l-leased-mmio-range-owners = {range_owners};
+\t\tsophgo,c906l-local-irqs = <{irq_cells}>;
+\t\tsophgo,c906l-local-irq-owners = {irq_owners};"""
     activation_property = (
         "\n\t\tsophgo,activation-required;" if profile["activationRequired"] else ""
     )
@@ -1229,7 +1303,7 @@ def render_dts(contract: dict[str, Any], digest: str) -> str:
 \t\tcompatible = "sophgo,sg2002-c906l-control";
 \t\tmboxes = <&mailbox {mailbox['channels']['control']} {mailbox['processorIds']['c906l']}>;
 \t\tmbox-names = "control";
-\t\tmemory-region = <&c906l_shmem>;{common_properties}
+\t\tmemory-region = <&c906l_shmem>;{common_properties}{lease_resource_properties}
 \t}};
 
 \tc906l-rproc {{

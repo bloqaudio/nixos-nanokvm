@@ -728,6 +728,8 @@
           sg2002-c906l-runner-timer7 =
             pkgs.sg2002-usb-boot-c906l-timer7.tests.runner;
           sg2002-c906l-dtb = pkgs.sg2002-dtb-mainline-nowifi-c906l;
+          sg2002-c906l-dtb-lease-guard =
+            pkgs.sg2002-dtb-mainline-nowifi-c906l.tests.leaseGuard;
           sg2002-c906l-dtb-timer4 =
             pkgs.sg2002-dtb-mainline-nowifi-c906l-timer4;
           sg2002-c906l-dtb-timer5 =

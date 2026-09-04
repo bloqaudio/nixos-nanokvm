@@ -340,6 +340,8 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertIn("sophgo,profile-id = <0x00000001>;", dts)
             self.assertIn("sophgo,manifest-flags = <0x00000002>;", dts)
             self.assertNotIn("sophgo,activation-required;", dts)
+            self.assertNotIn("sophgo,c906l-leased-mmio-ranges", dts)
+            self.assertNotIn("sophgo,c906l-local-irqs", dts)
             self.assertIn(self.base_sha256[:16], dts.replace(" ", ""))
             python = generated["python/sg2002_c906l_contract.py"].decode()
             compile(python, "sg2002_c906l_contract.py", "exec")
@@ -376,6 +378,22 @@ class ContractGenerationTests(unittest.TestCase):
             self.generate(self.timer4_path, self.timer4_sha256, output)
             header = (output / "include/sg2002-c906l-contract.h").read_text()
             self.assertIn("SG2002_C906L_HAVE_TIMER4 1", header)
+            dts = (output / "dts/sg2002-c906l-contract.dtsi").read_text()
+            self.assertIn(
+                "sophgo,c906l-leased-mmio-ranges = /bits/ 64 "
+                "<0x00000000030a0050 0x0000000000000014>;",
+                dts,
+            )
+            self.assertIn(
+                'sophgo,c906l-leased-mmio-range-owners = "timer4";', dts
+            )
+            self.assertIn("sophgo,c906l-local-irqs = <55>;", dts)
+            self.assertIn('sophgo,c906l-local-irq-owners = "timer4";', dts)
+
+    def test_timer4_dt_lease_is_exact_channel_not_shared_bank(self) -> None:
+        ranges, irqs = self.generator.linux_dt_lease_resources(self.timer4)
+        self.assertEqual(ranges, [("timer4", 0x030A0050, 0x14)])
+        self.assertEqual(irqs, [("timer4", 55)])
 
     def test_all_c906l_timer_bindings_are_exact(self) -> None:
         expected = {
