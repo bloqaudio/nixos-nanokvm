@@ -12,6 +12,9 @@
 
 #define CONTROL_CHANNEL 0U
 #define CONTROL_BIT (1U << CONTROL_CHANNEL)
+#define VQ_KICK_CHANNEL 1U
+#define VQ_KICK_BIT (1U << VQ_KICK_CHANNEL)
+#define VQ_NOTIFY_CHANNEL 2U
 #define LINUX_CPU_ID 1U
 #define RTOS_CPU_ID 2U
 #define RESPONSE_RETRIES 20U
@@ -35,7 +38,9 @@ static volatile struct mailbox_set_register *const mbox =
 static volatile uint64_t *const slots =
 	(volatile uint64_t *)(uintptr_t)MAILBOX_REG_BUFF;
 static QueueHandle_t requests;
+static QueueHandle_t vq_kicks;
 static volatile uint32_t request_drops;
+static volatile uint32_t vq_kick_drops;
 
 extern void c906l_rust_main(void) __attribute__((noreturn));
 #ifdef SG2002_C906L_TIMER4
@@ -52,22 +57,33 @@ static int mailbox_isr(int irqn, void *priv)
 	BaseType_t wake = pdFALSE;
 	uint8_t pending;
 	uint64_t word;
+	uint32_t vqid;
 
 	(void)irqn;
 	(void)priv;
 	pending = mbox->cpu_mbox_set[RTOS_CPU_ID].cpu_mbox_int_int.mbox_int;
-	if (!(pending & CONTROL_BIT))
-		return 0;
+	if (pending & CONTROL_BIT) {
+		word = slots[CONTROL_CHANNEL];
+		io_fence();
+		mbox->cpu_mbox_set[RTOS_CPU_ID].cpu_mbox_int_clr.mbox_int_clr =
+			CONTROL_BIT;
+		mbox->cpu_mbox_en[RTOS_CPU_ID].mbox_info &= ~CONTROL_BIT;
+		io_fence();
+		if (xQueueSendFromISR(requests, &word, &wake) != pdPASS)
+			request_drops++;
+	}
 
-	word = slots[CONTROL_CHANNEL];
-	io_fence();
-	mbox->cpu_mbox_set[RTOS_CPU_ID].cpu_mbox_int_clr.mbox_int_clr =
-		CONTROL_BIT;
-	mbox->cpu_mbox_en[RTOS_CPU_ID].mbox_info &= ~CONTROL_BIT;
-	io_fence();
-
-	if (xQueueSendFromISR(requests, &word, &wake) != pdPASS)
-		request_drops++;
+	if (pending & VQ_KICK_BIT) {
+		word = slots[VQ_KICK_CHANNEL];
+		vqid = (uint32_t)word;
+		io_fence();
+		mbox->cpu_mbox_set[RTOS_CPU_ID].cpu_mbox_int_clr.mbox_int_clr =
+			VQ_KICK_BIT;
+		mbox->cpu_mbox_en[RTOS_CPU_ID].mbox_info &= ~VQ_KICK_BIT;
+		io_fence();
+		if (xQueueSendFromISR(vq_kicks, &vqid, &wake) != pdPASS)
+			vq_kick_drops++;
+	}
 	portYIELD_FROM_ISR(wake);
 	return 0;
 }
@@ -97,7 +113,7 @@ void c906l_timer4_irq_disable(void)
 }
 #endif
 
-int c906l_platform_start(rust_task_t task)
+int c906l_platform_start(rust_task_t control_task, rust_task_t rpmsg_task)
 {
 	BaseType_t task_result;
 	int irq_result;
@@ -105,26 +121,38 @@ int c906l_platform_start(rust_task_t task)
 	requests = xQueueCreate(8U, sizeof(uint64_t));
 	if (requests == NULL)
 		return -1;
+	vq_kicks = xQueueCreate(32U, sizeof(uint32_t));
+	if (vq_kicks == NULL)
+		return -2;
 
 	request_drops = 0;
+	vq_kick_drops = 0;
 	mbox->cpu_mbox_set[RTOS_CPU_ID].cpu_mbox_int_clr.mbox_int_clr =
-		CONTROL_BIT;
-	mbox->cpu_mbox_en[RTOS_CPU_ID].mbox_info &= ~CONTROL_BIT;
+		CONTROL_BIT | VQ_KICK_BIT;
+	mbox->cpu_mbox_en[RTOS_CPU_ID].mbox_info &=
+		~(CONTROL_BIT | VQ_KICK_BIT);
 	slots[CONTROL_CHANNEL] = 0;
+	slots[VQ_KICK_CHANNEL] = 0;
+	slots[VQ_NOTIFY_CHANNEL] = 0;
 	io_fence();
 
 	irq_result = request_irq(MBOX_INT_C906_2ND, mailbox_isr, 0,
 				 "c906l-mailbox", NULL);
 	if (irq_result != 0)
-		return -2;
-
-	task_result = xTaskCreate(task, "c906l-control", 1024U, NULL,
-				  tskIDLE_PRIORITY + 2U, NULL);
-	if (task_result != pdPASS)
 		return -3;
 
+	task_result = xTaskCreate(control_task, "c906l-control", 1024U, NULL,
+				  tskIDLE_PRIORITY + 2U, NULL);
+	if (task_result != pdPASS)
+		return -4;
+
+	task_result = xTaskCreate(rpmsg_task, "c906l-rpmsg", 2048U, NULL,
+				  tskIDLE_PRIORITY + 2U, NULL);
+	if (task_result != pdPASS)
+		return -5;
+
 	vTaskStartScheduler();
-	return -4;
+	return -6;
 }
 
 int c906l_request_receive(uint64_t *word, uint32_t timeout_ticks)
@@ -132,22 +160,45 @@ int c906l_request_receive(uint64_t *word, uint32_t timeout_ticks)
 	return xQueueReceive(requests, word, timeout_ticks) == pdPASS ? 0 : -1;
 }
 
-int c906l_response_send(uint64_t word)
+static int mailbox_send(unsigned int channel, uint64_t word,
+			unsigned int retries)
 {
-	for (unsigned int retry = 0; retry < RESPONSE_RETRIES; ++retry) {
-		if (!(mbox->cpu_mbox_en[LINUX_CPU_ID].mbox_info & CONTROL_BIT)) {
-			slots[CONTROL_CHANNEL] = word;
+	uint8_t bit = (uint8_t)(1U << channel);
+
+	for (unsigned int retry = 0; retry < retries; ++retry) {
+		taskENTER_CRITICAL();
+		if (!(mbox->cpu_mbox_en[LINUX_CPU_ID].mbox_info & bit)) {
+			slots[channel] = word;
 			io_fence();
 			mbox->cpu_mbox_set[LINUX_CPU_ID]
-				.cpu_mbox_int_clr.mbox_int_clr = CONTROL_BIT;
-			mbox->cpu_mbox_en[LINUX_CPU_ID].mbox_info |= CONTROL_BIT;
-			mbox->mbox_set.mbox_set = CONTROL_BIT;
+				.cpu_mbox_int_clr.mbox_int_clr = bit;
+			mbox->cpu_mbox_en[LINUX_CPU_ID].mbox_info |= bit;
+			mbox->mbox_set.mbox_set = bit;
 			io_fence();
+			taskEXIT_CRITICAL();
 			return 0;
 		}
-		vTaskDelay(1U);
+		taskEXIT_CRITICAL();
+		if (retry + 1U < retries)
+			vTaskDelay(1U);
 	}
 	return -1;
+}
+
+int c906l_response_send(uint64_t word)
+{
+	return mailbox_send(CONTROL_CHANNEL, word, RESPONSE_RETRIES);
+}
+
+int c906l_vq_kick_receive(uint32_t *vqid, uint32_t timeout_ticks)
+{
+	return xQueueReceive(vq_kicks, vqid, timeout_ticks) == pdPASS ? 0 : -1;
+}
+
+int c906l_vq_notify(uint32_t vqid)
+{
+	/* Rust retains failed notifications and retries without blocking here. */
+	return mailbox_send(VQ_NOTIFY_CHANNEL, (uint64_t)vqid, 1U);
 }
 
 uint32_t c906l_request_drops(void)

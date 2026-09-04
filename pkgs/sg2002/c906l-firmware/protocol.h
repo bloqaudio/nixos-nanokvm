@@ -42,6 +42,8 @@ enum sg2002_c906l_capability {
 	SG2002_C906L_CAP_SHMEM_HEARTBEAT = UINT64_C(1) << 1,
 	/* Set only after the opt-in Timer4 hardware self-test succeeds. */
 	SG2002_C906L_CAP_TIMER4_SELF_TEST = UINT64_C(1) << 2,
+	/* A valid resource table and fixed shared-memory transport are ready. */
+	SG2002_C906L_CAP_RPMSG = UINT64_C(1) << 3,
 };
 
 enum sg2002_c906l_status_flag {

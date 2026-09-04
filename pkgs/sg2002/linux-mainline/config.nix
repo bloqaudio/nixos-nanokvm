@@ -336,15 +336,18 @@ with lib.kernel; {
   MAILBOX = yes;
   CV1800_MBOX = yes;
 
-  # No SG2002 remoteproc lifecycle driver exists upstream yet.  Keep RPMsg
-  # off until reset/quiesce and noncoherent shared-memory handling are proven.
-  RPMSG = no;
-  # These four options select the RPMsg core back on in the generic
-  # defconfig; keep the broad gate above and close those selector paths.
-  RPMSG_CHAR = no;
-  RPMSG_CTRL = no;
-  RPMSG_NS = no;
-  RPMSG_VIRTIO = no;
+  # C906L is started by the FSBL. The local platform driver uses remoteproc's
+  # detached/attach-only state and exposes read-only lifecycle controls: it
+  # cannot load, stop, reset, or auto-recover the core. Linux maps fixed
+  # vrings uncached, allocates RPMsg buffers from their dedicated reserved
+  # pool, and uses AP-mailbox channels 1/2 only as doorbells.
+  REMOTEPROC = yes;
+  REMOTEPROC_CDEV = no;
+  RPMSG = yes;
+  RPMSG_CHAR = yes;
+  RPMSG_CTRL = yes;
+  RPMSG_NS = yes;
+  RPMSG_VIRTIO = yes;
 
   # No PCIe, no discrete GPU — kill the DRM stack. Nouveau alone is
   # ~30 .ko files of dead weight. The legacy FB subsystem stays on for

@@ -193,7 +193,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     inherit firmwareAddress firmwareSize sharedMemoryAddress sharedMemorySize;
     inherit enabledPeripherals;
     firmwareFile = "lib/firmware/sophgo/sg2002-c906l.bin";
-    requiredCapabilities = if timer4 then 7 else 3;
+    requiredCapabilities = if timer4 then 15 else 11;
     protocolVersion = {
       major = 1;
       minor = 0;

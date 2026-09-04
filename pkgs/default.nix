@@ -214,6 +214,8 @@ in
     final.buildPackages.callPackage ./sg2002/c906l-firmware/rust-tests.nix { };
   sg2002-c906l-control-for = kernel:
     cross.callPackage ./sg2002/c906l-control { inherit kernel; };
+  sg2002-c906l-remoteproc-for = kernel:
+    cross.callPackage ./sg2002/c906l-remoteproc { inherit kernel; };
   sg2002-c906l-ctl = final.callPackage ./sg2002/c906l-cli { };
   sg2002-c906l-firmware-for = peripherals:
     final.buildPackages.callPackage ./sg2002/c906l-firmware {
@@ -399,6 +401,8 @@ in
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
   sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline { };
   sg2002-c906l-control = final.sg2002-c906l-control-for final.sg2002-kernel-mainline;
+  sg2002-c906l-remoteproc =
+    final.sg2002-c906l-remoteproc-for final.sg2002-kernel-mainline;
   # Keep the normal mainline kernel's Bluetooth stack disabled.  The AIC
   # HCI transport is experimental on this board, so only its explicit
   # consumer pays for bluetooth.ko and its protocol dependencies.

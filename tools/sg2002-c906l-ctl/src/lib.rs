@@ -19,6 +19,7 @@ pub const ABI_MAJOR: u16 = 1;
 pub const CAP_MAILBOX: u32 = 1 << 0;
 pub const CAP_SHMEM_HEARTBEAT: u32 = 1 << 1;
 pub const CAP_TIMER4_SELF_TEST: u32 = 1 << 2;
+pub const CAP_RPMSG: u32 = 1 << 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Message {
@@ -99,6 +100,8 @@ pub enum Error {
     UnexpectedSequence { expected: u16, actual: u16 },
     UnexpectedValue { expected: u32, actual: u32 },
     RemoteError { sequence: u16, value: u32 },
+    DataPlaneLength { actual: usize, expected: usize },
+    DataPlaneMismatch(usize),
     InvalidArgument(&'static str),
 }
 
@@ -138,6 +141,13 @@ impl fmt::Display for Error {
                 formatter,
                 "firmware rejected sequence {sequence} with value 0x{value:08x}"
             ),
+            Self::DataPlaneLength { actual, expected } => write!(
+                formatter,
+                "RPMsg returned {actual} bytes, expected exactly {expected}"
+            ),
+            Self::DataPlaneMismatch(offset) => {
+                write!(formatter, "RPMsg echo differs at byte {offset}")
+            }
             Self::InvalidArgument(detail) => formatter.write_str(detail),
         }
     }
@@ -227,6 +237,141 @@ impl Transport for DeviceTransport {
                 Err(error) => return Err(Error::Transport(format!("read: {error}"))),
             }
         }
+    }
+}
+
+/// Linux's standard `rpmsg_char` endpoint for the firmware echo service.
+pub struct RpmsgEcho {
+    fd: OwnedFd,
+}
+
+impl RpmsgEcho {
+    pub fn open(path: &Path) -> Result<Self, Error> {
+        let fd = open(
+            path,
+            OFlags::RDWR | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| Error::Transport(format!("open {}: {error}", path.display())))?;
+        Ok(Self { fd })
+    }
+
+    fn wait_for(
+        &self,
+        wanted: PollFlags,
+        deadline: Instant,
+        phase: &'static str,
+    ) -> Result<(), Error> {
+        loop {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(Error::Timeout(phase))?;
+            if remaining.is_zero() {
+                return Err(Error::Timeout(phase));
+            }
+            let timeout = Timespec::try_from(remaining)
+                .map_err(|error| Error::Transport(format!("poll timeout: {error}")))?;
+            let mut descriptor = [PollFd::new(&self.fd, wanted)];
+            match poll(&mut descriptor, Some(&timeout)) {
+                Ok(0) => return Err(Error::Timeout(phase)),
+                Ok(_) => {
+                    let events = descriptor[0].revents();
+                    let failures = PollFlags::ERR | PollFlags::HUP | PollFlags::NVAL;
+                    if events.intersects(failures) {
+                        return Err(Error::Transport(format!(
+                            "RPMsg poll reported terminal events {events:?}"
+                        )));
+                    }
+                    if events.intersects(wanted) {
+                        return Ok(());
+                    }
+                }
+                Err(Errno::INTR) => continue,
+                Err(error) => return Err(Error::Transport(format!("RPMsg poll: {error}"))),
+            }
+        }
+    }
+
+    pub fn echo(&mut self, payload: &[u8], timeout: Duration) -> Result<(), Error> {
+        if payload.is_empty() || payload.len() > 496 {
+            return Err(Error::InvalidArgument(
+                "RPMsg payload length must be in 1..=496",
+            ));
+        }
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| Error::Transport("timeout exceeds monotonic clock range".into()))?;
+
+        loop {
+            self.wait_for(PollFlags::OUT, deadline, "RPMsg request readiness")?;
+            match write(&self.fd, payload) {
+                Ok(count) if count == payload.len() => break,
+                Ok(count) => {
+                    return Err(Error::DataPlaneLength {
+                        actual: count,
+                        expected: payload.len(),
+                    });
+                }
+                Err(error) if error == Errno::INTR || error == Errno::AGAIN => continue,
+                Err(error) => return Err(Error::Transport(format!("RPMsg write: {error}"))),
+            }
+        }
+
+        loop {
+            self.wait_for(PollFlags::IN, deadline, "RPMsg echo")?;
+            let mut response = vec![0_u8; payload.len()];
+            match read(&self.fd, &mut response) {
+                Ok(count) if count == payload.len() => {
+                    if let Some(offset) = response
+                        .iter()
+                        .zip(payload)
+                        .position(|(actual, expected)| actual != expected)
+                    {
+                        return Err(Error::DataPlaneMismatch(offset));
+                    }
+                    return Ok(());
+                }
+                Ok(count) => {
+                    return Err(Error::DataPlaneLength {
+                        actual: count,
+                        expected: payload.len(),
+                    });
+                }
+                Err(error) if error == Errno::INTR || error == Errno::AGAIN => continue,
+                Err(error) => return Err(Error::Transport(format!("RPMsg read: {error}"))),
+            }
+        }
+    }
+
+    pub fn benchmark(
+        &mut self,
+        count: usize,
+        payload_size: usize,
+        timeout: Duration,
+    ) -> Result<LatencyStats, Error> {
+        if count == 0 {
+            return Err(Error::InvalidArgument("sample count must be non-zero"));
+        }
+        if !(1..=496).contains(&payload_size) {
+            return Err(Error::InvalidArgument(
+                "RPMsg payload length must be in 1..=496",
+            ));
+        }
+
+        let mut payload = (0..payload_size)
+            .map(|offset| (offset as u8).wrapping_mul(0x5b).wrapping_add(0xa7))
+            .collect::<Vec<_>>();
+        let mut samples = Vec::with_capacity(count);
+        for iteration in 0..count {
+            let marker = (iteration as u64).to_le_bytes();
+            let marker_length = marker.len().min(payload.len());
+            payload[..marker_length].copy_from_slice(&marker[..marker_length]);
+
+            let started = Instant::now();
+            self.echo(&payload, timeout)?;
+            samples.push(started.elapsed());
+        }
+        LatencyStats::from_samples(&mut samples)
     }
 }
 

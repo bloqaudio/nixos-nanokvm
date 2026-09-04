@@ -28,6 +28,14 @@
 		mbox-names = "control";
 		memory-region = <&c906l_shmem>;
 	};
+
+	c906l-rproc {
+		compatible = "sophgo,sg2002-c906l-rproc";
+		/* Separate slots prevent bidirectional doorbell overwrite. */
+		mboxes = <&mailbox 1 2>, <&mailbox 2 2>;
+		mbox-names = "vq-kick", "vq-notify";
+		memory-region = <&c906l_shmem>;
+	};
 };
 
 &{/soc} {

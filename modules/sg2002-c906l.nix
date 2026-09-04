@@ -8,6 +8,7 @@
 let
   cfg = config.sg2002.auxCore;
   controlModule = pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel;
+  remoteprocModule = pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel;
   memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix;
   inherit (memoryMap) firmwareAddress sharedMemoryAddress;
   carveoutSize = memoryMap.firmwareSize;
@@ -22,7 +23,7 @@ let
     "sharedMemorySize"
   ];
   firmwareHasContract = lib.all (name: builtins.hasAttr name cfg.firmware) firmwareContractFields;
-  expectedCapabilities = 3
+  expectedCapabilities = 11
     + (if builtins.elem "timer4" cfg.peripherals then 4 else 0);
   firmwareContractMatches = firmwareHasContract
     && cfg.firmware.firmwareAddress == firmwareAddress
@@ -110,8 +111,14 @@ in
     system.build.fip = lib.mkForce (pkgs.sg2002-fip-mainline-uboot-for cfg.firmware);
     system.build.fipFastboot = lib.mkForce (pkgs.sg2002-fip-mainline-fastboot-for cfg.firmware);
     sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-nowifi-c906l;
-    boot.extraModulePackages = [ controlModule ];
-    boot.kernelModules = [ "sg2002-c906l-control" ];
+    boot.extraModulePackages = [
+      controlModule
+      remoteprocModule
+    ];
+    boot.kernelModules = [
+      "sg2002-c906l-control"
+      "sg2002-c906l-remoteproc"
+    ];
     environment.systemPackages = [ pkgs.sg2002-c906l-ctl ];
   };
 }

@@ -598,6 +598,7 @@
             sg2002-c906l-firmware
             sg2002-c906l-firmware-timer4
             sg2002-c906l-control
+            sg2002-c906l-remoteproc
             sg2002-c906l-ctl
             sg2002-c906l-rust
             sg2002-c906l-rust-timer4
@@ -640,6 +641,7 @@
           sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
           sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
           sg2002-c906l-control = pkgs.sg2002-c906l-control;
+          sg2002-c906l-remoteproc = pkgs.sg2002-c906l-remoteproc;
           sg2002-c906l-ctl = pkgs.sg2002-c906l-ctl;
           sg2002-c906l-fip-disabled = pkgs.sg2002-fip-mainline-fastboot;
           sg2002-c906l-fip = pkgs.sg2002-fip-mainline-fastboot-c906l;

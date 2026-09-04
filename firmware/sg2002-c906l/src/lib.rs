@@ -9,6 +9,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, compiler_fence};
 use embedded_hal::delay::DelayNs;
 
+mod rpmsg;
 #[cfg(any(feature = "timer4", test))]
 mod timer4;
 
@@ -29,6 +30,7 @@ const CAP_MAILBOX: u64 = 1 << 0;
 const CAP_SHMEM_HEARTBEAT: u64 = 1 << 1;
 #[cfg(feature = "timer4")]
 const CAP_TIMER4_SELF_TEST: u64 = 1 << 2;
+const CAP_RPMSG: u64 = 1 << 3;
 
 const STATE_BOOTING: u32 = 1;
 const STATE_RUNNING: u32 = 2;
@@ -131,7 +133,10 @@ impl Message {
 }
 
 unsafe extern "C" {
-    fn c906l_platform_start(task: extern "C" fn(*mut c_void)) -> c_int;
+    fn c906l_platform_start(
+        control_task: extern "C" fn(*mut c_void),
+        rpmsg_task: extern "C" fn(*mut c_void),
+    ) -> c_int;
     fn c906l_request_receive(word: *mut u64, timeout_ticks: u32) -> c_int;
     fn c906l_response_send(word: u64) -> c_int;
     fn c906l_request_drops() -> u32;
@@ -139,6 +144,8 @@ unsafe extern "C" {
     fn c906l_cache_clean(address: usize, size: usize);
     fn c906l_cache_invalidate(address: usize, size: usize);
     fn c906l_delay(ticks: u32);
+    fn c906l_vq_kick_receive(vqid: *mut u32, timeout_ticks: u32) -> c_int;
+    fn c906l_vq_notify(vqid: u32) -> c_int;
 }
 
 fn status_ptr() -> *mut Status {
@@ -188,7 +195,7 @@ fn initial_status() -> Status {
             generation,
             flags: 0,
             heartbeat: 0,
-            capabilities: CAP_MAILBOX | CAP_SHMEM_HEARTBEAT,
+            capabilities: CAP_MAILBOX | CAP_SHMEM_HEARTBEAT | CAP_RPMSG,
             last_request: 0,
             last_response: 0,
             reserved: 0,
@@ -260,6 +267,10 @@ extern "C" fn control_task(_argument: *mut c_void) {
     }
 }
 
+extern "C" fn rpmsg_task(_argument: *mut c_void) {
+    rpmsg::run()
+}
+
 /// Coarse FreeRTOS-backed delay for portable `embedded-hal` drivers.
 ///
 /// The scheduler tick is 5 ms. Sub-tick delays round up; timing-sensitive
@@ -279,12 +290,15 @@ impl DelayNs for FreeRtosDelay {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn c906l_rust_main() -> ! {
+    // Linux attaches to a resource table installed by the already-running
+    // firmware. Publish it before RUNNING/capabilities can become visible.
+    rpmsg::initialize();
     let status = initial_status();
     publish(&status);
 
-    // SAFETY: control_task has the exact C ABI and never returns.  The shim
-    // owns its queue and starts the scheduler only after all setup succeeds.
-    let _error = unsafe { c906l_platform_start(control_task) };
+    // SAFETY: both tasks have the exact C ABI and never return. The shim owns
+    // their queues and starts the scheduler only after all setup succeeds.
+    let _error = unsafe { c906l_platform_start(control_task, rpmsg_task) };
 
     let mut failed = status;
     failed.state = STATE_FAULT;

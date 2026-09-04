@@ -84,6 +84,14 @@ let
         "${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemoryAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemorySize)}"
       test "$(fdtget -t s "$out" /c906l-control compatible)" = \
         "sophgo,sg2002-c906l-control"
+      test "$(fdtget -t s "$out" /c906l-rproc compatible)" = \
+        "sophgo,sg2002-c906l-rproc"
+      set -- $(fdtget -t x "$out" /c906l-rproc mboxes)
+      test "$#" -eq 6
+      test "$1" = "$4"
+      test "$2 $3 $5 $6" = "1 2 2 2"
+      test "$(fdtget -t s "$out" /c906l-rproc mbox-names)" = \
+        "vq-kick vq-notify"
       test "$(fdtget -t s "$out" /soc/mailbox@1900000 compatible)" = \
         "sophgo,cv1800b-mailbox"
     '';
