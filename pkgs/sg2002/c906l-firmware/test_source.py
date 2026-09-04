@@ -63,7 +63,7 @@ def main() -> None:
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS",
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT",
         "SG2002_C906L_HAVE_TIMER4",
-        "mailbox_local_irq_save",
+        "c906l_local_irq_save",
         "mailbox_lock_failures++",
         "mailbox_irq_lock_deferrals++",
         "c906l_mailbox_lock_failures",
@@ -77,6 +77,13 @@ def main() -> None:
         "SG2002_C906L_TIMER4\n" not in source,
         "legacy out-of-band Timer4 build define remains",
     )
+    for token in (
+        "c906l_timer_interrupt(uint32_t channel, uint32_t irq)",
+        "c906l_timer_irq_install(uint32_t channel, uint32_t irq)",
+        "c906l_timer_irq_disable(uint32_t channel, uint32_t irq)",
+        "channel != 4U || irq != SG2002_C906L_TIMER4_IRQ",
+    ):
+        require(token in source, f"missing generic timer IRQ invariant: {token}")
 
     protected = {
         name: function_span(source, name)

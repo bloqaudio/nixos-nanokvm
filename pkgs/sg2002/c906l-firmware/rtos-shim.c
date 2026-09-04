@@ -83,7 +83,7 @@ static uint8_t mailbox_lock_counter;
 
 extern void c906l_rust_main(void) __attribute__((noreturn));
 #ifdef SG2002_C906L_HAVE_TIMER4
-extern int c906l_timer4_interrupt(void);
+extern int c906l_timer_interrupt(uint32_t channel, uint32_t irq);
 #endif
 
 static inline void io_fence(void)
@@ -96,7 +96,7 @@ struct mailbox_lock_guard {
 	uint8_t restore_irqs;
 };
 
-static inline uint8_t mailbox_local_irq_save(void)
+uint8_t c906l_local_irq_save(void)
 {
 	uintptr_t previous;
 	uintptr_t mie = 8U;
@@ -106,7 +106,7 @@ static inline uint8_t mailbox_local_irq_save(void)
 	return (previous & mie) != 0U;
 }
 
-static inline void mailbox_local_irq_restore(uint8_t restore_irqs)
+void c906l_local_irq_restore(uint8_t restore_irqs)
 {
 	uintptr_t mie = 8U;
 
@@ -135,7 +135,7 @@ static int mailbox_lock_acquire(struct mailbox_lock_guard *guard,
 {
 	uint16_t token;
 
-	guard->restore_irqs = mailbox_local_irq_save();
+	guard->restore_irqs = c906l_local_irq_save();
 	token = mailbox_lock_next_token();
 	for (unsigned int attempt = 0; attempt < attempts; ++attempt) {
 		*mailbox_hwspin = token;
@@ -149,7 +149,7 @@ static int mailbox_lock_acquire(struct mailbox_lock_guard *guard,
 
 	if (terminal_failure)
 		mailbox_lock_failures++;
-	mailbox_local_irq_restore(guard->restore_irqs);
+	c906l_local_irq_restore(guard->restore_irqs);
 	return MAILBOX_LOCK_ERROR;
 }
 
@@ -166,7 +166,7 @@ static int mailbox_lock_release(const struct mailbox_lock_guard *guard)
 		mailbox_lock_failures++;
 		result = MAILBOX_LOCK_ERROR;
 	}
-	mailbox_local_irq_restore(guard->restore_irqs);
+	c906l_local_irq_restore(guard->restore_irqs);
 	return result;
 }
 
@@ -263,25 +263,28 @@ static int mailbox_isr(int irqn, void *priv)
 #ifdef SG2002_C906L_HAVE_TIMER4
 static int timer4_isr(int irqn, void *priv)
 {
-	(void)irqn;
-	(void)priv;
 	/*
 	 * Rust reads Timer4's per-channel EOI and masks/disables the channel
 	 * before returning.  The vendor dispatcher completes the PLIC claim only
 	 * after this trampoline returns.
 	 */
-	return c906l_timer4_interrupt();
+	if ((uint32_t)irqn != SG2002_C906L_TIMER4_IRQ || priv != NULL)
+		return -1;
+	return c906l_timer_interrupt(4U, SG2002_C906L_TIMER4_IRQ);
 }
 
-int c906l_timer4_irq_install(void)
+int c906l_timer_irq_install(uint32_t channel, uint32_t irq)
 {
+	if (channel != 4U || irq != SG2002_C906L_TIMER4_IRQ)
+		return -1;
 	return request_irq(SG2002_C906L_TIMER4_IRQ, timer4_isr, 0,
 			   "c906l-timer4", NULL);
 }
 
-void c906l_timer4_irq_disable(void)
+void c906l_timer_irq_disable(uint32_t channel, uint32_t irq)
 {
-	disable_irq(SG2002_C906L_TIMER4_IRQ);
+	if (channel == 4U && irq == SG2002_C906L_TIMER4_IRQ)
+		disable_irq(SG2002_C906L_TIMER4_IRQ);
 }
 #endif
 

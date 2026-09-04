@@ -16,9 +16,9 @@ mod contract {
 }
 
 mod activation;
-mod rpmsg;
 #[cfg(feature = "timer4")]
-mod timer4;
+mod dw_apb_timer;
+mod rpmsg;
 
 use contract::{
     ABI_MAJOR, ABI_MINOR, ACTIVATION_REQUIRED, ACTIVATION_RESULT_INTERNAL_FAILURE,

@@ -26,7 +26,6 @@ use crate::contract::{
 };
 use crate::{clean, invalidate, io_fence};
 
-#[cfg(not(feature = "timer4"))]
 use crate::contract::ACTIVATION_RESULT_INTERNAL_FAILURE;
 
 const ABI_VERSION: u32 = ((ABI_MAJOR as u32) << 16) | ABI_MINOR as u32;
@@ -74,23 +73,28 @@ impl LeaseActivator for HardwareLeases {
     fn activate(&mut self) -> Result<(), LeaseFailure> {
         #[cfg(feature = "timer4")]
         {
-            return crate::timer4::self_test().map_err(|error| LeaseFailure {
-                result: match error {
-                    crate::timer4::SelfTestError::ClockXtalMiscDisabled
-                    | crate::timer4::SelfTestError::ClockTimer4Disabled
-                    | crate::timer4::SelfTestError::TimerResetAsserted
-                    | crate::timer4::SelfTestError::Timer4ResetAsserted
-                    | crate::timer4::SelfTestError::WrongClockSource => {
-                        crate::contract::ACTIVATION_RESULT_PRECONDITION_FAILED
-                    }
-                    crate::timer4::SelfTestError::InterruptRegistration => {
-                        crate::contract::ACTIVATION_RESULT_IRQ_INSTALL_FAILED
-                    }
-                    crate::timer4::SelfTestError::Timeout => {
-                        crate::contract::ACTIVATION_RESULT_SELF_TEST_TIMEOUT
-                    }
-                },
-                flag: crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
+            return crate::dw_apb_timer::self_test(crate::dw_apb_timer::TIMER4).map_err(|error| {
+                LeaseFailure {
+                    result: match error {
+                        crate::dw_apb_timer::SelfTestError::ClockXtalMiscDisabled
+                        | crate::dw_apb_timer::SelfTestError::ClockChannelDisabled
+                        | crate::dw_apb_timer::SelfTestError::TimerResetAsserted
+                        | crate::dw_apb_timer::SelfTestError::ChannelResetAsserted
+                        | crate::dw_apb_timer::SelfTestError::WrongClockSource => {
+                            crate::contract::ACTIVATION_RESULT_PRECONDITION_FAILED
+                        }
+                        crate::dw_apb_timer::SelfTestError::InterruptRegistration => {
+                            crate::contract::ACTIVATION_RESULT_IRQ_INSTALL_FAILED
+                        }
+                        crate::dw_apb_timer::SelfTestError::Timeout => {
+                            crate::contract::ACTIVATION_RESULT_SELF_TEST_TIMEOUT
+                        }
+                        crate::dw_apb_timer::SelfTestError::InvalidContract => {
+                            ACTIVATION_RESULT_INTERNAL_FAILURE
+                        }
+                    },
+                    flag: crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
+                }
             });
         }
 

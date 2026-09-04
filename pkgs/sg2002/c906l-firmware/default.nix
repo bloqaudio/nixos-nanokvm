@@ -13,7 +13,7 @@
 let
   sourceRev = "10b86e308ca2305a464ae2bb3eb868a72295f7ab";
   enabledPeripherals = contract.enabledPeripherals;
-  timer4 = builtins.elem "timer4" enabledPeripherals;
+  haveTimerLeases = lib.any (lib.hasPrefix "timer") contract.cargoFeatures;
   firmwareAddress = contract.contract.memory.firmware.address;
   firmwareSize = contract.contract.memory.firmware.size;
   sharedMemoryAddress = contract.contract.memory.shared.address;
@@ -177,15 +177,15 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     riscv64-none-elf-nm \
       "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
       | grep -q ' T c906l_rust_main$'
-    ${if timer4 then ''
+    ${if haveTimerLeases then ''
       riscv64-none-elf-nm \
         "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
-        | grep -q ' T c906l_timer4_interrupt$'
+        | grep -q ' T c906l_timer_interrupt$'
     '' else ''
       if riscv64-none-elf-nm \
         "$debug/share/sg2002-c906l/sg2002-c906l.elf" \
-        | grep -q ' c906l_timer4_'; then
-        echo "base firmware unexpectedly contains Timer4 code" >&2
+        | grep -q ' c906l_timer_'; then
+        echo "base firmware unexpectedly contains leased timer code" >&2
         exit 1
       fi
     ''}
