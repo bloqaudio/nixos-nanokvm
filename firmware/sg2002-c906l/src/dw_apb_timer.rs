@@ -79,6 +79,10 @@ impl TimerConfig {
             && self.control_address == self.load_address + 0x08
             && self.eoi_address == self.load_address + 0x0c
             && self.reset_timer_ip.address == self.reset_channel.address
+            && self.clock_xtal_misc.address % core::mem::align_of::<u32>() == 0
+            && self.clock_channel.address % core::mem::align_of::<u32>() == 0
+            && self.reset_timer_ip.address % core::mem::align_of::<u32>() == 0
+            && self.clock_source.address % core::mem::align_of::<u32>() == 0
             && self.clock_xtal_misc.mask != 0
             && self.clock_xtal_misc.expected & !self.clock_xtal_misc.mask == 0
             && self.clock_channel.mask != 0
