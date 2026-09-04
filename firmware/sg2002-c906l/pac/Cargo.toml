@@ -1,0 +1,9 @@
+[package]
+name = "sg2002-pac"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+safe-mmio = { version = "=0.3.1", default-features = false }

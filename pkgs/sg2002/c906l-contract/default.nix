@@ -68,6 +68,9 @@ runCommand "sg2002-c906l-contract-${selected.profileName}" {
   resolvedContract = selected.canonicalJson;
 
   passthru = {
+    cargoFeatures = map
+      (name: selected.resolvedContract.peripheralLeases.${name}.cargoFeature)
+      selected.sortedPeripherals;
     contract = selected.resolvedContract;
     contractEpoch = selected.resolvedContract.contractEpoch;
     contractSha256 = selected.sha256;

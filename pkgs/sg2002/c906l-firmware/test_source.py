@@ -62,6 +62,7 @@ def main() -> None:
         "SG2002_C906L_MAILBOX_HWSPIN_TASK_ACQUIRE_ATTEMPTS",
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_ACQUIRE_ATTEMPTS",
         "SG2002_C906L_MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT",
+        "SG2002_C906L_HAVE_TIMER4",
         "mailbox_local_irq_save",
         "mailbox_lock_failures++",
         "mailbox_irq_lock_deferrals++",
@@ -72,6 +73,10 @@ def main() -> None:
     ):
         require(token in source, f"missing mailbox-lock invariant: {token}")
     require("taskENTER_CRITICAL" not in source, "scheduler-only critical section remains")
+    require(
+        "SG2002_C906L_TIMER4\n" not in source,
+        "legacy out-of-band Timer4 build define remains",
+    )
 
     protected = {
         name: function_span(source, name)

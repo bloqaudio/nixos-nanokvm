@@ -12,10 +12,6 @@
 
 let
   sourceRev = "10b86e308ca2305a464ae2bb3eb868a72295f7ab";
-  knownPeripherals = [ "timer4" ];
-  unknownPeripherals = lib.filter
-    (peripheral: !builtins.elem peripheral knownPeripherals)
-    contract.enabledPeripherals;
   enabledPeripherals = contract.enabledPeripherals;
   timer4 = builtins.elem "timer4" enabledPeripherals;
   firmwareAddress = contract.contract.memory.firmware.address;
@@ -23,10 +19,6 @@ let
   sharedMemoryAddress = contract.contract.memory.shared.address;
   sharedMemorySize = contract.contract.memory.shared.size;
 in
-assert lib.assertMsg (unknownPeripherals == [ ]) ''
-  Unknown SG2002 C906L peripheral(s):
-  ${lib.concatStringsSep ", " unknownPeripherals}
-'';
 assert lib.assertMsg
   (
     (sg2002-c906l-rust.enabledPeripherals or [ ]) == enabledPeripherals
@@ -65,7 +57,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   postPatch = ''
     substituteInPlace scripts/toolchain-riscv64-elf.cmake \
       --replace-fail 'set( CMAKE_C_FLAGS "''${CMAKE_C_FLAGS} -DLINUX_BSP_64MB" )' \
-                     'set( CMAKE_C_FLAGS "''${CMAKE_C_FLAGS} -DSG2002_C906L${lib.optionalString timer4 " -DSG2002_C906L_TIMER4"}" )'
+                     'set( CMAKE_C_FLAGS "''${CMAKE_C_FLAGS} -DSG2002_C906L" )'
     substituteInPlace build_cv181x.sh \
       --replace-fail 'cp $TOP_DIR/install/bin/cvirtos.bin ../cvirtos.bin' ':'
 

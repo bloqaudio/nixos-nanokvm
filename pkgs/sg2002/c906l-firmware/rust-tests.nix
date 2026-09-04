@@ -6,27 +6,23 @@
 }:
 
 let
-  knownPeripherals = [ "timer4" ];
-  unknownPeripherals = lib.filter
-    (peripheral: !builtins.elem peripheral knownPeripherals)
-    contract.enabledPeripherals;
-  timer4 = builtins.elem "timer4" contract.enabledPeripherals;
+  cargoFeatures = contract.cargoFeatures;
 in
-assert lib.assertMsg (unknownPeripherals == [ ]) ''
-  Unknown SG2002 C906L Rust test peripheral(s):
-  ${lib.concatStringsSep ", " unknownPeripherals}
-'';
 rustPlatform.buildRustPackage {
   pname = "sg2002-c906l-rust-tests";
   version = "0.1.0";
   src = ../../../firmware/sg2002-c906l;
-  cargoHash = "sha256-ZpK++hvy4Cxuha7pITzEgwvFOGVUmWXjguaES8azPU4=";
+  cargoHash = "sha256-69o6m4h7SPM9bPjfrJ9+bOms4pteNw/xlZwMErHT32Q=";
   nativeCheckInputs = [ rustfmt ];
   SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
-  cargoTestFlags = lib.optionals timer4 [ "--features" "timer4" ];
+  cargoTestFlags = lib.optionals (cargoFeatures != [ ]) [
+    "--features"
+    (lib.concatStringsSep "," cargoFeatures)
+  ];
 
   preCheck = ''
     cargo fmt --all --check
+    cargo test --frozen --offline --package sg2002-pac
   '';
 
   # buildRustPackage runs `cargo test`; the install output is only a Hydra
@@ -38,6 +34,7 @@ rustPlatform.buildRustPackage {
   '';
 
   passthru = {
+    inherit cargoFeatures;
     inherit (contract) contractSha256 enabledPeripherals profileName;
   };
 

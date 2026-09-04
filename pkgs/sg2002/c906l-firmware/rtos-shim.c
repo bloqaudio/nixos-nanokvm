@@ -53,7 +53,7 @@ _Static_assert(MBOX_INT_C906_2ND == SG2002_C906L_MAILBOX_C906L_IRQ,
 /* The pinned BSP implements this API but its installed header omits it. */
 extern void disable_irq(unsigned int irqn);
 
-#ifdef SG2002_C906L_TIMER4
+#ifdef SG2002_C906L_HAVE_TIMER4
 /* SoC Timer4 is the timer IP's one-based Timer5 register group. */
 #if TIMER_INTR_4 != SG2002_C906L_TIMER4_IRQ
 #error "cv181x C906L Timer4 IRQ routing changed"
@@ -82,7 +82,7 @@ static volatile uint32_t unexpected_mailbox_events;
 static uint8_t mailbox_lock_counter;
 
 extern void c906l_rust_main(void) __attribute__((noreturn));
-#ifdef SG2002_C906L_TIMER4
+#ifdef SG2002_C906L_HAVE_TIMER4
 extern int c906l_timer4_interrupt(void);
 #endif
 
@@ -260,7 +260,7 @@ static int mailbox_isr(int irqn, void *priv)
 	return lock_result;
 }
 
-#ifdef SG2002_C906L_TIMER4
+#ifdef SG2002_C906L_HAVE_TIMER4
 static int timer4_isr(int irqn, void *priv)
 {
 	(void)irqn;
