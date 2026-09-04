@@ -42,7 +42,10 @@
   # Enabling the auxiliary core must add its carveouts and transport to this
   # carrier's DT, not replace the product topology with the LicheeRV-Nano
   # bring-up tree.
-  sg2002.auxCore.fdt = lib.mkDefault pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l;
+  sg2002.auxCore.fdt = lib.mkDefault (
+    pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      (pkgs.sg2002-c906l-contract-for config.sg2002.auxCore.peripherals)
+  );
 
   # UART1 on the carrier header has never produced usable output on the
   # physical PCIe unit. Mirror kernel logs to USB ACM from the SD profile, but

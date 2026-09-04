@@ -37,6 +37,10 @@ let
   c906lRustPlatform = final.buildPackages.callPackage ./sg2002/c906l-rust-platform.nix {
     inherit riscv64Embedded;
   };
+  c906lContractFor = peripherals:
+    final.buildPackages.callPackage ./sg2002/c906l-contract {
+      inherit peripherals;
+    };
   c906lMemoryMap = import ./sg2002/c906l-memory-map.nix { inherit lib; };
 
 in
@@ -198,10 +202,7 @@ in
 
   # The C906L is a bare-metal target, so it needs the newlib/ELF toolchain,
   # not the riscv64-linux cross compiler used by the kernel and userspace.
-  sg2002-c906l-contract-for = peripherals:
-    final.buildPackages.callPackage ./sg2002/c906l-contract {
-      inherit peripherals;
-    };
+  sg2002-c906l-contract-for = c906lContractFor;
   sg2002-c906l-contract = final.sg2002-c906l-contract-for [ ];
   sg2002-c906l-contract-timer4 =
     final.sg2002-c906l-contract-for [ "timer4" ];
@@ -456,7 +457,13 @@ in
   sg2002-dtb-mainline-high-speed = dtbMainline.high-speed;
   sg2002-dtb-mainline-eth = dtbMainline.eth;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
-  sg2002-dtb-mainline-nowifi-c906l = dtbMainline.nowifi-c906l;
+  sg2002-dtb-mainline-nowifi-c906l-for = contract:
+    dtbMainline.nowifi-c906l-for contract;
+  sg2002-dtb-mainline-nowifi-c906l =
+    final.sg2002-dtb-mainline-nowifi-c906l-for final.sg2002-c906l-contract;
+  sg2002-dtb-mainline-nowifi-c906l-timer4 =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer4;
   sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
@@ -464,7 +471,14 @@ in
   sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
-  sg2002-dtb-mainline-pcie-nowifi-c906l = dtbMainline.pcie-nowifi-c906l;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-for = contract:
+    dtbMainline.pcie-nowifi-c906l-for contract;
+  sg2002-dtb-mainline-pcie-nowifi-c906l =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-timer4 =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer4;
   sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
   sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;

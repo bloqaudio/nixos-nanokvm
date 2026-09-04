@@ -7,6 +7,7 @@
 
 let
   cfg = config.sg2002.auxCore;
+  contract = pkgs.sg2002-c906l-contract-for cfg.peripherals;
   controlModule = pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel;
   remoteprocModule = pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel;
   memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix { inherit lib; };
@@ -23,8 +24,7 @@ let
     "sharedMemorySize"
   ];
   firmwareHasContract = lib.all (name: builtins.hasAttr name cfg.firmware) firmwareContractFields;
-  expectedCapabilities = 11
-    + (if builtins.elem "timer4" cfg.peripherals then 4 else 0);
+  expectedCapabilities = contract.requiredCapabilities;
   firmwareContractMatches = firmwareHasContract
     && cfg.firmware.firmwareAddress == firmwareAddress
     && cfg.firmware.firmwareSize == carveoutSize
@@ -34,15 +34,35 @@ let
     && cfg.firmware.sharedMemoryAddress == sharedMemoryAddress
     && cfg.firmware.sharedMemorySize == memoryMap.sharedMemorySize;
   fdtContractFields = [
+    "contractEpoch"
+    "contractSha256"
+    "dormantCapabilities"
+    "enabledPeripherals"
     "firmwareAddress"
     "firmwareSize"
+    "leaseMask"
+    "manifestFlags"
+    "profileId"
+    "profileName"
+    "protocolVersion"
+    "requiredCapabilities"
     "sharedMemoryAddress"
     "sharedMemorySize"
   ];
   fdtHasContract = lib.all (name: builtins.hasAttr name cfg.fdt) fdtContractFields;
   fdtContractMatches = fdtHasContract
+    && cfg.fdt.contractEpoch == contract.contractEpoch
+    && cfg.fdt.contractSha256 == contract.contractSha256
+    && cfg.fdt.dormantCapabilities == contract.dormantCapabilities
+    && cfg.fdt.enabledPeripherals == contract.enabledPeripherals
     && cfg.fdt.firmwareAddress == firmwareAddress
     && cfg.fdt.firmwareSize == carveoutSize
+    && cfg.fdt.leaseMask == contract.leaseMask
+    && cfg.fdt.manifestFlags == contract.manifestFlags
+    && cfg.fdt.profileId == contract.profileId
+    && cfg.fdt.profileName == contract.profileName
+    && cfg.fdt.protocolVersion == contract.protocolVersion
+    && cfg.fdt.requiredCapabilities == contract.requiredCapabilities
     && cfg.fdt.sharedMemoryAddress == sharedMemoryAddress
     && cfg.fdt.sharedMemorySize == memoryMap.sharedMemorySize;
 in
@@ -76,8 +96,11 @@ in
 
     fdt = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.sg2002-dtb-mainline-nowifi-c906l;
-      defaultText = lib.literalExpression "pkgs.sg2002-dtb-mainline-nowifi-c906l";
+      default = pkgs.sg2002-dtb-mainline-nowifi-c906l-for contract;
+      defaultText = lib.literalExpression ''
+        pkgs.sg2002-dtb-mainline-nowifi-c906l-for
+          (pkgs.sg2002-c906l-contract-for config.sg2002.auxCore.peripherals)
+      '';
       description = ''
         Board-composed device tree containing the C906L reservations and
         transport nodes.  Board modules with additional carrier hardware must
@@ -129,14 +152,16 @@ in
         assertion = fdtHasContract;
         message = ''
           sg2002.auxCore.fdt must expose firmwareAddress, firmwareSize,
-          sharedMemoryAddress, and sharedMemorySize passthru attributes
+          sharedMemoryAddress, sharedMemorySize, and the complete generated
+          contract identity in passthru attributes
         '';
       }
       {
         assertion = fdtContractMatches;
         message = ''
           sg2002.auxCore.fdt must reserve the exact C906L firmware and shared
-          memory ranges selected by the firmware contract
+          memory ranges and match the generated ABI, digest, profile,
+          capabilities, lease mask, and manifest flags
         '';
       }
     ];
