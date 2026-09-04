@@ -88,7 +88,12 @@ in
     enable = lib.mkEnableOption "the SG2002 C906L real-time auxiliary core";
 
     peripherals = lib.mkOption {
-      type = lib.types.listOf (lib.types.enum [ "timer4" ]);
+      type = lib.types.listOf (lib.types.enum [
+        "timer4"
+        "timer5"
+        "timer6"
+        "timer7"
+      ]);
       default = [ ];
       example = [ "timer4" ];
       description = ''

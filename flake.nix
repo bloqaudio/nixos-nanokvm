@@ -590,27 +590,57 @@
             nbd-client-minimal
             sg2002-c906l-contract
             sg2002-c906l-contract-timer4
+            sg2002-c906l-contract-timer5
+            sg2002-c906l-contract-timer6
+            sg2002-c906l-contract-timer7
             sg2002-dtb-mainline-nowifi-c906l
             sg2002-dtb-mainline-nowifi-c906l-timer4
+            sg2002-dtb-mainline-nowifi-c906l-timer5
+            sg2002-dtb-mainline-nowifi-c906l-timer6
+            sg2002-dtb-mainline-nowifi-c906l-timer7
             sg2002-dtb-mainline-pcie-nowifi-c906l
             sg2002-dtb-mainline-pcie-nowifi-c906l-timer4
+            sg2002-dtb-mainline-pcie-nowifi-c906l-timer5
+            sg2002-dtb-mainline-pcie-nowifi-c906l-timer6
+            sg2002-dtb-mainline-pcie-nowifi-c906l-timer7
             sg2002-fiptool
             sg2002-fip-mainline-fastboot
             sg2002-fip-mainline-fastboot-c906l
             sg2002-fip-mainline-uboot-c906l
             sg2002-fip-mainline-fastboot-c906l-timer4
             sg2002-fip-mainline-uboot-c906l-timer4
+            sg2002-fip-mainline-fastboot-c906l-timer5
+            sg2002-fip-mainline-uboot-c906l-timer5
+            sg2002-fip-mainline-fastboot-c906l-timer6
+            sg2002-fip-mainline-uboot-c906l-timer6
+            sg2002-fip-mainline-fastboot-c906l-timer7
+            sg2002-fip-mainline-uboot-c906l-timer7
             sg2002-fip-mainline-picoclaw-splash
             sg2002-c906l-firmware
             sg2002-c906l-firmware-timer4
+            sg2002-c906l-firmware-timer5
+            sg2002-c906l-firmware-timer6
+            sg2002-c906l-firmware-timer7
             sg2002-c906l-control
             sg2002-c906l-control-timer4
+            sg2002-c906l-control-timer5
+            sg2002-c906l-control-timer6
+            sg2002-c906l-control-timer7
             sg2002-c906l-remoteproc
             sg2002-c906l-remoteproc-timer4
+            sg2002-c906l-remoteproc-timer5
+            sg2002-c906l-remoteproc-timer6
+            sg2002-c906l-remoteproc-timer7
             sg2002-c906l-ctl
             sg2002-c906l-ctl-timer4
+            sg2002-c906l-ctl-timer5
+            sg2002-c906l-ctl-timer6
+            sg2002-c906l-ctl-timer7
             sg2002-c906l-rust
             sg2002-c906l-rust-timer4
+            sg2002-c906l-rust-timer5
+            sg2002-c906l-rust-timer6
+            sg2002-c906l-rust-timer7
             sg2002-alsa-kernel-test
             sg2002-h264-bridge
             sg2002-h264-bridge-pcma
@@ -618,6 +648,9 @@
             sg2002-usb-boot
             sg2002-usb-boot-c906l
             sg2002-usb-boot-c906l-timer4
+            sg2002-usb-boot-c906l-timer5
+            sg2002-usb-boot-c906l-timer6
+            sg2002-usb-boot-c906l-timer7
             sg2002-usb-boot-picoclaw-splash
             sg2002-uboot-mainline-c906l
             sg2002-uboot-mainline-fastboot
@@ -648,31 +681,70 @@
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
           sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;
+          sg2002-c906l-contract-timer5 = pkgs.sg2002-c906l-contract-timer5;
+          sg2002-c906l-contract-timer6 = pkgs.sg2002-c906l-contract-timer6;
+          sg2002-c906l-contract-timer7 = pkgs.sg2002-c906l-contract-timer7;
           sg2002-c906l-contract-generator =
             pkgs.sg2002-c906l-contract.tests.generator;
           sg2002-c906l-rust = pkgs.sg2002-c906l-rust-tests;
           sg2002-c906l-rust-timer4 = pkgs.sg2002-c906l-rust-tests-timer4;
+          sg2002-c906l-rust-timer5 = pkgs.sg2002-c906l-rust-tests-timer5;
+          sg2002-c906l-rust-timer6 = pkgs.sg2002-c906l-rust-tests-timer6;
+          sg2002-c906l-rust-timer7 = pkgs.sg2002-c906l-rust-tests-timer7;
           sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
           sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
+          sg2002-c906l-firmware-timer5 = pkgs.sg2002-c906l-firmware-timer5;
+          sg2002-c906l-firmware-timer6 = pkgs.sg2002-c906l-firmware-timer6;
+          sg2002-c906l-firmware-timer7 = pkgs.sg2002-c906l-firmware-timer7;
           sg2002-c906l-control = pkgs.sg2002-c906l-control;
           sg2002-c906l-control-timer4 = pkgs.sg2002-c906l-control-timer4;
+          sg2002-c906l-control-timer5 = pkgs.sg2002-c906l-control-timer5;
+          sg2002-c906l-control-timer6 = pkgs.sg2002-c906l-control-timer6;
+          sg2002-c906l-control-timer7 = pkgs.sg2002-c906l-control-timer7;
           sg2002-c906l-remoteproc = pkgs.sg2002-c906l-remoteproc;
           sg2002-c906l-remoteproc-timer4 = pkgs.sg2002-c906l-remoteproc-timer4;
+          sg2002-c906l-remoteproc-timer5 = pkgs.sg2002-c906l-remoteproc-timer5;
+          sg2002-c906l-remoteproc-timer6 = pkgs.sg2002-c906l-remoteproc-timer6;
+          sg2002-c906l-remoteproc-timer7 = pkgs.sg2002-c906l-remoteproc-timer7;
           sg2002-c906l-ctl = pkgs.sg2002-c906l-ctl;
           sg2002-c906l-ctl-timer4 = pkgs.sg2002-c906l-ctl-timer4;
+          sg2002-c906l-ctl-timer5 = pkgs.sg2002-c906l-ctl-timer5;
+          sg2002-c906l-ctl-timer6 = pkgs.sg2002-c906l-ctl-timer6;
+          sg2002-c906l-ctl-timer7 = pkgs.sg2002-c906l-ctl-timer7;
           sg2002-c906l-fip-disabled = pkgs.sg2002-fip-mainline-fastboot;
           sg2002-c906l-fip = pkgs.sg2002-fip-mainline-fastboot-c906l;
           sg2002-c906l-fip-timer4 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer4;
+          sg2002-c906l-fip-timer5 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer5;
+          sg2002-c906l-fip-timer6 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer6;
+          sg2002-c906l-fip-timer7 = pkgs.sg2002-fip-mainline-fastboot-c906l-timer7;
           sg2002-c906l-uboot = pkgs.sg2002-uboot-mainline-fastboot-c906l;
           sg2002-c906l-runner = pkgs.sg2002-usb-boot-c906l.tests.runner;
           sg2002-c906l-runner-timer4 =
             pkgs.sg2002-usb-boot-c906l-timer4.tests.runner;
+          sg2002-c906l-runner-timer5 =
+            pkgs.sg2002-usb-boot-c906l-timer5.tests.runner;
+          sg2002-c906l-runner-timer6 =
+            pkgs.sg2002-usb-boot-c906l-timer6.tests.runner;
+          sg2002-c906l-runner-timer7 =
+            pkgs.sg2002-usb-boot-c906l-timer7.tests.runner;
           sg2002-c906l-dtb = pkgs.sg2002-dtb-mainline-nowifi-c906l;
           sg2002-c906l-dtb-timer4 =
             pkgs.sg2002-dtb-mainline-nowifi-c906l-timer4;
+          sg2002-c906l-dtb-timer5 =
+            pkgs.sg2002-dtb-mainline-nowifi-c906l-timer5;
+          sg2002-c906l-dtb-timer6 =
+            pkgs.sg2002-dtb-mainline-nowifi-c906l-timer6;
+          sg2002-c906l-dtb-timer7 =
+            pkgs.sg2002-dtb-mainline-nowifi-c906l-timer7;
           sg2002-c906l-pcie-dtb = pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l;
           sg2002-c906l-pcie-dtb-timer4 =
             pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l-timer4;
+          sg2002-c906l-pcie-dtb-timer5 =
+            pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l-timer5;
+          sg2002-c906l-pcie-dtb-timer6 =
+            pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l-timer6;
+          sg2002-c906l-pcie-dtb-timer7 =
+            pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l-timer7;
         });
 
       # `apps.<system>` is reserved for flat `nix run` shortcuts. The

@@ -11,6 +11,9 @@ crate-type = ["staticlib"]
 [features]
 default = []
 timer4 = ["sg2002-c906l-firmware/timer4"]
+timer5 = ["sg2002-c906l-firmware/timer5"]
+timer6 = ["sg2002-c906l-firmware/timer6"]
+timer7 = ["sg2002-c906l-firmware/timer7"]
 
 [dependencies]
 sg2002-c906l-firmware = { path = ".." }

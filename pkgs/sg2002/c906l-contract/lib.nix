@@ -86,6 +86,141 @@ let
       (uppercase ++ [ "-" ])
       ((map (character: "_${character}") uppercase) ++ [ "_" ])
       value);
+
+  # These are the four DW APB timer slices routed to C906L on SG2002.  Keep
+  # the SoC-specific topology here instead of accepting arbitrary addresses
+  # that merely happen to fit inside the timer bank.
+  sg2002TimerDescriptors = {
+    timer4 = {
+      channel = 4;
+      irq = 55;
+      leaseBit = 0;
+      capabilityBit = 2;
+      failureFlagBit = 2;
+      gateMask = parseHex "0x00002000";
+      resetMask = parseHex "0x00040000";
+      sourceMask = parseHex "0x00000010";
+    };
+    timer5 = {
+      channel = 5;
+      irq = 56;
+      leaseBit = 1;
+      capabilityBit = 4;
+      failureFlagBit = 8;
+      gateMask = parseHex "0x00004000";
+      resetMask = parseHex "0x00080000";
+      sourceMask = parseHex "0x00000020";
+    };
+    timer6 = {
+      channel = 6;
+      irq = 57;
+      leaseBit = 2;
+      capabilityBit = 5;
+      failureFlagBit = 9;
+      gateMask = parseHex "0x00008000";
+      resetMask = parseHex "0x00100000";
+      sourceMask = parseHex "0x00000040";
+    };
+    timer7 = {
+      channel = 7;
+      irq = 58;
+      leaseBit = 3;
+      capabilityBit = 6;
+      failureFlagBit = 10;
+      gateMask = parseHex "0x00010000";
+      resetMask = parseHex "0x00200000";
+      sourceMask = parseHex "0x00000080";
+    };
+  };
+
+  mkExpectedSg2002Timer = peripheralName: descriptor:
+    let
+      channelName = toString descriptor.channel;
+      channelAddress = parseHex "0x030a0000" + descriptor.channel * 20;
+    in
+    {
+      kind = "dw-apb-timer-channel";
+      inherit (descriptor) leaseBit irq;
+      cargoFeature = peripheralName;
+      capability = "${peripheralName}SelfTest";
+      failureFlag = "${peripheralName}SelfTestFailed";
+      bank = {
+        address = parseHex "0x030a0000";
+        size = parseHex "0x00010000";
+        ownership = "shared-bank-exclusive-channel";
+        channel = descriptor.channel;
+      };
+      registers = {
+        load = {
+          address = channelAddress;
+          access = "read-write";
+        };
+        current = {
+          address = channelAddress + 4;
+          access = "read-only";
+        };
+        control = {
+          address = channelAddress + 8;
+          access = "read-write";
+        };
+        eoi = {
+          address = channelAddress + 12;
+          access = "read-clear";
+        };
+        status = {
+          address = channelAddress + 16;
+          access = "read-only";
+        };
+      };
+      sharedPreconditions = {
+        clockXtalMisc = {
+          address = parseHex "0x03002000";
+          mask = parseHex "0x00004000";
+          expected = parseHex "0x00004000";
+          access = "read-only";
+        };
+        resetTimerIp = {
+          address = parseHex "0x03003008";
+          mask = parseHex "0x00002000";
+          expected = parseHex "0x00002000";
+          access = "read-only";
+        };
+        clockSource = {
+          address = parseHex "0x030001a0";
+          mask = descriptor.sourceMask;
+          expected = 0;
+          access = "read-only";
+        };
+      } // {
+        "clockTimer${channelName}" = {
+          address = parseHex "0x0300200c";
+          mask = descriptor.gateMask;
+          expected = descriptor.gateMask;
+          access = "read-only";
+        };
+        "resetTimer${channelName}" = {
+          address = parseHex "0x03003008";
+          mask = descriptor.resetMask;
+          expected = descriptor.resetMask;
+          access = "read-only";
+        };
+      };
+      selfTest = {
+        clockHz = 25000000;
+        periodTicks = 2500000;
+        timeoutRtosTicks = 100;
+        rtosTickHz = 200;
+      };
+      linuxLease = {
+        policy = "static-exclusive-subresource";
+        mustNotClaimIrq = descriptor.irq;
+        mustNotAccessChannel = descriptor.channel;
+        sharedGlobalRegisters = "read-only";
+      };
+    };
+
+  expectedSg2002Timers = lib.mapAttrs mkExpectedSg2002Timer
+    sg2002TimerDescriptors;
   validateNames = groupName: entries:
     let
       entryNames = names entries;
@@ -268,6 +403,12 @@ let
       bankEnd = bankStart + peripheral.bank.size;
     in
     builtins.deepSeq [
+      (require (builtins.hasAttr peripheralName expectedSg2002Timers)
+        "`${peripheralName}` is not a C906L-routed SG2002 timer channel")
+      (require
+        (builtins.hasAttr peripheralName expectedSg2002Timers
+          && peripheral == expectedSg2002Timers.${peripheralName})
+        "peripheral `${peripheralName}` does not match the exact SG2002 timer topology")
       (require (builtins.hasAttr peripheral.failureFlag contract.abi.flags)
         "peripheral `${peripheralName}` names an unknown failure flag")
       (require (validSlug peripheral.cargoFeature)
@@ -320,7 +461,56 @@ let
     ]
       true;
 
+  validateTimerAbiAssignment = peripheralName: descriptor:
+    let
+      capabilityName = "${peripheralName}SelfTest";
+      failureFlagName = "${peripheralName}SelfTestFailed";
+    in
+    builtins.deepSeq [
+      (require
+        (builtins.hasAttr capabilityName contract.abi.capabilities
+          && contract.abi.capabilities.${capabilityName}.bit
+          == descriptor.capabilityBit)
+        "`${capabilityName}` does not use its assigned ABI capability bit")
+      (require
+        (builtins.hasAttr failureFlagName contract.abi.flags
+          && contract.abi.flags.${failureFlagName}.bit
+          == descriptor.failureFlagBit)
+        "`${failureFlagName}` does not use its assigned ABI status-flag bit")
+    ]
+      true;
+
   baseCapabilities = contract.profiles.base.capabilities;
+  peripheralValues = values contract.peripherals;
+  peripheralCargoFeatures = map (peripheral: peripheral.cargoFeature)
+    peripheralValues;
+  peripheralCapabilities = map (peripheral: peripheral.capability)
+    peripheralValues;
+  peripheralFailureFlags = map (peripheral: peripheral.failureFlag)
+    peripheralValues;
+  peripheralIrqs = map (peripheral: peripheral.irq) peripheralValues;
+  peripheralChannels = map (peripheral: peripheral.bank.channel)
+    peripheralValues;
+  peripheralRegisterAddresses = lib.concatMap
+    (peripheral: map (register: register.address)
+      (values peripheral.registers))
+    peripheralValues;
+  orderedPeripheralRanges = lib.sort
+    (left: right: left.start < right.start)
+    (map
+      (peripheral: {
+        start = peripheral.registers.load.address;
+        end = peripheral.registers.status.address + 4;
+      })
+      peripheralValues);
+  peripheralRangePartition = lib.foldl'
+    (state: range:
+      builtins.deepSeq
+        (require (range.start >= state.next)
+          "C906L timer channel register slices overlap")
+        { next = range.end; })
+    { next = 0; }
+    orderedPeripheralRanges;
 
   validateProfile = profileName: profile:
     let
@@ -424,6 +614,22 @@ let
       (allUnique
         (map (peripheral: peripheral.leaseBit) (values contract.peripherals)))
       "peripheral lease bits are not unique")
+    (require (names contract.peripherals == names expectedSg2002Timers)
+      "the SG2002 C906L timer topology must contain exactly Timer4 through Timer7")
+    (require (allUnique peripheralCargoFeatures)
+      "peripheral Cargo features are not unique")
+    (require (allUnique peripheralCapabilities)
+      "peripheral capabilities are not unique")
+    (require (allUnique peripheralFailureFlags)
+      "peripheral failure flags are not unique")
+    (require (allUnique peripheralIrqs)
+      "peripheral C906L IRQs are not unique")
+    (require (allUnique peripheralChannels)
+      "peripheral timer bank channels are not unique")
+    (require (allUnique peripheralRegisterAddresses)
+      "peripheral timer registers overlap")
+    (require (peripheralRangePartition.next > 0)
+      "the SG2002 C906L timer register range set is empty")
     (require
       (builtins.hasAttr "base" contract.profiles
         && contract.profiles.base.peripherals == [ ])
@@ -572,6 +778,7 @@ let
     (require (sharedEnd <= pow2 32)
       "RPMsg device addresses exceed the 32-bit resource-table ABI")
   ]
+  ++ lib.mapAttrsToList validateTimerAbiAssignment sg2002TimerDescriptors
   ++ lib.mapAttrsToList validatePeripheral contract.peripherals
   ++ lib.mapAttrsToList validateProfile contract.profiles;
 

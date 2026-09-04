@@ -2,7 +2,10 @@
 #include "sg2002-c906l-contract.h"
 
 _Static_assert(SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x0b)
-	       || SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x0f),
+	       || SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x0f)
+	       || SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x1b)
+	       || SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x2b)
+	       || SG2002_C906L_EXPECTED_CAPABILITIES == UINT64_C(0x4b),
 	       "unexpected profile capability mask");
 _Static_assert(SG2002_C906L_STATUS_SIZE == 64U, "status ABI changed");
 _Static_assert(SG2002_C906L_CAPABILITY_WIRE_WIDTH == 64U,

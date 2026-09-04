@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -44,6 +45,10 @@ class ContractGenerationTests(unittest.TestCase):
             cls.timer4,
             cls.timer4_semantic,
         ) = cls.profiles["timer4"]
+        cls.timer_profiles = {
+            name: cls.profiles[name]
+            for name in ("timer4", "timer5", "timer6", "timer7")
+        }
 
     def generate(self, contract: Path, digest: str, output: Path) -> None:
         self.generator.generate(contract, digest, output)
@@ -55,6 +60,39 @@ class ContractGenerationTests(unittest.TestCase):
             for path in sorted(root.rglob("*"))
             if path.is_file()
         }
+
+    def load_modified(self, contract: dict, root: Path) -> None:
+        path = root / "modified.json"
+        encoded = self.generator.canonical_json(contract)
+        path.write_bytes(encoded)
+        digest = hashlib.sha256(
+            self.generator.canonical_json(self.generator.strip_documentation(contract))
+        ).hexdigest()
+        self.generator.load_resolved(path, digest)
+
+    def combined_timer4_timer5(self) -> dict:
+        contract = copy.deepcopy(self.timer4)
+        contract["profile"] = {
+            "name": "custom-timer4-timer5",
+            "peripherals": ["timer4", "timer5"],
+            "capabilities": [
+                "mailbox",
+                "rpmsg",
+                "shmemHeartbeat",
+                "timer4SelfTest",
+                "timer5SelfTest",
+            ],
+            "activationRequired": True,
+            "dormantCapabilities": 0x0B,
+            "expectedCapabilities": 0x1F,
+            "leaseMask": 3,
+            "manifestFlags": 3,
+            "profileId": 4,
+        }
+        contract["peripheralLeases"]["timer5"] = copy.deepcopy(
+            self.profiles["timer5"][2]["peripheralLeases"]["timer5"]
+        )
+        return contract
 
     def test_profiles_have_exact_current_capabilities(self) -> None:
         self.assertEqual(self.base["profile"]["name"], "base")
@@ -72,6 +110,25 @@ class ContractGenerationTests(unittest.TestCase):
         self.assertTrue(self.timer4["profile"]["activationRequired"])
         self.assertEqual(self.timer4["profile"]["peripherals"], ["timer4"])
         self.assertNotEqual(self.base_sha256, self.timer4_sha256)
+        expected = {
+            "timer4": (0x0F, 1, 2),
+            "timer5": (0x1B, 2, 3),
+            "timer6": (0x2B, 4, 5),
+            "timer7": (0x4B, 8, 9),
+        }
+        for name, (_path, digest, contract, _semantic) in self.timer_profiles.items():
+            with self.subTest(profile=name):
+                capabilities, lease_mask, profile_id = expected[name]
+                self.assertEqual(contract["profile"]["name"], name)
+                self.assertEqual(
+                    contract["profile"]["expectedCapabilities"], capabilities
+                )
+                self.assertEqual(contract["profile"]["dormantCapabilities"], 0x0B)
+                self.assertEqual(contract["profile"]["leaseMask"], lease_mask)
+                self.assertEqual(contract["profile"]["profileId"], profile_id)
+                self.assertTrue(contract["profile"]["activationRequired"])
+                self.assertEqual(contract["profile"]["peripherals"], [name])
+                self.assertNotEqual(self.base_sha256, digest)
 
     def test_digest_is_over_semantic_canonical_json(self) -> None:
         for name, (_path, digest, _contract, semantic) in self.profiles.items():
@@ -89,7 +146,9 @@ class ContractGenerationTests(unittest.TestCase):
     def test_shared_memory_is_exactly_partitioned(self) -> None:
         shared = self.base["memory"]["shared"]
         cursor = 0
-        for region in sorted(shared["regions"].values(), key=lambda item: item["offset"]):
+        for region in sorted(
+            shared["regions"].values(), key=lambda item: item["offset"]
+        ):
             self.assertEqual(region["offset"], cursor)
             self.assertEqual(region["offset"] % 4096, 0)
             self.assertEqual(region["size"] % 4096, 0)
@@ -220,7 +279,10 @@ class ContractGenerationTests(unittest.TestCase):
                 self.base_path.read_bytes(),
             )
             header = generated["include/sg2002-c906l-contract.h"].decode()
-            self.assertIn("SG2002_C906L_EXPECTED_CAPABILITIES UINT64_C(0x000000000000000b)", header)
+            self.assertIn(
+                "SG2002_C906L_EXPECTED_CAPABILITIES UINT64_C(0x000000000000000b)",
+                header,
+            )
             self.assertIn("SG2002_C906L_RPMSG_PAYLOAD_BYTES 496U", header)
             self.assertNotIn("SG2002_C906L_HAVE_TIMER4", header)
             self.assertIn("SG2002_C906L_STATUS_SIZE 64U", header)
@@ -232,13 +294,11 @@ class ContractGenerationTests(unittest.TestCase):
                 header,
             )
             self.assertIn(
-                "SG2002_C906L_MAILBOX_HWSPIN_ADDRESS "
-                "UINT64_C(0x00000000019000d0)",
+                "SG2002_C906L_MAILBOX_HWSPIN_ADDRESS " "UINT64_C(0x00000000019000d0)",
                 header,
             )
             self.assertIn(
-                "SG2002_C906L_MAILBOX_HWSPIN_C906L_TOKEN_MASK "
-                "UINT32_C(0x0000ff00)",
+                "SG2002_C906L_MAILBOX_HWSPIN_C906L_TOKEN_MASK " "UINT32_C(0x0000ff00)",
                 header,
             )
             self.assertIn("SG2002_C906L_CONTRACT_EPOCH 2U", header)
@@ -269,9 +329,7 @@ class ContractGenerationTests(unittest.TestCase):
                 "pub const MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT: u32 = 16;",
                 rust,
             )
-            self.assertIn(
-                "pub const MAILBOX_HWSPIN_ADDRESS: usize = 0x019000d0;", rust
-            )
+            self.assertIn("pub const MAILBOX_HWSPIN_ADDRESS: usize = 0x019000d0;", rust)
             self.assertIn(
                 "pub const MAILBOX_HWSPIN_C906L_TOKEN_MASK: u16 = 0xff00;", rust
             )
@@ -286,9 +344,7 @@ class ContractGenerationTests(unittest.TestCase):
             python = generated["python/sg2002_c906l_contract.py"].decode()
             compile(python, "sg2002_c906l_contract.py", "exec")
             self.assertIn("CAPABILITY_WIRE_WIDTH = 64", python)
-            self.assertIn(
-                "MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT = 16", python
-            )
+            self.assertIn("MAILBOX_HWSPIN_IRQ_CONSECUTIVE_DEFERRAL_LIMIT = 16", python)
             self.assertIn("MAILBOX_HWSPIN_FIELD = 4", python)
             self.assertIn("MAILBOX_PROCESSOR_COUNT = 4", python)
             self.assertIn("MAILBOX_CHANNEL_MASK = 0x07", python)
@@ -320,6 +376,139 @@ class ContractGenerationTests(unittest.TestCase):
             self.generate(self.timer4_path, self.timer4_sha256, output)
             header = (output / "include/sg2002-c906l-contract.h").read_text()
             self.assertIn("SG2002_C906L_HAVE_TIMER4 1", header)
+
+    def test_all_c906l_timer_bindings_are_exact(self) -> None:
+        expected = {
+            "timer4": (
+                55,
+                0x030A0050,
+                0x030A0054,
+                0x030A0058,
+                0x030A005C,
+                0x030A0060,
+                0x2000,
+                0x040000,
+                0x10,
+            ),
+            "timer5": (
+                56,
+                0x030A0064,
+                0x030A0068,
+                0x030A006C,
+                0x030A0070,
+                0x030A0074,
+                0x4000,
+                0x080000,
+                0x20,
+            ),
+            "timer6": (
+                57,
+                0x030A0078,
+                0x030A007C,
+                0x030A0080,
+                0x030A0084,
+                0x030A0088,
+                0x8000,
+                0x100000,
+                0x40,
+            ),
+            "timer7": (
+                58,
+                0x030A008C,
+                0x030A0090,
+                0x030A0094,
+                0x030A0098,
+                0x030A009C,
+                0x10000,
+                0x200000,
+                0x80,
+            ),
+        }
+        for name, values in expected.items():
+            irq, load, current, control, eoi, status, gate, reset, source = values
+            path, digest, _contract, _semantic = self.timer_profiles[name]
+            stem = name.upper()
+            with self.subTest(profile=name), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "out"
+                self.generate(path, digest, output)
+                header = (output / "include/sg2002-c906l-contract.h").read_text()
+                rust = (output / "rust/generated_contract.rs").read_text()
+                python = (output / "python/sg2002_c906l_contract.py").read_text()
+                dts = (output / "dts/sg2002-c906l-contract.dtsi").read_text()
+                self.assertIn(f"SG2002_C906L_HAVE_{stem} 1", header)
+                self.assertIn(f"SG2002_C906L_{stem}_IRQ {irq}U", header)
+                for register, address in (
+                    ("LOAD", load),
+                    ("CURRENT", current),
+                    ("CONTROL", control),
+                    ("EOI", eoi),
+                    ("STATUS", status),
+                ):
+                    self.assertIn(
+                        f"SG2002_C906L_{stem}_{register}_ADDRESS "
+                        f"UINT64_C(0x{address:016x})",
+                        header,
+                    )
+                    self.assertIn(
+                        f"pub const {stem}_{register}_ADDRESS: usize = "
+                        f"0x{address:08x};",
+                        rust,
+                    )
+                    self.assertIn(
+                        f"{stem}_{register}_ADDRESS = 0x{address:08x}", python
+                    )
+                channel = name.removeprefix("timer")
+                for precondition, mask in (
+                    (f"CLOCK_TIMER{channel}", gate),
+                    (f"RESET_TIMER{channel}", reset),
+                    ("CLOCK_SOURCE", source),
+                ):
+                    self.assertIn(
+                        f"SG2002_C906L_{stem}_PRECONDITION_{precondition}_MASK "
+                        f"UINT32_C(0x{mask:08x})",
+                        header,
+                    )
+                    self.assertIn(
+                        f"pub const {stem}_PRECONDITION_{precondition}_MASK: u32 = "
+                        f"0x{mask:08x};",
+                        rust,
+                    )
+                    self.assertIn(
+                        f"{stem}_PRECONDITION_{precondition}_MASK = 0x{mask:08x}",
+                        python,
+                    )
+                self.assertNotIn("030a00a4", header.lower())
+                self.assertNotIn("030a00a4", rust.lower())
+                self.assertNotIn("030a00a4", python.lower())
+                self.assertIn(f"HAVE_{stem} = True", python)
+                self.assertIn(f'"{name}"', dts)
+
+    def test_wrong_sg2002_timer_mapping_is_rejected(self) -> None:
+        contract = copy.deepcopy(self.profiles["timer5"][2])
+        contract["peripheralLeases"]["timer5"]["registers"]["load"]["address"] += 2
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            ValueError, "exact SG2002 C906L timer topology"
+        ):
+            self.load_modified(contract, Path(temporary))
+
+    def test_duplicate_timer_irq_is_rejected(self) -> None:
+        contract = self.combined_timer4_timer5()
+        contract["peripheralLeases"]["timer5"]["irq"] = 55
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            ValueError, "C906L IRQs are not unique"
+        ):
+            self.load_modified(contract, Path(temporary))
+
+    def test_overlapping_timer_slice_is_rejected(self) -> None:
+        contract = self.combined_timer4_timer5()
+        timer4_registers = contract["peripheralLeases"]["timer4"]["registers"]
+        contract["peripheralLeases"]["timer5"]["registers"] = copy.deepcopy(
+            timer4_registers
+        )
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            ValueError, "timer registers are not unique"
+        ):
+            self.load_modified(contract, Path(temporary))
 
     def test_wrong_digest_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "contract digest mismatch"):

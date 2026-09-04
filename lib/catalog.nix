@@ -258,6 +258,36 @@ in
       })
     ];
   })
+  (live "mainline" "usb-c906l-timer5" "live-mainline-c906l-timer5" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer5" ];
+        };
+      })
+    ];
+  })
+  (live "mainline" "usb-c906l-timer6" "live-mainline-c906l-timer6" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer6" ];
+        };
+      })
+    ];
+  })
+  (live "mainline" "usb-c906l-timer7" "live-mainline-c906l-timer7" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer7" ];
+        };
+      })
+    ];
+  })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
   # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder
@@ -414,6 +444,60 @@ in
         sg2002.auxCore = {
           enable = true;
           peripherals = [ "timer4" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer5" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer5";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer5" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer6" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer6";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer6" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer7" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer7";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer7" ];
         };
         sg2002.wifi.enable = false;
         services.nanokvm = {

@@ -51,13 +51,192 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
+SG2002_TIMER_DESCRIPTORS = {
+    "timer4": {
+        "channel": 4,
+        "irq": 55,
+        "leaseBit": 0,
+        "capabilityBit": 2,
+        "failureFlagBit": 2,
+        "gateMask": 0x00002000,
+        "resetMask": 0x00040000,
+        "sourceMask": 0x00000010,
+    },
+    "timer5": {
+        "channel": 5,
+        "irq": 56,
+        "leaseBit": 1,
+        "capabilityBit": 4,
+        "failureFlagBit": 8,
+        "gateMask": 0x00004000,
+        "resetMask": 0x00080000,
+        "sourceMask": 0x00000020,
+    },
+    "timer6": {
+        "channel": 6,
+        "irq": 57,
+        "leaseBit": 2,
+        "capabilityBit": 5,
+        "failureFlagBit": 9,
+        "gateMask": 0x00008000,
+        "resetMask": 0x00100000,
+        "sourceMask": 0x00000040,
+    },
+    "timer7": {
+        "channel": 7,
+        "irq": 58,
+        "leaseBit": 3,
+        "capabilityBit": 6,
+        "failureFlagBit": 10,
+        "gateMask": 0x00010000,
+        "resetMask": 0x00200000,
+        "sourceMask": 0x00000080,
+    },
+}
+
+
+def expected_sg2002_timer(name: str, descriptor: dict[str, int]) -> dict[str, Any]:
+    channel = descriptor["channel"]
+    channel_address = 0x030A0000 + channel * 0x14
+    return {
+        "kind": "dw-apb-timer-channel",
+        "leaseBit": descriptor["leaseBit"],
+        "cargoFeature": name,
+        "capability": f"{name}SelfTest",
+        "failureFlag": f"{name}SelfTestFailed",
+        "irq": descriptor["irq"],
+        "bank": {
+            "address": 0x030A0000,
+            "size": 0x00010000,
+            "ownership": "shared-bank-exclusive-channel",
+            "channel": channel,
+        },
+        "registers": {
+            "load": {"address": channel_address, "access": "read-write"},
+            "current": {"address": channel_address + 4, "access": "read-only"},
+            "control": {"address": channel_address + 8, "access": "read-write"},
+            "eoi": {"address": channel_address + 12, "access": "read-clear"},
+            "status": {"address": channel_address + 16, "access": "read-only"},
+        },
+        "sharedPreconditions": {
+            "clockXtalMisc": {
+                "address": 0x03002000,
+                "mask": 0x00004000,
+                "expected": 0x00004000,
+                "access": "read-only",
+            },
+            f"clockTimer{channel}": {
+                "address": 0x0300200C,
+                "mask": descriptor["gateMask"],
+                "expected": descriptor["gateMask"],
+                "access": "read-only",
+            },
+            "resetTimerIp": {
+                "address": 0x03003008,
+                "mask": 0x00002000,
+                "expected": 0x00002000,
+                "access": "read-only",
+            },
+            f"resetTimer{channel}": {
+                "address": 0x03003008,
+                "mask": descriptor["resetMask"],
+                "expected": descriptor["resetMask"],
+                "access": "read-only",
+            },
+            "clockSource": {
+                "address": 0x030001A0,
+                "mask": descriptor["sourceMask"],
+                "expected": 0,
+                "access": "read-only",
+            },
+        },
+        "selfTest": {
+            "clockHz": 25000000,
+            "periodTicks": 2500000,
+            "timeoutRtosTicks": 100,
+            "rtosTickHz": 200,
+        },
+        "linuxLease": {
+            "policy": "static-exclusive-subresource",
+            "mustNotClaimIrq": descriptor["irq"],
+            "mustNotAccessChannel": channel,
+            "sharedGlobalRegisters": "read-only",
+        },
+    }
+
+
+def validate_sg2002_timers(contract: dict[str, Any]) -> None:
+    leases = contract["peripheralLeases"]
+    capabilities = contract["abi"]["capabilities"]
+    flags = contract["abi"]["flags"]
+
+    require(
+        all(name in SG2002_TIMER_DESCRIPTORS for name in leases),
+        "resolved contract contains an unsupported peripheral",
+    )
+
+    for name, descriptor in SG2002_TIMER_DESCRIPTORS.items():
+        capability = f"{name}SelfTest"
+        failure_flag = f"{name}SelfTestFailed"
+        require(
+            capabilities.get(capability, {}).get("bit") == descriptor["capabilityBit"],
+            f"{capability} does not use its assigned ABI capability bit",
+        )
+        require(
+            flags.get(failure_flag, {}).get("bit") == descriptor["failureFlagBit"],
+            f"{failure_flag} does not use its assigned ABI status-flag bit",
+        )
+
+    unique_groups = {
+        "lease bits": [timer["leaseBit"] for timer in leases.values()],
+        "Cargo features": [timer["cargoFeature"] for timer in leases.values()],
+        "capabilities": [timer["capability"] for timer in leases.values()],
+        "failure flags": [timer["failureFlag"] for timer in leases.values()],
+        "C906L IRQs": [timer["irq"] for timer in leases.values()],
+        "timer channels": [timer["bank"]["channel"] for timer in leases.values()],
+        "timer registers": [
+            register["address"]
+            for timer in leases.values()
+            for register in timer["registers"].values()
+        ],
+    }
+    for group_name, values in unique_groups.items():
+        require(
+            len(values) == len(set(values)),
+            f"selected peripheral {group_name} are not unique",
+        )
+
+    ranges = sorted(
+        (
+            timer["registers"]["load"]["address"],
+            timer["registers"]["status"]["address"] + 4,
+        )
+        for timer in leases.values()
+    )
+    require(
+        all(left[1] <= right[0] for left, right in zip(ranges, ranges[1:])),
+        "selected peripheral timer channel slices overlap",
+    )
+
+    for name, timer in leases.items():
+        require(
+            timer == expected_sg2002_timer(name, SG2002_TIMER_DESCRIPTORS[name]),
+            f"{name} does not match the exact SG2002 C906L timer topology",
+        )
+
+
 def load_resolved(path: Path, expected_sha256: str) -> tuple[dict[str, Any], bytes]:
     source = path.read_bytes()
     contract = json.loads(source)
     require(isinstance(contract, dict), "resolved contract must be a JSON object")
-    require(source == canonical_json(contract), "resolved contract JSON is not canonical")
+    require(
+        source == canonical_json(contract), "resolved contract JSON is not canonical"
+    )
     require(contract.get("schemaVersion") == 1, "unsupported contract schema")
-    require(contract.get("abi", {}).get("endianness") == "little", "ABI is not little-endian")
+    require(
+        contract.get("abi", {}).get("endianness") == "little",
+        "ABI is not little-endian",
+    )
     require("profile" in contract, "resolved contract has no selected profile")
     require("peripheralLeases" in contract, "resolved contract has no lease set")
 
@@ -108,6 +287,7 @@ def load_resolved(path: Path, expected_sha256: str) -> tuple[dict[str, Any], byt
             len(identifiers) == len(set(identifiers)),
             f"{group_name} contain colliding generated identifiers",
         )
+    validate_sg2002_timers(contract)
     return contract, semantic
 
 
@@ -133,9 +313,9 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
     rpmsg = contract["rpmsg"]
     profile = contract["profile"]
     prefix = "SG2002_C906L_"
-    digest_initializer = "{ " + ", ".join(
-        f"0x{byte:02x}" for byte in bytes.fromhex(digest)
-    ) + " }"
+    digest_initializer = (
+        "{ " + ", ".join(f"0x{byte:02x}" for byte in bytes.fromhex(digest)) + " }"
+    )
     lines = [
         f'#define {prefix}PROFILE_NAME "{profile["name"]}"',
         f'#define {prefix}CONTRACT_SHA256 "{digest}"',
@@ -179,7 +359,9 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
     for name, entry in abi["services"].items():
         lines.append(f"#define {prefix}SERVICE_{macro(name)} {entry}U")
     for name, entry in abi["opcodes"].items():
-        lines.append(f"#define {prefix}OP_{macro(name)} {c_value(entry, kernel=kernel)}")
+        lines.append(
+            f"#define {prefix}OP_{macro(name)} {c_value(entry, kernel=kernel)}"
+        )
     for name, entry in abi["capabilities"].items():
         lines.append(f"#define {prefix}CAP_{macro(name)} (1ULL << {entry['bit']})")
     for name, entry in abi["flags"].items():
@@ -222,7 +404,9 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
     for name, entry in activation["results"].items():
         lines.append(f"#define {prefix}ACTIVATION_RESULT_{macro(name)} {entry}U")
     for name, entry in activation["manifestFlags"].items():
-        lines.append(f"#define {prefix}MANIFEST_FLAG_{macro(name)} (1U << {entry['bit']})")
+        lines.append(
+            f"#define {prefix}MANIFEST_FLAG_{macro(name)} (1U << {entry['bit']})"
+        )
 
     lines.extend(
         [
@@ -246,8 +430,7 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
             f"{hwspin['registerCount']}U",
             f"#define {prefix}MAILBOX_HWSPIN_REGISTER_STRIDE "
             f"{hwspin['registerStride']}U",
-            f"#define {prefix}MAILBOX_HWSPIN_ACCESS_WIDTH "
-            f"{hwspin['accessWidth']}U",
+            f"#define {prefix}MAILBOX_HWSPIN_ACCESS_WIDTH " f"{hwspin['accessWidth']}U",
             f"#define {prefix}MAILBOX_HWSPIN_FIELD {hwspin['mailboxField']}U",
             f"#define {prefix}MAILBOX_HWSPIN_ADDRESS "
             f"{c_value(hwspin_address, kernel=kernel, bits=64)}",
@@ -629,7 +812,9 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
     for name, entry in activation["results"].items():
         lines.append(f"pub const ACTIVATION_RESULT_{macro(name)}: u32 = {entry};")
     for name, entry in activation["manifestFlags"].items():
-        lines.append(f"pub const MANIFEST_FLAG_{macro(name)}: u32 = 1 << {entry['bit']};")
+        lines.append(
+            f"pub const MANIFEST_FLAG_{macro(name)}: u32 = 1 << {entry['bit']};"
+        )
     lines.extend(
         [
             f"pub const MAILBOX_ADDRESS: usize = {hex_literal(mailbox['address'])};",
@@ -961,8 +1146,39 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
         stem = macro(peripheral_name)
         lines.append(f"HAVE_{stem} = True")
         lines.append(f"{stem}_IRQ = {peripheral['irq']}")
-        lines.append(f"{stem}_BANK_ADDRESS = {hex_literal(peripheral['bank']['address'])}")
+        lines.append(
+            f"{stem}_BANK_ADDRESS = {hex_literal(peripheral['bank']['address'])}"
+        )
         lines.append(f"{stem}_BANK_SIZE = {hex_literal(peripheral['bank']['size'])}")
+        lines.append(f"{stem}_CLOCK_HZ = {peripheral['selfTest']['clockHz']}")
+        lines.append(
+            f"{stem}_TEST_PERIOD_TICKS = {peripheral['selfTest']['periodTicks']}"
+        )
+        lines.append(
+            f"{stem}_TEST_TIMEOUT_RTOS_TICKS = "
+            f"{peripheral['selfTest']['timeoutRtosTicks']}"
+        )
+        lines.append(f"{stem}_RTOS_TICK_HZ = {peripheral['selfTest']['rtosTickHz']}")
+        for register_name, register in peripheral["registers"].items():
+            lines.append(
+                f"{stem}_{macro(register_name)}_ADDRESS = "
+                f"{hex_literal(register['address'])}"
+            )
+        for precondition_name, precondition in peripheral[
+            "sharedPreconditions"
+        ].items():
+            precondition_stem = f"{stem}_PRECONDITION_{macro(precondition_name)}"
+            lines.append(
+                f"{precondition_stem}_ADDRESS = "
+                f"{hex_literal(precondition['address'])}"
+            )
+            lines.append(
+                f"{precondition_stem}_MASK = {hex_literal(precondition['mask'])}"
+            )
+            lines.append(
+                f"{precondition_stem}_EXPECTED = "
+                f"{hex_literal(precondition['expected'])}"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -977,9 +1193,7 @@ def render_dts(contract: dict[str, Any], digest: str) -> str:
         leases = ", ".join(f'"{name}"' for name in profile["peripherals"])
         lease_property = f"\n\t\tsophgo,leased-peripherals = {leases};"
     activation_property = (
-        "\n\t\tsophgo,activation-required;"
-        if profile["activationRequired"]
-        else ""
+        "\n\t\tsophgo,activation-required;" if profile["activationRequired"] else ""
     )
     common_properties = f"""
 \t\tsophgo,contract-sha256 = [{digest_cells}];
@@ -1050,7 +1264,9 @@ def generate(contract_path: Path, expected_sha256: str, output: Path) -> None:
 
     digest = hashlib.sha256(semantic).hexdigest()
     (output / "share/sg2002-c906l").mkdir(parents=True)
-    (output / "share/sg2002-c906l/contract.json").write_bytes(contract_path.read_bytes())
+    (output / "share/sg2002-c906l/contract.json").write_bytes(
+        contract_path.read_bytes()
+    )
     (output / "share/sg2002-c906l/contract.semantic.json").write_bytes(semantic)
     write_text(
         output / "share/sg2002-c906l/contract.sha256",
@@ -1068,9 +1284,7 @@ def generate(contract_path: Path, expected_sha256: str, output: Path) -> None:
     write_text(
         output / "python/sg2002_c906l_contract.py", render_python(contract, digest)
     )
-    write_text(
-        output / "dts/sg2002-c906l-contract.dtsi", render_dts(contract, digest)
-    )
+    write_text(output / "dts/sg2002-c906l-contract.dtsi", render_dts(contract, digest))
 
 
 def main() -> None:

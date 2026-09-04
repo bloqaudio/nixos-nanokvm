@@ -127,6 +127,18 @@
       "rpmsg": {
         "bit": 3,
         "description": "Fixed shared-memory RPMsg transport is ready"
+      },
+      "timer5SelfTest": {
+        "bit": 4,
+        "description": "Selected Timer5 IRQ self-test completed successfully"
+      },
+      "timer6SelfTest": {
+        "bit": 5,
+        "description": "Selected Timer6 IRQ self-test completed successfully"
+      },
+      "timer7SelfTest": {
+        "bit": 6,
+        "description": "Selected Timer7 IRQ self-test completed successfully"
       }
     },
     "flags": {
@@ -161,6 +173,18 @@
       "unexpectedMailboxChannel": {
         "bit": 7,
         "description": "C906L drained a mailbox interrupt on a channel not assigned by this contract"
+      },
+      "timer5SelfTestFailed": {
+        "bit": 8,
+        "description": "Selected Timer5 lease validation or IRQ self-test failed"
+      },
+      "timer6SelfTestFailed": {
+        "bit": 9,
+        "description": "Selected Timer6 lease validation or IRQ self-test failed"
+      },
+      "timer7SelfTestFailed": {
+        "bit": 10,
+        "description": "Selected Timer7 lease validation or IRQ self-test failed"
       }
     }
   },
@@ -395,6 +419,10 @@
           "address": "0x030a0050",
           "access": "read-write"
         },
+        "current": {
+          "address": "0x030a0054",
+          "access": "read-only"
+        },
         "control": {
           "address": "0x030a0058",
           "access": "read-write"
@@ -402,6 +430,10 @@
         "eoi": {
           "address": "0x030a005c",
           "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0060",
+          "access": "read-only"
         }
       },
       "sharedPreconditions": {
@@ -448,6 +480,246 @@
         "mustNotAccessChannel": 4,
         "sharedGlobalRegisters": "read-only"
       }
+    },
+    "timer5": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 1,
+      "cargoFeature": "timer5",
+      "capability": "timer5SelfTest",
+      "failureFlag": "timer5SelfTestFailed",
+      "irq": 56,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 5
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a0064",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a0068",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a006c",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0070",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0074",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer5": {
+          "address": "0x0300200c",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer5": {
+          "address": "0x03003008",
+          "mask": "0x00080000",
+          "expected": "0x00080000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000020",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 56,
+        "mustNotAccessChannel": 5,
+        "sharedGlobalRegisters": "read-only"
+      }
+    },
+    "timer6": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 2,
+      "cargoFeature": "timer6",
+      "capability": "timer6SelfTest",
+      "failureFlag": "timer6SelfTestFailed",
+      "irq": 57,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 6
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a0078",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a007c",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a0080",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0084",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0088",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer6": {
+          "address": "0x0300200c",
+          "mask": "0x00008000",
+          "expected": "0x00008000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer6": {
+          "address": "0x03003008",
+          "mask": "0x00100000",
+          "expected": "0x00100000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000040",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 57,
+        "mustNotAccessChannel": 6,
+        "sharedGlobalRegisters": "read-only"
+      }
+    },
+    "timer7": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 3,
+      "cargoFeature": "timer7",
+      "capability": "timer7SelfTest",
+      "failureFlag": "timer7SelfTestFailed",
+      "irq": 58,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 7
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a008c",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a0090",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a0094",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0098",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a009c",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer7": {
+          "address": "0x0300200c",
+          "mask": "0x00010000",
+          "expected": "0x00010000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer7": {
+          "address": "0x03003008",
+          "mask": "0x00200000",
+          "expected": "0x00200000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000080",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 58,
+        "mustNotAccessChannel": 7,
+        "sharedGlobalRegisters": "read-only"
+      }
     }
   },
   "profiles": {
@@ -467,6 +739,39 @@
         "mailbox",
         "shmemHeartbeat",
         "timer4SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer5": {
+      "peripherals": [
+        "timer5"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer5SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer6": {
+      "peripherals": [
+        "timer6"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer6SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer7": {
+      "peripherals": [
+        "timer7"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer7SelfTest",
         "rpmsg"
       ]
     }
