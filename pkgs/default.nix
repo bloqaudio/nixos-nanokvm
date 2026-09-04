@@ -457,6 +457,7 @@ in
   sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
+  sg2002-dtb-mainline-pcie-nowifi-c906l = dtbMainline.pcie-nowifi-c906l;
   sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
   sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;

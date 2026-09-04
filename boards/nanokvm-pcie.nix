@@ -9,6 +9,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }: {
   imports = [
@@ -37,6 +38,11 @@
   # USB function the management handoff.  An explicit normal assignment can
   # still opt back into preservation for a USB-managed setup.
   sg2002.usbGadget.stage2.preserveInitrd = lib.mkOverride 900 false;
+
+  # Enabling the auxiliary core must add its carveouts and transport to this
+  # carrier's DT, not replace the product topology with the LicheeRV-Nano
+  # bring-up tree.
+  sg2002.auxCore.fdt = lib.mkDefault pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l;
 
   # UART1 on the carrier header has never produced usable output on the
   # physical PCIe unit. Mirror kernel logs to USB ACM from the SD profile, but

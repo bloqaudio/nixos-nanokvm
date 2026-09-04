@@ -588,6 +588,7 @@
             nanokvm-web
             nbd-client-minimal
             sg2002-dtb-mainline-nowifi-c906l
+            sg2002-dtb-mainline-pcie-nowifi-c906l
             sg2002-fiptool
             sg2002-fip-mainline-fastboot
             sg2002-fip-mainline-fastboot-c906l
@@ -649,6 +650,7 @@
           sg2002-c906l-uboot = pkgs.sg2002-uboot-mainline-fastboot-c906l;
           sg2002-c906l-runner = pkgs.sg2002-usb-boot-c906l.tests.runner;
           sg2002-c906l-dtb = pkgs.sg2002-dtb-mainline-nowifi-c906l;
+          sg2002-c906l-pcie-dtb = pkgs.sg2002-dtb-mainline-pcie-nowifi-c906l;
         });
 
       # `apps.<system>` is reserved for flat `nix run` shortcuts. The

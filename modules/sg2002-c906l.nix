@@ -33,6 +33,18 @@ let
     && cfg.firmware.requiredCapabilities == expectedCapabilities
     && cfg.firmware.sharedMemoryAddress == sharedMemoryAddress
     && cfg.firmware.sharedMemorySize == memoryMap.sharedMemorySize;
+  fdtContractFields = [
+    "firmwareAddress"
+    "firmwareSize"
+    "sharedMemoryAddress"
+    "sharedMemorySize"
+  ];
+  fdtHasContract = lib.all (name: builtins.hasAttr name cfg.fdt) fdtContractFields;
+  fdtContractMatches = fdtHasContract
+    && cfg.fdt.firmwareAddress == firmwareAddress
+    && cfg.fdt.firmwareSize == carveoutSize
+    && cfg.fdt.sharedMemoryAddress == sharedMemoryAddress
+    && cfg.fdt.sharedMemorySize == memoryMap.sharedMemorySize;
 in
 {
   options.sg2002.auxCore = {
@@ -59,6 +71,18 @@ in
         C906L firmware package.  It must publish the complete memory layout,
         enabled peripheral set, required capabilities, and protocol version
         passthru contract understood by the FIP, runner, DT, and Linux side.
+      '';
+    };
+
+    fdt = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.sg2002-dtb-mainline-nowifi-c906l;
+      defaultText = lib.literalExpression "pkgs.sg2002-dtb-mainline-nowifi-c906l";
+      description = ''
+        Board-composed device tree containing the C906L reservations and
+        transport nodes.  Board modules with additional carrier hardware must
+        override this default with their matching composed DT; substituting a
+        generic development-board DT can silently remove unrelated devices.
       '';
     };
   };
@@ -101,6 +125,20 @@ in
           and exactly the configured peripheral lease set
         '';
       }
+      {
+        assertion = fdtHasContract;
+        message = ''
+          sg2002.auxCore.fdt must expose firmwareAddress, firmwareSize,
+          sharedMemoryAddress, and sharedMemorySize passthru attributes
+        '';
+      }
+      {
+        assertion = fdtContractMatches;
+        message = ''
+          sg2002.auxCore.fdt must reserve the exact C906L firmware and shared
+          memory ranges selected by the firmware contract
+        '';
+      }
     ];
 
     # Firmware selection, FIP packing, and the Linux memory reservation move
@@ -110,7 +148,7 @@ in
     system.build.c906lFirmware = cfg.firmware;
     system.build.fip = lib.mkForce (pkgs.sg2002-fip-mainline-uboot-for cfg.firmware);
     system.build.fipFastboot = lib.mkForce (pkgs.sg2002-fip-mainline-fastboot-for cfg.firmware);
-    sg2002.fdt = lib.mkForce pkgs.sg2002-dtb-mainline-nowifi-c906l;
+    sg2002.fdt = lib.mkForce cfg.fdt;
     boot.extraModulePackages = [
       controlModule
       remoteprocModule

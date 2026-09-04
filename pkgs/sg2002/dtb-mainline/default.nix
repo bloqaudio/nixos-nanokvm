@@ -160,6 +160,44 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # Product-carrier C906L composition.  Keep every PCIe carrier resource
+  # (SD0, Ethernet, OLED wiring and the capture/media pipeline), disable only
+  # the optional SDIO WiFi function, then reserve the top-of-RAM firmware and
+  # transport carveouts.  This must remain distinct from the LicheeRV-Nano
+  # bring-up DT above: selecting that DT on the product would silently drop
+  # most of the carrier hardware.
+  dtbPcieNoWifiC906L =
+    let
+      unchecked = buildDtb "sg2002-nanokvm-pcie-nowifi-c906l-unchecked" [
+        ./sg2002-licheerv-nano-bw.dtsi
+        ./sg2002-nanokvm-pcie.dtsi
+        ./sg2002-licheerv-nano-bw-nowifi.dtsi
+        ./sg2002-c906l.dtsi
+      ];
+    in
+    runCommand "sg2002-nanokvm-pcie-nowifi-c906l.dtb"
+      {
+        nativeBuildInputs = [ dtc ];
+        passthru = c906lMemoryMap;
+      } ''
+      cp ${unchecked} "$out"
+
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-firmware@8fe00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.firmwareAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.firmwareSize)}"
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-shmem@8ff00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemoryAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemorySize)}"
+      test "$(fdtget -t s "$out" /c906l-control compatible)" = \
+        "sophgo,sg2002-c906l-control"
+      test "$(fdtget -t s "$out" /c906l-rproc compatible)" = \
+        "sophgo,sg2002-c906l-rproc"
+      test "$(fdtget -t s "$out" /soc/ethernet@4070000 status)" = okay
+      test "$(fdtget -t s "$out" /soc/mmc@4310000 status)" = okay
+      test "$(fdtget -t s "$out" /soc/i2c@4040000 status)" = okay
+      test "$(fdtget -t s "$out" /video-capture@a0c2000 compatible)" = \
+        "sophgo,sg2002-csi-capture"
+      test "$(fdtget -t s "$out" /vpss@a080000 status)" = okay
+    '';
+
   dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
@@ -184,6 +222,7 @@ in
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
+  pcie-nowifi-c906l = dtbPcieNoWifiC906L;
   pcie-high-speed = dtbPcieHighSpeed;
   cam = dtbCam;
 }

@@ -386,6 +386,43 @@ in
   # USB-NBD live exercising the full PCIe hardware — eth0 (stmmac) and
   # wlan0 (AIC8800) both come up.
   (pcieLive "mainline" "live-pcie-mainline" pcieLiveExtras)
+  # Auxiliary-core product compositions are explicit catalog leaves.  They
+  # retain the PCIe carrier topology while disabling SDIO WiFi, matching the
+  # current C906L ownership contract and avoiding a second out-of-tree module
+  # in the constrained live image.
+  (pcie "mainline" [ "live" "usb-c906l" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore.enable = true;
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer4" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer4";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer4" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
 
   # ===== licheerv-nano-w / mainline / NFS over WiFi =====
   # Same WiFi-rooted experiment as the picoclaw wifi entry, on the
