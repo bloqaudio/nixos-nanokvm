@@ -277,9 +277,19 @@ let
       name = "media-sophgo-sg2002-hardware-isp-capture";
       patch = ./patches/0065-media-sophgo-add-SG2002-hardware-ISP-capture.patch;
     })
+    (patch {
+      name = "media-sophgo-fix-vpss-queue-state-bounds";
+      patch = ./patches/0066-media-sophgo-fix-VPSS-queue-state-bounds.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-fix-vpss-queue-state-bounds" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "V4L2 OUTPUT is index 2; reserve it instead of overwriting crop state.";
+    };
     "media-sophgo-sg2002-hardware-isp-capture" = {
       origin = "local";
       upstreamStatus = "draft";

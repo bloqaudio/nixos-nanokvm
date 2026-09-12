@@ -1,0 +1,22 @@
+From: George Whewell <georgerw@gmail.com>
+Subject: [PATCH] media: sophgo: size VPSS queue data for V4L2 type indices
+
+The driver indexes queue state using V4L2_BUF_TYPE_VIDEO_CAPTURE (1)
+and V4L2_BUF_TYPE_VIDEO_OUTPUT (2). A two-element array puts every OUTPUT
+access beyond the array and on top of the capture crop. Reserve all three
+indices so source geometry and crop cannot overwrite each other.
+
+diff --git a/drivers/media/platform/sophgo/sg2002-vpss.c b/drivers/media/platform/sophgo/sg2002-vpss.c
+index c4fa6bf..99f0a7c 100644
+--- a/drivers/media/platform/sophgo/sg2002-vpss.c
++++ b/drivers/media/platform/sophgo/sg2002-vpss.c
+@@ -176,7 +176,8 @@ struct vpss_dev {
+ struct vpss_ctx {
+ 	struct v4l2_fh		fh;
+ 	struct vpss_dev		*dev;
+-	struct vpss_q_data	q_data[2];	/* [OUTPUT]=src, [CAPTURE]=dst */
++	/* Indexed by enum v4l2_buf_type: CAPTURE is 1, OUTPUT is 2. */
++	struct vpss_q_data	q_data[V4L2_BUF_TYPE_VIDEO_OUTPUT + 1];
+ 	/* CAPTURE-side crop: the visible image inside the (possibly
+ 	 * macroblock-padded) CAPTURE surface.  The scaler produces the
+ 	 * crop geometry; the format geometry only sets the plane layout
