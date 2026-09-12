@@ -16,9 +16,11 @@
 , dtc
 , gcc
 , linuxSrc
+, python3
 ,
 }:
 let
+  c906lMemoryMap = import ../c906l-memory-map.nix { inherit lib; };
   # Each overlay has to be interpolated into the script body individually
   # — `toString [path1 path2]` doesn't trigger Nix's path-to-store import,
   # it just stringifies the raw source paths, which are then missing from
@@ -55,6 +57,130 @@ let
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
+
+  leaseGuardTests = runCommand "sg2002-c906l-dtb-lease-guard-tests"
+    {
+      nativeBuildInputs = [ dtc python3 ];
+    } ''
+    for fixture in enabled-overlap disabled-overlap non-overlap; do
+      dtc -q -I dts -O dtb \
+        -o "$TMPDIR/$fixture.dtb" \
+        ${./fixtures}/c906l-lease-$fixture.dts
+    done
+
+    if python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/enabled-overlap.dtb" \
+      >"$TMPDIR/enabled.stdout" 2>"$TMPDIR/enabled.stderr"; then
+      echo "enabled overlapping Linux node unexpectedly passed" >&2
+      exit 1
+    fi
+    grep -F \
+      "enabled Linux node /soc/timer-channel@50 MMIO [0x30a0050,0x30a0064) overlaps C906L lease [0x30a0050,0x30a0064)" \
+      "$TMPDIR/enabled.stderr"
+
+    python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/disabled-overlap.dtb"
+    python3 ${./verify-c906l-leases.py} \
+      --dtc ${dtc}/bin/dtc \
+      --dtb "$TMPDIR/non-overlap.dtb"
+    touch "$out"
+  '';
+
+  # Contract-specific DT for the FSBL-started C906L.  Its FIP and this DTB are
+  # an atomic pair: Linux must never allocate from the final 2 MiB while the
+  # auxiliary core is executing there, and Linux must never activate a lease
+  # unless every generated identity field matches the running firmware.
+  buildC906LDtb = name: carrierOverlays: contract:
+    let
+      unchecked = buildDtb "${name}-${contract.profileName}-unchecked"
+        (carrierOverlays ++ [ "${contract}/dts/sg2002-c906l-contract.dtsi" ]);
+      expectedCapabilities = contract.requiredCapabilities;
+      dormantCapabilities = contract.dormantCapabilities;
+      leaseMask = contract.leaseMask;
+      profileId = contract.profileId;
+      activationRequired = contract.contract.profile.activationRequired;
+    in
+    runCommand "${name}-${contract.profileName}.dtb"
+      {
+        nativeBuildInputs = [ dtc python3 ];
+        passthru = c906lMemoryMap // {
+          inherit
+            (contract)
+            contractEpoch
+            contractSha256
+            dormantCapabilities
+            enabledPeripherals
+            leaseMask
+            manifestFlags
+            profileId
+            profileName
+            protocolVersion
+            requiredCapabilities
+            ;
+          tests.leaseGuard = leaseGuardTests;
+        };
+      } ''
+      cp ${unchecked} "$out"
+
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-firmware@8fe00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.firmwareAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.firmwareSize)}"
+      test "$(fdtget -t x "$out" /reserved-memory/c906l-shmem@8ff00000 reg)" = \
+        "${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemoryAddress)} ${lib.toLower (lib.toHexString c906lMemoryMap.sharedMemorySize)}"
+      test "$(fdtget -t s "$out" /c906l-control compatible)" = \
+        "sophgo,sg2002-c906l-control"
+      test "$(fdtget -t s "$out" /c906l-rproc compatible)" = \
+        "sophgo,sg2002-c906l-rproc"
+      for node in /c906l-control /c906l-rproc; do
+        digest="$(for byte in $(fdtget -t bx "$out" "$node" sophgo,contract-sha256); do
+          printf '%02x' "0x$byte"
+        done)"
+        test "$digest" = ${contract.contractSha256}
+        test "$(fdtget -t x "$out" "$node" sophgo,contract-epoch)" = \
+          "${lib.toLower (lib.toHexString contract.contractEpoch)}"
+        test "$(fdtget -t x "$out" "$node" sophgo,abi-version)" = \
+          "${lib.toLower (lib.toHexString (contract.protocolVersion.major * 65536 + contract.protocolVersion.minor))}"
+        test "$(fdtget -t x "$out" "$node" sophgo,expected-capabilities)" = \
+          "0 ${lib.toLower (lib.toHexString expectedCapabilities)}"
+        test "$(fdtget -t x "$out" "$node" sophgo,dormant-capabilities)" = \
+          "0 ${lib.toLower (lib.toHexString dormantCapabilities)}"
+        test "$(fdtget -t x "$out" "$node" sophgo,lease-mask)" = \
+          "0 ${lib.toLower (lib.toHexString leaseMask)}"
+        test "$(fdtget -t x "$out" "$node" sophgo,profile-id)" = \
+          "${lib.toLower (lib.toHexString profileId)}"
+        test "$(fdtget -t x "$out" "$node" sophgo,manifest-flags)" = \
+          "${lib.toLower (lib.toHexString contract.manifestFlags)}"
+        test "$(fdtget -t s "$out" "$node" sophgo,profile)" = \
+          ${lib.escapeShellArg contract.profileName}
+        ${if activationRequired then ''
+          fdtget "$out" "$node" sophgo,activation-required >/dev/null
+        '' else ''
+          if fdtget "$out" "$node" sophgo,activation-required >/dev/null 2>&1; then
+            echo "unexpected activation-required property on base profile" >&2
+            exit 1
+          fi
+        ''}
+      done
+      set -- $(fdtget -t x "$out" /c906l-rproc mboxes)
+      test "$#" -eq 6
+      test "$1" = "$4"
+      test "$2 $3 $5 $6" = "1 2 2 2"
+      test "$(fdtget -t s "$out" /c906l-rproc mbox-names)" = \
+        "vq-kick vq-notify"
+      test "$(fdtget -t s "$out" /soc/mailbox@1900000 compatible)" = \
+        "sophgo,cv1800b-mailbox"
+      python3 ${./verify-c906l-leases.py} \
+        --dtc ${dtc}/bin/dtc \
+        --dtb "$out"
+    '';
+
+  dtbNoWifiC906LFor = buildC906LDtb
+    "sg2002-licheerv-nano-bw-nowifi-c906l"
+    [
+      ./sg2002-licheerv-nano-bw.dtsi
+      ./sg2002-licheerv-nano-bw-nowifi.dtsi
+    ];
 
   # LicheeRV-Nano with the RJ45 wired: gmac0 + internal EPHY on.
   dtbEth = buildDtb "sg2002-licheerv-nano-bw-eth" [
@@ -120,6 +246,52 @@ let
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
   ];
 
+  # Product-carrier C906L composition.  Keep every PCIe carrier resource
+  # (SD0, Ethernet, OLED wiring and the capture/media pipeline), disable only
+  # the optional SDIO WiFi function, then reserve the top-of-RAM firmware and
+  # transport carveouts.  This must remain distinct from the LicheeRV-Nano
+  # bring-up DT above: selecting that DT on the product would silently drop
+  # most of the carrier hardware.
+  dtbPcieNoWifiC906LFor = contract:
+    let
+      composed = buildC906LDtb
+        "sg2002-nanokvm-pcie-nowifi-c906l"
+        [
+          ./sg2002-licheerv-nano-bw.dtsi
+          ./sg2002-nanokvm-pcie.dtsi
+          ./sg2002-licheerv-nano-bw-nowifi.dtsi
+        ]
+        contract;
+    in
+    runCommand "sg2002-nanokvm-pcie-nowifi-c906l-${contract.profileName}-verified.dtb"
+      {
+        nativeBuildInputs = [ dtc python3 ];
+        passthru = c906lMemoryMap // {
+          inherit
+            (contract)
+            contractEpoch
+            contractSha256
+            dormantCapabilities
+            enabledPeripherals
+            leaseMask
+            manifestFlags
+            profileId
+            profileName
+            protocolVersion
+            requiredCapabilities
+            ;
+          tests.leaseGuard = leaseGuardTests;
+        };
+      } ''
+      cp ${composed} "$out"
+      test "$(fdtget -t s "$out" /soc/ethernet@4070000 status)" = okay
+      test "$(fdtget -t s "$out" /soc/mmc@4310000 status)" = okay
+      test "$(fdtget -t s "$out" /soc/i2c@4040000 status)" = okay
+      test "$(fdtget -t s "$out" /video-capture@a0c2000 compatible)" = \
+        "sophgo,sg2002-csi-capture"
+      test "$(fdtget -t s "$out" /vpss@a080000 status)" = okay
+    '';
+
   dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
@@ -137,12 +309,14 @@ in
   eth = dtbEth;
   oled = dtbOled;
   nowifi = dtbNoWifi;
+  nowifi-c906l-for = dtbNoWifiC906LFor;
   nowifi-high-speed = dtbNoWifiHighSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
+  pcie-nowifi-c906l-for = dtbPcieNoWifiC906LFor;
   pcie-high-speed = dtbPcieHighSpeed;
   cam = dtbCam;
 }

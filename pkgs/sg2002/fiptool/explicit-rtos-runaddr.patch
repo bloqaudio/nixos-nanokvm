@@ -1,0 +1,49 @@
+diff --git a/fiptool b/fiptool
+index d1409b0..63258b1 100755
+--- a/fiptool
++++ b/fiptool
+@@ -83,5 +83,8 @@ def pack_param2(args):
+         ddr_param = pad(f.read())
+-    with open(args.rtos, 'rb') as f:
+-        rtos = pad(f.read())
++    if args.rtos is None:
++        rtos = b''
++    else:
++        with open(args.rtos, 'rb') as f:
++            rtos = pad(f.read())
+     with open(args.opensbi, 'rb') as f:
+         opensbi = pad(f.read())
+@@ -105,6 +108,6 @@ def pack_param2(args):
+         ('BLCP_2ND_CKSUM', crc32(rtos)),
+         ('BLCP_2ND_LOADADDR', p32(addr_rtos)),
+         ('BLCP_2ND_SIZE', p32(len(rtos))),
+-        ('BLCP_2ND_RUNADDR', p32(0x83F40000)),
++        ('BLCP_2ND_RUNADDR', p32(args.rtos_runaddr)),
+         ('MONITOR_CKSUM', crc32(opensbi)),
+         ('MONITOR_LOADADDR', p32(addr_opensbi)),
+@@ -158,3 +161,9 @@ def generate_fip(args):
+     print('Success')
+ 
++def address(value):
++    parsed = int(value, 0)
++    if not 0 <= parsed <= 0xffffffff:
++        raise argparse.ArgumentTypeError('address must fit in an unsigned 32-bit value')
++    return parsed
++
+ def parse_args():
+@@ -167,4 +176,5 @@ def parse_args():
+     parser.add_argument('--opensbi', type=str, help='Add OpenSBI into FIP')
+     parser.add_argument('--uboot', type=str, help='Add U-Boot into FIP')
+-    parser.add_argument('--rtos', type=str, default=os.path.join(base_dir, 'cvirtos.bin'), nargs='?', help='Add RTOS into FIP')
++    parser.add_argument('--rtos', type=str, help='Add RTOS into FIP')
++    parser.add_argument('--rtos-runaddr', type=address, default=0, help='RTOS execution address (required with --rtos)')
+     parser.add_argument('--text-base', type=int, default=0x80200000, nargs='?', help='Base address for u-boot')
+@@ -173,3 +183,7 @@ def parse_args():
+ 
+     args = parser.parse_args()
++    if args.rtos is not None and args.rtos_runaddr == 0:
++        parser.error('--rtos requires a non-zero --rtos-runaddr')
++    if args.rtos is None and args.rtos_runaddr != 0:
++        parser.error('--rtos-runaddr requires --rtos')
+ 
+     return args

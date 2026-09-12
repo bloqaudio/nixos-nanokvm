@@ -329,17 +329,25 @@ with lib.kernel; {
   PERF_EVENTS = no;
   HUGETLBFS = no;
 
-  # No remote processor, mailbox endpoint, or RPMsg device exists in the
-  # SG2002 DT. These are generic communication frameworks left on by the
-  # RISC-V defconfig, not requirements of USB, Ethernet, or NFS.
-  MAILBOX = no;
-  RPMSG = no;
-  # These four options select the RPMsg core back on in the generic
-  # defconfig; keep the broad gate above and close those selector paths.
-  RPMSG_CHAR = no;
-  RPMSG_CTRL = no;
-  RPMSG_NS = no;
-  RPMSG_VIRTIO = no;
+  # The upstream controller is used as the low-latency doorbell to C906L.
+  # Bulk messages belong in explicitly reserved shared DDR; do not enable
+  # mailbox-test, whose generic buffer assumptions do not match this 8-byte
+  # controller.
+  MAILBOX = yes;
+  CV1800_MBOX = yes;
+
+  # C906L is started by the FSBL. The local platform driver uses remoteproc's
+  # detached/attach-only state and exposes read-only lifecycle controls: it
+  # cannot load, stop, reset, or auto-recover the core. Linux maps fixed
+  # vrings uncached, allocates RPMsg buffers from their dedicated reserved
+  # pool, and uses AP-mailbox channels 1/2 only as doorbells.
+  REMOTEPROC = yes;
+  REMOTEPROC_CDEV = no;
+  RPMSG = yes;
+  RPMSG_CHAR = yes;
+  RPMSG_CTRL = yes;
+  RPMSG_NS = yes;
+  RPMSG_VIRTIO = yes;
 
   # =====================================================================
   # PCIe / virtio / DRM — dead on the SG2002, alive under QEMU

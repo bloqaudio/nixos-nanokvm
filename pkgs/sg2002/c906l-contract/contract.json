@@ -1,0 +1,779 @@
+{
+  "spdxLicense": "MIT",
+  "schemaVersion": 1,
+  "contractEpoch": 2,
+  "soc": {
+    "compatible": "sophgo,sg2002",
+    "cacheLineSize": 64,
+    "dram": {
+      "address": "0x80000000",
+      "size": "0x10000000"
+    },
+    "mailbox": {
+      "address": "0x01900000",
+      "size": "0x00001000",
+      "payloadAddress": "0x01900400",
+      "slotCount": 8,
+      "slotSize": 8,
+      "processorCount": 4,
+      "processorIds": {
+        "linux": 1,
+        "c906l": 2
+      },
+      "interrupts": {
+        "linux": 101,
+        "c906l": 61
+      },
+      "hardwareSpinlock": {
+        "registerOffset": "0x000000c0",
+        "registerCount": 8,
+        "registerStride": 4,
+        "accessWidth": 2,
+        "mailboxField": 4,
+        "tokenWidth": 8,
+        "linuxTokenShift": 0,
+        "c906lTokenShift": 8,
+        "taskAcquireAttempts": 1024,
+        "irqAcquireAttempts": 64,
+        "irqConsecutiveDeferralLimit": 16
+      },
+      "channels": {
+        "control": 0,
+        "vqKick": 1,
+        "vqNotify": 2
+      }
+    },
+    "coreControl": {
+      "reset": {
+        "address": "0x03003024",
+        "bit": 6,
+        "releasedWhenSet": true
+      },
+      "securityEnable": {
+        "address": "0x020b0004",
+        "bit": 13,
+        "enabledWhenSet": true
+      },
+      "vectorLowAddress": "0x020b0020",
+      "vectorHighAddress": "0x020b0024"
+    }
+  },
+  "abi": {
+    "endianness": "little",
+    "major": 1,
+    "minor": 1,
+    "magic": "0x4d564b4e",
+    "message": {
+      "size": 8,
+      "alignment": 8,
+      "fields": [
+        { "name": "service", "offset": 0, "width": 1 },
+        { "name": "opcode", "offset": 1, "width": 1 },
+        { "name": "sequence", "offset": 2, "width": 2 },
+        { "name": "value", "offset": 4, "width": 4 }
+      ]
+    },
+    "status": {
+      "size": 64,
+      "alignment": 64,
+      "fields": [
+        { "name": "magic", "offset": 0, "width": 4 },
+        { "name": "abiMajor", "offset": 4, "width": 2 },
+        { "name": "abiMinor", "offset": 6, "width": 2 },
+        { "name": "structSize", "offset": 8, "width": 4 },
+        { "name": "state", "offset": 12, "width": 4 },
+        { "name": "generation", "offset": 16, "width": 4 },
+        { "name": "flags", "offset": 20, "width": 4 },
+        { "name": "heartbeat", "offset": 24, "width": 8 },
+        { "name": "capabilities", "offset": 32, "width": 8 },
+        { "name": "lastRequest", "offset": 40, "width": 8 },
+        { "name": "lastResponse", "offset": 48, "width": 8 },
+        { "name": "activationState", "offset": 56, "width": 1 },
+        { "name": "activationError", "offset": 57, "width": 1 },
+        { "name": "activationAttempts", "offset": 58, "width": 2 },
+        { "name": "activationRequestId", "offset": 60, "width": 4 }
+      ]
+    },
+    "states": {
+      "booting": 1,
+      "running": 2,
+      "fault": 3
+    },
+    "services": {
+      "control": 1
+    },
+    "opcodes": {
+      "ping": "0x01",
+      "getAbi": "0x02",
+      "getCapabilities": "0x03",
+      "activateLeases": "0x04",
+      "response": "0x80",
+      "error": "0xff"
+    },
+    "capabilityWireWidth": 64,
+    "capabilities": {
+      "mailbox": {
+        "bit": 0,
+        "description": "Eight-byte mailbox control protocol"
+      },
+      "shmemHeartbeat": {
+        "bit": 1,
+        "description": "Noncoherent shared-memory status and heartbeat"
+      },
+      "timer4SelfTest": {
+        "bit": 2,
+        "description": "Selected Timer4 IRQ self-test completed successfully"
+      },
+      "rpmsg": {
+        "bit": 3,
+        "description": "Fixed shared-memory RPMsg transport is ready"
+      },
+      "timer5SelfTest": {
+        "bit": 4,
+        "description": "Selected Timer5 IRQ self-test completed successfully"
+      },
+      "timer6SelfTest": {
+        "bit": 5,
+        "description": "Selected Timer6 IRQ self-test completed successfully"
+      },
+      "timer7SelfTest": {
+        "bit": 6,
+        "description": "Selected Timer7 IRQ self-test completed successfully"
+      }
+    },
+    "flags": {
+      "responseTimeout": {
+        "bit": 0,
+        "description": "Mailbox response could not be submitted in time"
+      },
+      "requestDropped": {
+        "bit": 1,
+        "description": "Mailbox ISR request queue overflowed"
+      },
+      "timer4SelfTestFailed": {
+        "bit": 2,
+        "description": "Selected Timer4 lease validation or IRQ self-test failed"
+      },
+      "activationRejected": {
+        "bit": 3,
+        "description": "Linux activation record or mailbox envelope was rejected"
+      },
+      "activationFailed": {
+        "bit": 4,
+        "description": "A lease failed after exact activation authorization"
+      },
+      "manifestFault": {
+        "bit": 5,
+        "description": "The immutable firmware manifest could not be published"
+      },
+      "mailboxLockFailure": {
+        "bit": 6,
+        "description": "The cross-core mailbox hardware spinlock timed out or could not be released"
+      },
+      "unexpectedMailboxChannel": {
+        "bit": 7,
+        "description": "C906L drained a mailbox interrupt on a channel not assigned by this contract"
+      },
+      "timer5SelfTestFailed": {
+        "bit": 8,
+        "description": "Selected Timer5 lease validation or IRQ self-test failed"
+      },
+      "timer6SelfTestFailed": {
+        "bit": 9,
+        "description": "Selected Timer6 lease validation or IRQ self-test failed"
+      },
+      "timer7SelfTestFailed": {
+        "bit": 10,
+        "description": "Selected Timer7 lease validation or IRQ self-test failed"
+      }
+    }
+  },
+  "activation": {
+    "leaseWireWidth": 32,
+    "manifest": {
+      "offset": "0x00000040",
+      "size": 128,
+      "alignment": 64,
+      "magic": "0x31434b4e",
+      "formatMajor": 1,
+      "formatMinor": 0,
+      "commit": "0x54494d43",
+      "fields": [
+        { "name": "magic", "offset": 0, "width": 4 },
+        { "name": "formatMajor", "offset": 4, "width": 2 },
+        { "name": "formatMinor", "offset": 6, "width": 2 },
+        { "name": "structSize", "offset": 8, "width": 4 },
+        { "name": "generation", "offset": 12, "width": 4 },
+        { "name": "contractEpoch", "offset": 16, "width": 4 },
+        { "name": "profileId", "offset": 20, "width": 4 },
+        { "name": "abiMajor", "offset": 24, "width": 2 },
+        { "name": "abiMinor", "offset": 26, "width": 2 },
+        { "name": "capabilityWidth", "offset": 28, "width": 2 },
+        { "name": "leaseWidth", "offset": 30, "width": 2 },
+        { "name": "finalCapabilities", "offset": 32, "width": 8 },
+        { "name": "dormantCapabilities", "offset": 40, "width": 8 },
+        { "name": "leaseMask", "offset": 48, "width": 8 },
+        { "name": "flags", "offset": 56, "width": 4 },
+        { "name": "reserved0", "offset": 60, "width": 4 },
+        { "name": "contractSha256", "offset": 64, "width": 32 },
+        { "name": "reserved1", "offset": 96, "width": 28 },
+        { "name": "commit", "offset": 124, "width": 4 }
+      ]
+    },
+    "request": {
+      "offset": "0x000000c0",
+      "size": 128,
+      "alignment": 64,
+      "magic": "0x31414b4e",
+      "formatMajor": 1,
+      "formatMinor": 0,
+      "commit": "0x314b4341",
+      "fields": [
+        { "name": "magic", "offset": 0, "width": 4 },
+        { "name": "formatMajor", "offset": 4, "width": 2 },
+        { "name": "formatMinor", "offset": 6, "width": 2 },
+        { "name": "structSize", "offset": 8, "width": 4 },
+        { "name": "generation", "offset": 12, "width": 4 },
+        { "name": "requestId", "offset": 16, "width": 4 },
+        { "name": "contractEpoch", "offset": 20, "width": 4 },
+        { "name": "profileId", "offset": 24, "width": 4 },
+        { "name": "abiVersion", "offset": 28, "width": 4 },
+        { "name": "finalCapabilities", "offset": 32, "width": 8 },
+        { "name": "leaseMask", "offset": 40, "width": 8 },
+        { "name": "contractSha256", "offset": 48, "width": 32 },
+        { "name": "reserved", "offset": 80, "width": 44 },
+        { "name": "commit", "offset": 124, "width": 4 }
+      ]
+    },
+    "states": {
+      "initializing": 0,
+      "dormant": 1,
+      "validating": 2,
+      "activating": 3,
+      "active": 4,
+      "rejected": 5,
+      "leaseFault": 6
+    },
+    "results": {
+      "success": 0,
+      "invalidEnvelope": 1,
+      "malformedRecord": 2,
+      "staleGeneration": 3,
+      "abiMismatch": 4,
+      "epochMismatch": 5,
+      "profileMismatch": 6,
+      "digestMismatch": 7,
+      "capabilitiesMismatch": 8,
+      "leaseMaskMismatch": 9,
+      "invalidState": 10,
+      "preconditionFailed": 11,
+      "irqInstallFailed": 12,
+      "selfTestTimeout": 13,
+      "selfTestFailed": 14,
+      "internalFailure": 15,
+      "activationTimeout": 16
+    },
+    "manifestFlags": {
+      "ackRequired": {
+        "bit": 0,
+        "description": "Physical peripheral leases require exact Linux acknowledgement"
+      },
+      "rpmsgWhileDormant": {
+        "bit": 1,
+        "description": "The base RPMsg transport is available before lease activation"
+      }
+    },
+    "linuxResponseTimeoutMs": 2000
+  },
+  "memory": {
+    "firmware": {
+      "address": "0x8fe00000",
+      "size": "0x00100000",
+      "owner": "c906l"
+    },
+    "shared": {
+      "address": "0x8ff00000",
+      "size": "0x00100000",
+      "coherency": "noncoherent",
+      "regions": {
+        "status": {
+          "offset": "0x00000000",
+          "size": "0x00001000",
+          "ownership": {
+            "hotStatus": "c906l",
+            "manifest": "c906l",
+            "activationRequest": "linux",
+            "remainder": "none"
+          }
+        },
+        "resourceTable": {
+          "offset": "0x00001000",
+          "size": "0x00001000",
+          "ownership": {
+            "initializer": "c906l",
+            "negotiationFields": "linux"
+          }
+        },
+        "rpmsgVring0": {
+          "offset": "0x00002000",
+          "size": "0x00004000",
+          "ownership": {
+            "descriptorAndAvailable": "linux",
+            "used": "c906l"
+          }
+        },
+        "rpmsgVring1": {
+          "offset": "0x00006000",
+          "size": "0x00004000",
+          "ownership": {
+            "descriptorAndAvailable": "linux",
+            "used": "c906l"
+          }
+        },
+        "trace": {
+          "offset": "0x0000a000",
+          "size": "0x00002000",
+          "writer": "c906l"
+        },
+        "reservedPadding": {
+          "offset": "0x0000c000",
+          "size": "0x00004000",
+          "writer": "none"
+        },
+        "rpmsgBuffer": {
+          "offset": "0x00010000",
+          "size": "0x00040000",
+          "writer": "descriptor-owner"
+        },
+        "bulk": {
+          "offset": "0x00050000",
+          "size": "0x000b0000",
+          "writer": "unassigned"
+        }
+      }
+    }
+  },
+  "rpmsg": {
+    "resourceTable": {
+      "region": "resourceTable",
+      "version": 1,
+      "entries": 1,
+      "entryOffset": 20,
+      "resourceTypeVdev": 3,
+      "virtioDeviceId": 7,
+      "deviceFeatures": "0x00000001",
+      "guestFeaturesInitial": "0x00000000",
+      "notifyIdInitial": "0x00000000",
+      "configLength": 0,
+      "statusInitial": 0,
+      "driverOkStatus": "0x04",
+      "vringCount": 2,
+      "serializedSize": 88,
+      "vringNotifyIdInitial": "0xffffffff",
+      "vringPhysicalAddressInitial": "0x00000000"
+    },
+    "vrings": {
+      "driverToDeviceRegion": "rpmsgVring1",
+      "deviceToDriverRegion": "rpmsgVring0",
+      "alignment": 4096,
+      "descriptors": 256,
+      "driverBytes": "0x00002000",
+      "usedOffset": "0x00002000"
+    },
+    "descriptorFlags": {
+      "next": "0x0001",
+      "write": "0x0002",
+      "indirect": "0x0004"
+    },
+    "buffers": {
+      "region": "rpmsgBuffer",
+      "bufferSize": 512,
+      "headerSize": 16,
+      "payloadSize": 496
+    },
+    "nameService": {
+      "address": 53,
+      "createFlag": 0
+    },
+    "echoService": {
+      "name": "rpmsg_chrdev",
+      "address": "0x00000400"
+    }
+  },
+  "peripherals": {
+    "timer4": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 0,
+      "cargoFeature": "timer4",
+      "capability": "timer4SelfTest",
+      "failureFlag": "timer4SelfTestFailed",
+      "irq": 55,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 4
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a0050",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a0054",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a0058",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a005c",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0060",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer4": {
+          "address": "0x0300200c",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer4": {
+          "address": "0x03003008",
+          "mask": "0x00040000",
+          "expected": "0x00040000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000010",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 55,
+        "mustNotAccessChannel": 4,
+        "sharedGlobalRegisters": "read-only"
+      }
+    },
+    "timer5": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 1,
+      "cargoFeature": "timer5",
+      "capability": "timer5SelfTest",
+      "failureFlag": "timer5SelfTestFailed",
+      "irq": 56,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 5
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a0064",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a0068",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a006c",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0070",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0074",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer5": {
+          "address": "0x0300200c",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer5": {
+          "address": "0x03003008",
+          "mask": "0x00080000",
+          "expected": "0x00080000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000020",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 56,
+        "mustNotAccessChannel": 5,
+        "sharedGlobalRegisters": "read-only"
+      }
+    },
+    "timer6": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 2,
+      "cargoFeature": "timer6",
+      "capability": "timer6SelfTest",
+      "failureFlag": "timer6SelfTestFailed",
+      "irq": 57,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 6
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a0078",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a007c",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a0080",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0084",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a0088",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer6": {
+          "address": "0x0300200c",
+          "mask": "0x00008000",
+          "expected": "0x00008000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer6": {
+          "address": "0x03003008",
+          "mask": "0x00100000",
+          "expected": "0x00100000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000040",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 57,
+        "mustNotAccessChannel": 6,
+        "sharedGlobalRegisters": "read-only"
+      }
+    },
+    "timer7": {
+      "kind": "dw-apb-timer-channel",
+      "leaseBit": 3,
+      "cargoFeature": "timer7",
+      "capability": "timer7SelfTest",
+      "failureFlag": "timer7SelfTestFailed",
+      "irq": 58,
+      "bank": {
+        "address": "0x030a0000",
+        "size": "0x00010000",
+        "ownership": "shared-bank-exclusive-channel",
+        "channel": 7
+      },
+      "registers": {
+        "load": {
+          "address": "0x030a008c",
+          "access": "read-write"
+        },
+        "current": {
+          "address": "0x030a0090",
+          "access": "read-only"
+        },
+        "control": {
+          "address": "0x030a0094",
+          "access": "read-write"
+        },
+        "eoi": {
+          "address": "0x030a0098",
+          "access": "read-clear"
+        },
+        "status": {
+          "address": "0x030a009c",
+          "access": "read-only"
+        }
+      },
+      "sharedPreconditions": {
+        "clockXtalMisc": {
+          "address": "0x03002000",
+          "mask": "0x00004000",
+          "expected": "0x00004000",
+          "access": "read-only"
+        },
+        "clockTimer7": {
+          "address": "0x0300200c",
+          "mask": "0x00010000",
+          "expected": "0x00010000",
+          "access": "read-only"
+        },
+        "resetTimerIp": {
+          "address": "0x03003008",
+          "mask": "0x00002000",
+          "expected": "0x00002000",
+          "access": "read-only"
+        },
+        "resetTimer7": {
+          "address": "0x03003008",
+          "mask": "0x00200000",
+          "expected": "0x00200000",
+          "access": "read-only"
+        },
+        "clockSource": {
+          "address": "0x030001a0",
+          "mask": "0x00000080",
+          "expected": "0x00000000",
+          "access": "read-only"
+        }
+      },
+      "selfTest": {
+        "clockHz": 25000000,
+        "periodTicks": 2500000,
+        "timeoutRtosTicks": 100,
+        "rtosTickHz": 200
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-subresource",
+        "mustNotClaimIrq": 58,
+        "mustNotAccessChannel": 7,
+        "sharedGlobalRegisters": "read-only"
+      }
+    }
+  },
+  "profiles": {
+    "base": {
+      "peripherals": [],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "rpmsg"
+      ]
+    },
+    "timer4": {
+      "peripherals": [
+        "timer4"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer4SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer5": {
+      "peripherals": [
+        "timer5"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer5SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer6": {
+      "peripherals": [
+        "timer6"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer6SelfTest",
+        "rpmsg"
+      ]
+    },
+    "timer7": {
+      "peripherals": [
+        "timer7"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer7SelfTest",
+        "rpmsg"
+      ]
+    }
+  }
+}

@@ -128,9 +128,9 @@ def main() -> int:
     print(f"FSBL:    {len(fsbl)} bytes")
     print(f"DDR:     {len(ddr)} bytes")
 
-    # BLCP_2nd is empty on LicheeRV Nano (blcp2nd_size == 0). sophgo-
-    # fiptool requires --rtos but accepts an empty file; we just let the
-    # caller substitute sophgo-fiptool's cvirtos.bin default when absent.
+    # Preserve a non-empty vendor BLCP_2nd only as an inspectable extraction.
+    # The repacker never selects it implicitly: a caller must explicitly pair
+    # a C906L image with its execution address, or encode size/runaddr as zero.
     if blcp2nd_size > 0:
         if blcp2nd_addr + blcp2nd_size > len(fip):
             print(f"FATAL: BLCP_2nd extent runs off FIP",

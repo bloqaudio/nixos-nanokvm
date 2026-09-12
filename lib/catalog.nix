@@ -240,6 +240,54 @@ in
   })
   (debug "mainline")
   (live "mainline" "usb" "live-mainline" { })
+  # The auxiliary-core variant is deliberately a separate catalog leaf: its
+  # FIP starts C906L and its DT removes the matching DDR carveouts from Linux.
+  # The artifact builder also selects the firmware-bearing ROM USB runner.
+  (live "mainline" "usb-c906l" "live-mainline-c906l" {
+    modules = [ ({ ... }: { sg2002.auxCore.enable = true; }) ];
+  })
+  # Explicit Timer4 lease: the evaluated auxCore configuration selects the
+  # matched firmware-bearing FIP and USB runner through the artifact builder.
+  (live "mainline" "usb-c906l-timer4" "live-mainline-c906l-timer4" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer4" ];
+        };
+      })
+    ];
+  })
+  (live "mainline" "usb-c906l-timer5" "live-mainline-c906l-timer5" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer5" ];
+        };
+      })
+    ];
+  })
+  (live "mainline" "usb-c906l-timer6" "live-mainline-c906l-timer6" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer6" ];
+        };
+      })
+    ];
+  })
+  (live "mainline" "usb-c906l-timer7" "live-mainline-c906l-timer7" {
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer7" ];
+        };
+      })
+    ];
+  })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
   # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder
@@ -368,6 +416,97 @@ in
   # USB-NBD live exercising the full PCIe hardware — eth0 (stmmac) and
   # wlan0 (AIC8800) both come up.
   (pcieLive "mainline" "live-pcie-mainline" pcieLiveExtras)
+  # Auxiliary-core product compositions are explicit catalog leaves.  They
+  # retain the PCIe carrier topology while disabling SDIO WiFi, matching the
+  # current C906L ownership contract and avoiding a second out-of-tree module
+  # in the constrained live image.
+  (pcie "mainline" [ "live" "usb-c906l" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore.enable = true;
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer4" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer4";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer4" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer5" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer5";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer5" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer6" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer6";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer6" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
+  (pcie "mainline" [ "live" "usb-c906l-timer7" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-pcie-mainline-c906l-timer7";
+    modules = [
+      ({ ... }: {
+        sg2002.auxCore = {
+          enable = true;
+          peripherals = [ "timer7" ];
+        };
+        sg2002.wifi.enable = false;
+        services.nanokvm = {
+          enable = true;
+          openFirewall = true;
+        };
+      })
+    ];
+  })
 
   # ===== licheerv-nano-w / mainline / NFS over WiFi =====
   # Same WiFi-rooted experiment as the picoclaw wifi entry, on the

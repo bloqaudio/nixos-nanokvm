@@ -7,17 +7,66 @@
 #                        (18d1:d00d), stage a
 #                        FIT via `fastboot stage` + `fastboot oem run`.
 #                        Requires mainline FIP + android-tools.
-{ python3
+{ lib
+, python3
+, runCommand
 , writeShellApplication
 , symlinkJoin
 , android-tools
 , sg2002-cv181x-usb-dl
 , sg2002-fip
 , sg2002-fip-mainline-uboot
+, c906lContract
+, mainlineOnly ? false
+, c906lFirmware ? sg2002-fip-mainline-uboot.rtosFirmware or null
+, c906lFirmwareFile ? if c906lFirmware == null then null else c906lFirmware.firmwareFile or null
+  # This is the start of U-Boot's ordinary fastboot staging buffer.  The C906L
+  # check runs before a FIT is staged and only reads this range, making it a
+  # deliberately bounded, disposable cache-eviction span.
+, c906lCacheScratchAddress ? if c906lFirmware == null then null else 2181038080 # 0x82000000
+, c906lCacheScratchSize ? if c906lFirmware == null then null else 1048576 # 0x00100000
+, c906lReadyTimeout ? 15
 ,
 }:
 let
   pythonEnv = python3.withPackages (ps: [ ps.pyserial ps.pyusb ]);
+  haveC906l = c906lFirmware != null;
+  fipHasContract = !haveC906l
+    || builtins.hasAttr "c906lContract" sg2002-fip-mainline-uboot;
+  fipContractMatches = !haveC906l || !fipHasContract
+    || toString sg2002-fip-mainline-uboot.c906lContract == toString c906lContract;
+  fipHasFirmware = !haveC906l
+    || (sg2002-fip-mainline-uboot.rtosFirmware or null) != null;
+  fipFirmwareMatches = !haveC906l || !fipHasFirmware
+    || toString sg2002-fip-mainline-uboot.rtosFirmware == toString c906lFirmware;
+  firmwareFileMatches = !haveC906l
+    || c906lFirmwareFile == (c906lFirmware.firmwareFile or null);
+  profileName = c906lContract.profileName;
+  runnerIdentity = lib.optionalAttrs haveC906l
+    (sg2002-fip-mainline-uboot.c906lIdentity or { });
+
+  runnerUnitTests = runCommand "sg2002-usb-boot-mainline-${profileName}-unit-tests"
+    {
+      nativeBuildInputs = [ python3 ];
+    } ''
+    cp ${./usb_boot_mainline.py} usb_boot_mainline.py
+    cp ${./test_usb_boot_mainline.py} test_usb_boot_mainline.py
+    PYTHONPATH=${c906lContract}/python \
+      python3 -m unittest -v test_usb_boot_mainline.py
+    touch "$out"
+  '';
+
+  c906lArguments =
+    if c906lFirmware == null then [ ] else [
+      "--c906l-firmware"
+      "${c906lFirmware}/${c906lFirmwareFile}"
+      "--c906l-cache-scratch-address"
+      "0x${lib.toHexString c906lCacheScratchAddress}"
+      "--c906l-cache-scratch-size"
+      "0x${lib.toHexString c906lCacheScratchSize}"
+      "--c906l-ready-timeout"
+      (toString c906lReadyTimeout)
+    ];
 
   # Path to the upstream cv181x-rom-dl's lib dir — contains the
   # `cv_usb_util` package + `cv_dl_magic.bin`.
@@ -49,14 +98,73 @@ let
     name = "usb-boot-mainline";
     runtimeInputs = [ android-tools ];
     text = ''
+      export PYTHONPATH=${c906lContract}/python''${PYTHONPATH:+:$PYTHONPATH}
       exec ${pythonEnv}/bin/python3 ${./usb_boot_mainline.py} \
         --rom-dl ${sg2002-cv181x-usb-dl}/bin/cv181x-rom-dl \
         --fip ${sg2002-fip-mainline-uboot} \
+        ${lib.escapeShellArgs c906lArguments} \
         "$@"
     '';
   };
 in
-symlinkJoin {
-  name = "sg2002-usb-boot";
-  paths = [ usb-boot-vendor usb-boot-mainline ];
-}
+assert lib.assertMsg
+  (
+    c906lContract.protocolVersion.major == 1
+      && c906lContract.protocolVersion.minor == 1
+  ) ''
+  SG2002 C906L USB validation currently requires the exact ABI 1.1 contract
+'';
+assert lib.assertMsg fipHasContract ''
+  A C906L-bearing USB runner requires its FIP to propagate the canonical
+  c906lContract package
+'';
+assert lib.assertMsg fipContractMatches ''
+  The USB runner's canonical C906L contract does not match its FIP
+'';
+assert lib.assertMsg fipHasFirmware ''
+  A C906L-bearing USB runner requires the exact firmware propagated by its FIP
+'';
+assert lib.assertMsg (fipFirmwareMatches && firmwareFileMatches) ''
+  The USB runner's C906L firmware file does not exactly match its FIP
+'';
+assert lib.assertMsg
+  (
+    if c906lFirmware == null then
+      c906lFirmwareFile == null
+      && c906lCacheScratchAddress == null
+        && c906lCacheScratchSize == null
+    else
+      c906lFirmwareFile != null
+      && c906lCacheScratchAddress != null
+        && c906lCacheScratchSize != null
+  ) ''
+  A C906L USB runner requires a firmware file and explicitly safe
+  cache-scratch address/size
+'';
+if mainlineOnly then
+  symlinkJoin
+  {
+    name = "sg2002-usb-boot-mainline";
+    paths = [ usb-boot-mainline ];
+    postBuild = ''
+      # A package parameterised by a mainline FIP must not leave the generic
+      # `usb-boot` name pointing at the unrelated vendor FIP.  Retain the
+      # explicit name for artifact builders and make the ordinary entry point
+      # an alias of exactly the same, caller-supplied mainline runner.
+      ln -s usb-boot-mainline $out/bin/usb-boot
+    '';
+    passthru = runnerIdentity // {
+      c906lContract = if haveC906l then c906lContract else null;
+      tests.runner = runnerUnitTests;
+    };
+    meta.mainProgram = "usb-boot";
+  }
+else
+  symlinkJoin {
+    name = "sg2002-usb-boot";
+    paths = [ usb-boot-vendor usb-boot-mainline ];
+    passthru = runnerIdentity // {
+      c906lContract = if haveC906l then c906lContract else null;
+      tests.mainlineRunner = runnerUnitTests;
+    };
+  }

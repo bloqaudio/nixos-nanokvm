@@ -29,5 +29,8 @@ secrets/
 __pycache__/
 *.py[cod]
 
+# Local Cargo build products. Firmware builds are realised through Nix.
+firmware/sg2002-c906l/target/
+
 # Local terminal recordings and rendered boot GIFs.
 media/captures/

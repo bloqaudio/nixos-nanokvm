@@ -33,6 +33,16 @@ let
     licheerv-nano-build = inputs.licheerv-nano-build;
   };
 
+  riscv64Embedded = final.buildPackages.pkgsCross.riscv64-embedded;
+  c906lRustPlatform = final.buildPackages.callPackage ./sg2002/c906l-rust-platform.nix {
+    inherit riscv64Embedded;
+  };
+  c906lContractFor = peripherals:
+    final.buildPackages.callPackage ./sg2002/c906l-contract {
+      inherit peripherals;
+    };
+  c906lMemoryMap = import ./sg2002/c906l-memory-map.nix { inherit lib; };
+
 in
 {
   # -----------------------------------------------------------------
@@ -176,13 +186,98 @@ in
 
   # Mainline OpenSBI with our U-Boot DTB baked in so OpenSBI has an
   # FDT even when the FSBL doesn't pass one via fw_dynamic_info.
-  sg2002-opensbi-mainline = cross.opensbi.override {
-    withFDT = "${cross.sg2002-uboot-mainline}/u-boot.dtb";
+  sg2002-opensbi-mainline-for = uboot:
+    cross.opensbi.override {
+      withFDT = "${uboot}/u-boot.dtb";
+    };
+  sg2002-opensbi-mainline = final.sg2002-opensbi-mainline-for cross.sg2002-uboot-mainline;
+
+  # Keep the pinned source visible for consumers that need its data blobs,
+  # and package our fail-safe executable separately.  Upstream's script
+  # otherwise starts its bundled RTOS at a hard-coded, board-wrong address.
+  sg2002-sophgo-fiptool = inputs.sophgo-fiptool;
+  sg2002-fiptool = final.buildPackages.callPackage ./sg2002/fiptool {
+    src = inputs.sophgo-fiptool;
   };
 
-  # Sophgo's fiptool: source-only package. Loaded via the pinned
-  # flake input — fiptool is Python + bundled FSBL/DDR blobs.
-  sg2002-sophgo-fiptool = inputs.sophgo-fiptool;
+  # The C906L is a bare-metal target, so it needs the newlib/ELF toolchain,
+  # not the riscv64-linux cross compiler used by the kernel and userspace.
+  sg2002-c906l-contract-for = c906lContractFor;
+  sg2002-c906l-contract = final.sg2002-c906l-contract-for [ ];
+  sg2002-c906l-contract-timer4 =
+    final.sg2002-c906l-contract-for [ "timer4" ];
+  sg2002-c906l-contract-timer5 =
+    final.sg2002-c906l-contract-for [ "timer5" ];
+  sg2002-c906l-contract-timer6 =
+    final.sg2002-c906l-contract-for [ "timer6" ];
+  sg2002-c906l-contract-timer7 =
+    final.sg2002-c906l-contract-for [ "timer7" ];
+  sg2002-c906l-rust-for = peripherals:
+    let
+      contract = final.sg2002-c906l-contract-for peripherals;
+    in
+    (riscv64Embedded.callPackage ./sg2002/c906l-firmware/rust.nix {
+      inherit contract;
+      rustPlatform = c906lRustPlatform;
+    }).overrideAttrs
+      (old: {
+        # rustPlatform intersects package platforms with rustc's hosted
+        # platform list, which omits LLVM's supported riscv64-none target.
+        meta = (old.meta or { }) // { platforms = [ "riscv64-none" ]; };
+      });
+  sg2002-c906l-rust = final.sg2002-c906l-rust-for [ ];
+  sg2002-c906l-rust-timer4 = final.sg2002-c906l-rust-for [ "timer4" ];
+  sg2002-c906l-rust-timer5 = final.sg2002-c906l-rust-for [ "timer5" ];
+  sg2002-c906l-rust-timer6 = final.sg2002-c906l-rust-for [ "timer6" ];
+  sg2002-c906l-rust-timer7 = final.sg2002-c906l-rust-for [ "timer7" ];
+  sg2002-c906l-rust-tests-for = peripherals:
+    final.buildPackages.callPackage ./sg2002/c906l-firmware/rust-tests.nix {
+      contract = final.sg2002-c906l-contract-for peripherals;
+    };
+  sg2002-c906l-rust-tests = final.sg2002-c906l-rust-tests-for [ ];
+  sg2002-c906l-rust-tests-timer4 =
+    final.sg2002-c906l-rust-tests-for [ "timer4" ];
+  sg2002-c906l-rust-tests-timer5 =
+    final.sg2002-c906l-rust-tests-for [ "timer5" ];
+  sg2002-c906l-rust-tests-timer6 =
+    final.sg2002-c906l-rust-tests-for [ "timer6" ];
+  sg2002-c906l-rust-tests-timer7 =
+    final.sg2002-c906l-rust-tests-for [ "timer7" ];
+  sg2002-c906l-control-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-control { inherit contract kernel; };
+  sg2002-c906l-remoteproc-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-remoteproc { inherit contract kernel; };
+  sg2002-c906l-ctl-for = contract:
+    final.callPackage ./sg2002/c906l-cli {
+      inherit contract;
+    };
+  sg2002-c906l-ctl =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract;
+  sg2002-c906l-ctl-timer4 =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer4;
+  sg2002-c906l-ctl-timer5 =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer5;
+  sg2002-c906l-ctl-timer6 =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer6;
+  sg2002-c906l-ctl-timer7 =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer7;
+  sg2002-c906l-firmware-for = peripherals:
+    let
+      contract = final.sg2002-c906l-contract-for peripherals;
+    in
+    final.buildPackages.callPackage ./sg2002/c906l-firmware {
+      inherit contract riscv64Embedded;
+      sg2002-c906l-rust = final.sg2002-c906l-rust-for peripherals;
+    };
+  sg2002-c906l-firmware = final.sg2002-c906l-firmware-for [ ];
+  sg2002-c906l-firmware-timer4 =
+    final.sg2002-c906l-firmware-for [ "timer4" ];
+  sg2002-c906l-firmware-timer5 =
+    final.sg2002-c906l-firmware-for [ "timer5" ];
+  sg2002-c906l-firmware-timer6 =
+    final.sg2002-c906l-firmware-for [ "timer6" ];
+  sg2002-c906l-firmware-timer7 =
+    final.sg2002-c906l-firmware-for [ "timer7" ];
 
   # Vendor FIP (FSBL + vendor OpenSBI + vendor U-Boot) extracted from
   # a known-good Sipeed SD image. ROM loads fip.bin from FAT partition;
@@ -211,16 +306,54 @@ in
   # via sophgo's fiptool. This is what the USB recovery flow loads.
   sg2002-fip-mainline-uboot = final.callPackage ./sg2002/fip-mainline-uboot {
     sg2002-fip = final.sg2002-fip;
-    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline;
   };
+  sg2002-fip-mainline-uboot-for = rtosFirmware:
+    let
+      uboot = cross.sg2002-uboot-mainline-for rtosFirmware;
+    in
+    final.callPackage ./sg2002/fip-mainline-uboot {
+      sg2002-fip = final.sg2002-fip;
+      sg2002-opensbi-mainline = final.sg2002-opensbi-mainline-for uboot;
+      sg2002-uboot-mainline = uboot;
+      inherit rtosFirmware;
+    };
+  sg2002-fip-mainline-uboot-c906l =
+    final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware;
+  sg2002-fip-mainline-uboot-c906l-timer4 =
+    final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer4;
+  sg2002-fip-mainline-uboot-c906l-timer5 =
+    final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer5;
+  sg2002-fip-mainline-uboot-c906l-timer6 =
+    final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer6;
+  sg2002-fip-mainline-uboot-c906l-timer7 =
+    final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer7;
   sg2002-fip-mainline-fastboot = final.callPackage ./sg2002/fip-mainline-uboot {
     sg2002-fip = final.sg2002-fip;
-    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline-fastboot;
   };
+  sg2002-fip-mainline-fastboot-for = rtosFirmware:
+    let
+      uboot = cross.sg2002-uboot-mainline-fastboot-for rtosFirmware;
+    in
+    final.callPackage ./sg2002/fip-mainline-uboot {
+      sg2002-fip = final.sg2002-fip;
+      sg2002-opensbi-mainline = final.sg2002-opensbi-mainline-for uboot;
+      sg2002-uboot-mainline = uboot;
+      inherit rtosFirmware;
+    };
+  sg2002-fip-mainline-fastboot-c906l =
+    final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware;
+  sg2002-fip-mainline-fastboot-c906l-timer4 =
+    final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer4;
+  sg2002-fip-mainline-fastboot-c906l-timer5 =
+    final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer5;
+  sg2002-fip-mainline-fastboot-c906l-timer6 =
+    final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer6;
+  sg2002-fip-mainline-fastboot-c906l-timer7 =
+    final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer7;
   # PicoClaw's ST7789 needs the Ethernet-pad handoff before fastboot starts.
   # Keep this complete U-Boot/OpenSBI/FIP chain separate from every generic
   # SG2002 image so those images cannot write the panel's pins.
@@ -229,7 +362,6 @@ in
   };
   sg2002-fip-mainline-picoclaw-splash = final.callPackage ./sg2002/fip-mainline-uboot {
     sg2002-fip = final.sg2002-fip;
-    sg2002-sophgo-fiptool = final.sg2002-sophgo-fiptool;
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline-picoclaw-splash;
     sg2002-uboot-mainline = cross.sg2002-uboot-mainline-picoclaw-splash;
   };
@@ -309,9 +441,22 @@ in
     };
 
   sg2002-uboot-mainline = cross.callPackage ./sg2002/uboot-mainline { };
+  sg2002-uboot-mainline-for = rtosFirmware:
+    cross.sg2002-uboot-mainline.override {
+      memoryTopHide = c906lMemoryMap.dramEnd - rtosFirmware.firmwareAddress;
+    };
+  sg2002-uboot-mainline-c906l =
+    final.sg2002-uboot-mainline-for final.sg2002-c906l-firmware;
   sg2002-uboot-mainline-fastboot = cross.sg2002-uboot-mainline.override {
     bootCommand = "fastboot usb 0";
   };
+  sg2002-uboot-mainline-fastboot-for = rtosFirmware:
+    cross.sg2002-uboot-mainline.override {
+      bootCommand = "fastboot usb 0";
+      memoryTopHide = c906lMemoryMap.dramEnd - rtosFirmware.firmwareAddress;
+    };
+  sg2002-uboot-mainline-fastboot-c906l =
+    final.sg2002-uboot-mainline-fastboot-for final.sg2002-c906l-firmware;
   sg2002-uboot-mainline-picoclaw-splash = cross.sg2002-uboot-mainline.override {
     picoclawSplash = true;
     bootCommand = "picoclaw_splash; fastboot usb 0";
@@ -320,6 +465,46 @@ in
   # Normal nixpkgs kernel + SG2002 patches + structured deltas (see
   # ./sg2002/linux-mainline/default.nix). No hand-rendered configfile.
   sg2002-kernel-mainline = cross.callPackage ./sg2002/linux-mainline { };
+  sg2002-c906l-control =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract;
+  sg2002-c906l-remoteproc =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract;
+  sg2002-c906l-control-timer4 =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer4;
+  sg2002-c906l-control-timer5 =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer5;
+  sg2002-c906l-control-timer6 =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer6;
+  sg2002-c906l-control-timer7 =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer7;
+  sg2002-c906l-remoteproc-timer4 =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer4;
+  sg2002-c906l-remoteproc-timer5 =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer5;
+  sg2002-c906l-remoteproc-timer6 =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer6;
+  sg2002-c906l-remoteproc-timer7 =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-timer7;
   # Keep the normal mainline kernel's Bluetooth stack disabled.  The AIC
   # HCI transport is experimental on this board, so only its explicit
   # consumer pays for bluetooth.ko and its protocol dependencies.
@@ -366,6 +551,22 @@ in
   sg2002-dtb-mainline-high-speed = dtbMainline.high-speed;
   sg2002-dtb-mainline-eth = dtbMainline.eth;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
+  sg2002-dtb-mainline-nowifi-c906l-for = contract:
+    dtbMainline.nowifi-c906l-for contract;
+  sg2002-dtb-mainline-nowifi-c906l =
+    final.sg2002-dtb-mainline-nowifi-c906l-for final.sg2002-c906l-contract;
+  sg2002-dtb-mainline-nowifi-c906l-timer4 =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer4;
+  sg2002-dtb-mainline-nowifi-c906l-timer5 =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer5;
+  sg2002-dtb-mainline-nowifi-c906l-timer6 =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer6;
+  sg2002-dtb-mainline-nowifi-c906l-timer7 =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer7;
   sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
@@ -373,6 +574,23 @@ in
   sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-for = contract:
+    dtbMainline.pcie-nowifi-c906l-for contract;
+  sg2002-dtb-mainline-pcie-nowifi-c906l =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-timer4 =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer4;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-timer5 =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer5;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-timer6 =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer6;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-timer7 =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-timer7;
   sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
   sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;
@@ -389,15 +607,38 @@ in
   };
   sg2002-alsa-kernel-test = final.callPackage ./sg2002/alsa-kernel-test { };
 
+  sg2002-usb-boot-for = mainlineFip:
+    final.callPackage ./sg2002/usb-boot {
+      c906lContract = mainlineFip.c906lContract;
+      sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
+      sg2002-fip = final.sg2002-fip;
+      sg2002-fip-mainline-uboot = mainlineFip;
+      mainlineOnly = true;
+    };
+  # Keep the historical combined vendor/mainline package for existing users.
+  # Parameterised runners are mainline-only so their generic executable can
+  # never silently select the unrelated vendor FIP.
   sg2002-usb-boot = final.callPackage ./sg2002/usb-boot {
+    c906lContract = final.sg2002-c906l-contract;
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
     sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-fastboot;
   };
+  sg2002-usb-boot-c906l =
+    final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l;
+  sg2002-usb-boot-c906l-timer4 =
+    final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer4;
+  sg2002-usb-boot-c906l-timer5 =
+    final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer5;
+  sg2002-usb-boot-c906l-timer6 =
+    final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer6;
+  sg2002-usb-boot-c906l-timer7 =
+    final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer7;
   # This runner differs only in the FIP sent after ROM USB-DL.  It makes
   # PicoClaw's board-private U-Boot splash reachable without changing any
   # other SG2002 USB boot path.
   sg2002-usb-boot-picoclaw-splash = final.callPackage ./sg2002/usb-boot {
+    c906lContract = final.sg2002-c906l-contract;
     sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
     sg2002-fip = final.sg2002-fip;
     sg2002-fip-mainline-uboot = final.sg2002-fip-mainline-picoclaw-splash;

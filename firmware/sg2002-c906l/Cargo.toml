@@ -1,0 +1,34 @@
+[package]
+name = "sg2002-c906l-firmware"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+members = ["pac", "staticlib"]
+default-members = ["."]
+resolver = "3"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+timer4 = []
+timer5 = []
+timer6 = []
+timer7 = []
+
+[dependencies]
+embedded-hal = "1.0.0"
+sg2002-pac = { path = "pac" }
+
+[profile.release]
+codegen-units = 1
+debug = 1
+lto = "fat"
+opt-level = "s"
+overflow-checks = true
+panic = "abort"
+strip = false

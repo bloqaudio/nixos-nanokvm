@@ -1,0 +1,28 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	c906l-control {
+		compatible = "sophgo,sg2002-c906l-control";
+		sophgo,lease-mask = /bits/ 64 <1>;
+		sophgo,leased-peripherals = "timer4";
+		sophgo,c906l-leased-mmio-ranges = /bits/ 64 <0x030a0050 0x14>;
+		sophgo,c906l-leased-mmio-range-owners = "timer4";
+		sophgo,c906l-local-irqs = <55>;
+		sophgo,c906l-local-irq-owners = "timer4";
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		timer-channel@50 {
+			compatible = "test,linux-timer-channel";
+			reg = <0x030a0050 0x14>;
+			status = "disabled";
+		};
+	};
+};
