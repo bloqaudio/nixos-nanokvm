@@ -2186,6 +2186,7 @@ struct bridge_options {
 	int half_scale;
 	int use_dmabuf;
 	int use_vpss;
+	int use_isp;
 	int mid_heap_reserved;
 	uint32_t encoder_input_format; /* V4L2_PIX_FMT_NV21 or NV12 */
 };
@@ -2741,14 +2742,36 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	init_step = "capture G_FMT";
 	if (get_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, &capture_fmt))
 		goto out_errno;
-	if (capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY ||
+	if (opts->use_isp) {
+		init_step = "capture ISP NV21 S_FMT";
+		if (set_encoder_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+				       V4L2_PIX_FMT_NV21, capture_fmt.width,
+				       capture_fmt.height, &capture_fmt))
+			goto out_errno;
+		if (capture_fmt.pixelformat != V4L2_PIX_FMT_NV21) {
+			fprintf(stderr, "capture driver did not accept hardware ISP NV21\n");
+			goto out;
+		}
+	}
+	if ((capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY &&
+	     capture_fmt.pixelformat != V4L2_PIX_FMT_NV21 &&
+	     capture_fmt.pixelformat != V4L2_PIX_FMT_NV12) ||
 	    capture_fmt.width < 4 || capture_fmt.height < 2 ||
-	    capture_fmt.bytesperline < capture_fmt.width * 2) {
-		fprintf(stderr, "capture must provide packed UYVY with a valid stride\n");
+	    capture_fmt.bytesperline < capture_fmt.width *
+		(capture_fmt.pixelformat == V4L2_PIX_FMT_UYVY ? 2U : 1U)) {
+		fprintf(stderr, "capture must provide UYVY/NV12/NV21 with a valid stride\n");
 		goto out;
 	}
-	visible_width = opts->half_scale ? capture_fmt.width / 2 : capture_fmt.width;
-	visible_height = opts->half_scale ? capture_fmt.height / 2 : capture_fmt.height;
+	{
+		unsigned int scale = opts->half_scale ? 2U : opts->use_isp ? 4U : 1U;
+
+		if (capture_fmt.width % (scale * 2) || capture_fmt.height % (scale * 2)) {
+			fprintf(stderr, "capture geometry cannot produce aligned %ux YUV420\n", scale);
+			goto out;
+		}
+		visible_width = capture_fmt.width / scale;
+		visible_height = capture_fmt.height / scale;
+	}
 	coded_height = (visible_height + 15U) & ~15U;
 
 	/* Encoder first: its padded OUTPUT geometry dictates the VPSS
@@ -2778,7 +2801,7 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	/* VPSS: OUTPUT = the capture frame, CAPTURE = the encoder surface. */
 	init_step = "scaler OUTPUT S_FMT";
 	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
-			       V4L2_PIX_FMT_UYVY, capture_fmt.width,
+			       capture_fmt.pixelformat, capture_fmt.width,
 			       capture_fmt.height, &scaler_in_fmt))
 		goto out_errno;
 	if (scaler_in_fmt.bytesperline != capture_fmt.bytesperline) {
@@ -3219,6 +3242,8 @@ static void usage(const char *program)
 		"  --scaler cpu|vpss    cpu = software UYVY->NVxx (default); vpss = hardware\n"
 		"                       scaler/CSC via the mem2mem node, zero-copy dmabuf chain\n"
 		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
+		"  --isp               select hardware Bayer->NV21 capture and VPSS->NV12;\n"
+		"                       quarter size (640x360 on GC4653), or --half-scale\n"
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
@@ -3313,6 +3338,8 @@ int main(int argc, char **argv)
 				opts.use_vpss = 1;
 			else if (strcmp(argv[i], "cpu"))
 				goto bad_usage;
+		} else if (!strcmp(arg, "--isp")) {
+			opts.use_isp = 1;
 		} else if (!strcmp(arg, "--scaler-node") && i + 1 < argc) {
 			opts.scaler_path = argv[++i];
 		} else if (!strcmp(arg, "--mid-buffers") && i + 1 < argc) {
@@ -3368,6 +3395,10 @@ int main(int argc, char **argv)
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGINT, &action, NULL) ||
 	    sigaction(SIGTERM, &action, NULL))
 		return EXIT_FAILURE;
+	if (opts.use_isp) {
+		opts.use_vpss = 1;
+		opts.encoder_input_format = V4L2_PIX_FMT_NV12;
+	}
 	if (opts.use_vpss && opts.max_fps) {
 		fprintf(stderr, "--max-fps is not supported with --scaler vpss\n");
 		goto bad_usage;
