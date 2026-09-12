@@ -608,6 +608,17 @@ in
         sg2002.wifi.enable = false;
         services.nanokvm.enable = lib.mkForce false;
         environment.systemPackages = lib.mkForce [
+          pkgs.bashInteractive
+          pkgs.coreutils
+          pkgs.gnugrep
+          pkgs.gnused
+          pkgs.gawk
+          pkgs.findutils
+          pkgs.util-linux
+          pkgs.kmod
+          pkgs.busybox
+          pkgs.iproute2
+          pkgs.systemd
           pkgs.sg2002-h264-bridge
           pkgs.procps
           (pkgs.v4l-utils.override { withGUI = false; withBPF = false; })
