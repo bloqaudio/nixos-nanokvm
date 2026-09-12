@@ -27,6 +27,13 @@ imports that allocation into VPSS, which scales and writes NV12 directly into
 the encoder's DMA-BUF. It defaults to quarter resolution (640×360 for GC4653);
 `--size half` selects 1280×720. No CPU demosaic/conversion runs in this mode.
 
+The bridge passes the capture colour tuple to VPSS and Coda, including the
+extended V4L2 fields. VPSS reports this tuple on both queues because its YUV
+matrix is identity. This fixes V4L2 metadata, not H.264 bitstream signalling:
+Coda's current SPS crop rewrite omits VUI. Until VUI support is implemented,
+image comparisons must explicitly decode as full-range BT.601 with a linear
+transfer function; decoder defaults do not establish correct colour rendering.
+
 ## Reversible laboratory boot
 
 Build the dedicated profile:

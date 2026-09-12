@@ -911,15 +911,18 @@ static int get_format(int fd, enum v4l2_buf_type type,
 		      struct v4l2_pix_format *pix)
 {
 	struct v4l2_format format = { .type = type };
+	format.fmt.pix.priv = V4L2_PIX_FMT_PRIV_MAGIC;
 	if (xioctl(fd, VIDIOC_G_FMT, &format))
 		return -1;
 	*pix = format.fmt.pix;
 	return 0;
 }
 
-static int set_encoder_format(int fd, enum v4l2_buf_type type,
-			      uint32_t pixel_format, unsigned int width,
-			      unsigned int height, struct v4l2_pix_format *actual)
+static int set_video_format(int fd, enum v4l2_buf_type type,
+			    uint32_t pixel_format, unsigned int width,
+			    unsigned int height,
+			    const struct v4l2_pix_format *color,
+			    struct v4l2_pix_format *actual)
 {
 	struct v4l2_format format = { .type = type };
 
@@ -927,12 +930,26 @@ static int set_encoder_format(int fd, enum v4l2_buf_type type,
 	format.fmt.pix.height = height;
 	format.fmt.pix.pixelformat = pixel_format;
 	format.fmt.pix.field = V4L2_FIELD_NONE;
+	format.fmt.pix.priv = V4L2_PIX_FMT_PRIV_MAGIC;
+	if (color) {
+		format.fmt.pix.colorspace = color->colorspace;
+		format.fmt.pix.xfer_func = color->xfer_func;
+		format.fmt.pix.ycbcr_enc = color->ycbcr_enc;
+		format.fmt.pix.quantization = color->quantization;
+	}
 	if (pixel_format == V4L2_PIX_FMT_H264)
 		format.fmt.pix.sizeimage = 1024U * 1024U;
 	if (xioctl(fd, VIDIOC_S_FMT, &format))
 		return -1;
 	*actual = format.fmt.pix;
 	return 0;
+}
+
+static int set_encoder_format(int fd, enum v4l2_buf_type type,
+			      uint32_t pixel_format, unsigned int width,
+			      unsigned int height, struct v4l2_pix_format *actual)
+{
+	return set_video_format(fd, type, pixel_format, width, height, NULL, actual);
 }
 
 static int set_output_crop(int fd, unsigned int width, unsigned int height)
@@ -2783,9 +2800,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	/* Encoder first: its padded OUTPUT geometry dictates the VPSS
 	 * CAPTURE surface layout. */
 	init_step = "encoder OUTPUT S_FMT";
-	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+	if (set_video_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			       opts->encoder_input_format, visible_width,
-			       coded_height, &encoder_out_fmt))
+			       coded_height, &capture_fmt, &encoder_out_fmt))
 		goto out_errno;
 	init_step = "encoder OUTPUT crop";
 	if (set_output_crop(encoder_fd, visible_width, visible_height))
@@ -2794,9 +2811,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	if (get_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, &encoder_out_fmt))
 		goto out_errno;
 	init_step = "encoder CAPTURE S_FMT";
-	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
-			       V4L2_PIX_FMT_H264, visible_width,
-			       visible_height, &encoder_cap_fmt))
+	if (set_video_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			     V4L2_PIX_FMT_H264, visible_width,
+			     visible_height, &capture_fmt, &encoder_cap_fmt))
 		goto out_errno;
 	if (encoder_cap_fmt.pixelformat != V4L2_PIX_FMT_H264)
 		goto out;
@@ -2806,9 +2823,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 
 	/* VPSS: OUTPUT = the capture frame, CAPTURE = the encoder surface. */
 	init_step = "scaler OUTPUT S_FMT";
-	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+	if (set_video_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			       capture_fmt.pixelformat, capture_fmt.width,
-			       capture_fmt.height, &scaler_in_fmt))
+			       capture_fmt.height, &capture_fmt, &scaler_in_fmt))
 		goto out_errno;
 	if (scaler_in_fmt.bytesperline != capture_fmt.bytesperline) {
 		fprintf(stderr, "capture stride %u unsupported by scaler (wants %u)\n",
@@ -2816,9 +2833,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 		goto out;
 	}
 	init_step = "scaler CAPTURE S_FMT";
-	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+	if (set_video_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			       opts->encoder_input_format, encoder_out_fmt.width,
-			       encoder_out_fmt.height, &scaler_out_fmt))
+			       encoder_out_fmt.height, &capture_fmt, &scaler_out_fmt))
 		goto out_errno;
 	if (scaler_out_fmt.bytesperline != encoder_out_fmt.bytesperline ||
 	    scaler_out_fmt.sizeimage > encoder_out_fmt.sizeimage) {

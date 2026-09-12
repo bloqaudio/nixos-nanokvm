@@ -281,9 +281,19 @@ let
       name = "media-sophgo-fix-vpss-queue-state-bounds";
       patch = ./patches/0066-media-sophgo-fix-VPSS-queue-state-bounds.patch;
     })
+    (patch {
+      name = "media-sophgo-preserve-vpss-source-colourimetry";
+      patch = ./patches/0067-media-sophgo-preserve-VPSS-source-colourimetry.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-preserve-vpss-source-colourimetry" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "YUV scaling preserves source matrix, transfer function and range; CAPTURE reports the OUTPUT colour tuple.";
+    };
     "media-sophgo-fix-vpss-queue-state-bounds" = {
       origin = "local";
       upstreamStatus = "draft";
