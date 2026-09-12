@@ -12,7 +12,9 @@ lens shading, HDR, gamma and temporal processing; it does not implement AE,
 AWB, sensor tuning or factory image quality. CFA uses reset tuning parameters;
 CSC is explicitly programmed with the SDK's neutral full-range BT.601 matrix
 (signed Q10 coefficients and offsets 0,512,512). Register readback and image
-validation on silicon are still required to establish correct pixel output.
+validation with a lit, coloured scene are still required to establish image
+quality. The dark-scene hardware results below establish frame transport and
+are consistent with the sensor's measured black pedestal.
 
 The existing RAW and HDMI formats remain the defaults. `VIDIOC_S_FMT` selects
 the ISP only for Bayer inputs with even dimensions. Format changes are refused
@@ -82,3 +84,58 @@ Register references are the pinned CV181x SDK's `vi_reg_fields.h`,
 `vi_reg_blocks.h`, `isp_reg.h`, and the `vi/chip/mars/vip/vi_*_ip_ctrl.c`
 implementations. The mainline patch uses explicit offsets/masks and the
 kernel's own DMA/V4L2 APIs, without the factory module ABI.
+
+## Board evidence: 2026-09-13
+
+The LicheeRV camera attached to strix-4 RAM-booted Linux 7.2.0-rc5 from commit
+`7edcc3b` with runner
+`/nix/store/dcsvm3hz9d05ibm66f14jn0pfk2fhd03-usb-boot`. The final bridge was
+cross-built from `c4656b6` and copied into target `/tmp`; its store package was
+`5qszy48vy8w6c1f1v0ghqbdy8agj6zz9-sg2002-h264-bridge-riscv64-unknown-linux-gnu-0.2`.
+Patch 0068 (format enumeration only) was subsequently cross-built but was not
+part of this booted kernel.
+
+- `/dev/video0`: CSI/ISP; `/dev/video1`: VPSS; `/dev/video2`: Coda980.
+- Five RAW frames completed before ISP testing. Thirty full-resolution NV21
+  frames completed, followed by a separate one-frame capture (5,529,600 bytes).
+- The integrated `--isp --frames 300` test completed 300 scaled sensor frames
+  and 301 encoded pictures: 300 live frames plus the explicitly identified
+  initial black priming picture. The priming picture remains in the bitstream
+  because later pictures can reference it; it is excluded from the live limit.
+- `ffprobe` counted 301 H.264 pictures at 640x360; complete software decoding
+  succeeded. The earlier equivalent run contained 290 non-IDR and 11 IDR VCL
+  NAL units. No empty or error-flagged encoder buffers were counted.
+- The measured final run took 10.37 seconds: 0.67 seconds user CPU, 4.19 seconds
+  system CPU (46% of the single core), and maximum RSS 1,904 KiB. Runtime reports
+  were approximately 29.5 frames/second. This is a dark-scene measurement,
+  not a representative high-detail bitrate or encoder-load benchmark.
+- After the integrated test, another 30-frame NV21 stream completed and
+  stopped successfully. There were no failed systemd units.
+- Live register reads matched scenario `0x26`, CFA control `0x33`, CSC control
+  `0x3`, and all six explicitly programmed CSC coefficient/offset words.
+- The independent watchdog reported active, timeout 85 seconds. Withdrawing
+  host connectivity recovered the first laboratory image to ROM, then RAM
+  U-Boot, without a physical reset or host reboot (about 116 seconds including
+  the health-failure window). No nonvolatile image was flashed.
+
+The scene was nearly dark: a separate RAW capture measured min/max 228/304,
+mean 255.1873 at the sensor's black pedestal of 256. ISP luma measured min/max
+14/19, mean 16.00035; chroma was 128 +/- 1. This is consistent with the fixed
+linear, unsubtracted RAW12-to-eight-bit path, not evidence of calibrated colour
+or useful low-light image quality. Lit-scene colour, demosaic detail, AE/AWB,
+black-level correction and gamma remain unvalidated or unimplemented as noted
+above. H.264 VUI colour signalling remains absent; use the documented explicit
+decoder interpretation when comparing pixels.
+
+Streamoff reports `ISP stop: resetting partial frame, idle=0x386`: both output
+write engines are idle, but stopping the sensor leaves upstream stages partial.
+The driver resets these stages before freeing buffers; repeated capture and
+encode restarts succeeded. One transient CSI ECC indication occurred at a
+stream restart; it did not prevent the bounded run completing. Neither warning
+should be silently represented as a completely warning-free production path.
+
+Host regression tests exercise the real VPSS queue/format functions with
+ASan/UBSan and the bridge format/frame-accounting helpers. Both pass. Full
+cross-builds and `nix flake check --no-build` also pass. Binary captures and
+logs are archived outside the repository under
+`/mnt/Home/src/nixos-nanokvm-local-archive-20260913.Zsyivt/mainline-isp`.
