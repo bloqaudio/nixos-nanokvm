@@ -11,9 +11,9 @@ This is a first fixed-settings implementation. It disables statistics DMA,
 lens shading, HDR, gamma and temporal processing; it does not implement AE,
 AWB, sensor tuning or factory image quality. CFA uses reset tuning parameters;
 CSC is explicitly programmed with the SDK's neutral full-range BT.601 matrix
-(signed Q10 coefficients and offsets 0,512,512). Register readback and image
-validation with a lit, coloured scene are still required to establish image
-quality. The dark-scene hardware results below establish frame transport and
+(signed Q10 coefficients and offsets 0,512,512). Register readback is verified;
+image validation with a lit, coloured scene is still required to establish
+image quality. The dark-scene hardware results below establish frame transport and
 are consistent with the sensor's measured black pedestal.
 
 The existing RAW and HDMI formats remain the defaults. `VIDIOC_S_FMT` selects

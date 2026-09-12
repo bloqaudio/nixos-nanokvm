@@ -84,6 +84,15 @@ The initrd needs the WiFi credential before it can mount the store, so this
 necessarily places the configuration in the Nix store and FIT image. Use a
 dedicated development SSID or PSK rather than a broadly privileged credential.
 
+## Mainline camera ISP
+
+The camera's hardware ISP is Linux-owned; it does not require firmware on the
+auxiliary RISC-V core. The opt-in `usb-cam-isp` RAM image exposes Bayer-to-NV21
+capture and a DMA-BUF path through VPSS into the H.264 encoder. The initial
+fixed-settings implementation completed 300 live frames at about 29.5 fps;
+lit-scene colour validation and automatic image tuning remain outstanding.
+See [the hardware ISP guide and board evidence](docs/sg2002-mainline-isp.md).
+
 ## C906L Rust firmware
 
 The auxiliary 700 MHz RISC-V core has opt-in `no_std` Rust firmware, a
