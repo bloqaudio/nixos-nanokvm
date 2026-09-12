@@ -1,5 +1,5 @@
 diff --git a/drivers/media/platform/sophgo/sg2002-capture.c b/drivers/media/platform/sophgo/sg2002-capture.c
-index d0d0cac..ceccbeb 100644
+index d0d0cac..aa0de81 100644
 --- a/drivers/media/platform/sophgo/sg2002-capture.c
 +++ b/drivers/media/platform/sophgo/sg2002-capture.c
 @@ -17,6 +17,7 @@
@@ -159,7 +159,7 @@ index d0d0cac..ceccbeb 100644
 +		/* A stopped sensor can leave a partial frame. Never return buffers
 +		 * while the post-processing write engines still own them.
 +		 */
-+		if (readl_poll_timeout(cap->vi + VI_ISP_BLK_IDLE, idle,
++		if (readl_poll_timeout(cap->vi + ISP_BLK_IDLE, idle,
 +				       (idle & ISP_PIPELINE_IDLE) == ISP_PIPELINE_IDLE,
 +				       100, 50000))
 +			dev_warn(cap->dev, "ISP stop: resetting partial frame, idle=%#x\n", idle);
@@ -193,7 +193,7 @@ index d0d0cac..ceccbeb 100644
  	pix->sizeimage = cap->sizeimage;
 -	if (cap->yuv_input) {
 +	if (cap->isp) {
-+		/* Fixed CSC reset matrix, with gamma bypassed. */
++		/* Fixed full-range BT.601 CSC, with gamma bypassed. */
 +		pix->colorspace = V4L2_COLORSPACE_SRGB;
 +		pix->ycbcr_enc = V4L2_YCBCR_ENC_601;
 +		pix->quantization = V4L2_QUANTIZATION_FULL_RANGE;
@@ -207,7 +207,7 @@ index d0d0cac..ceccbeb 100644
  	struct sg2002_capture *cap = video_drvdata(file);
  
 -	if (fmt->index)
-+	if (fmt->index > (cap->yuv_input ? 0 : 1))
++	if (fmt->index > (cap->yuv_input || ((cap->width | cap->height) & 1) ? 0 : 1))
  		return -EINVAL;
  
 -	fmt->pixelformat = cap->pixelformat;
@@ -226,7 +226,7 @@ index d0d0cac..ceccbeb 100644
 +	if (!cap->yuv_input) {
 +		struct v4l2_pix_format *pix = &fmt->fmt.pix;
 +
-+		if (requested == V4L2_PIX_FMT_NV21) {
++		if (requested == V4L2_PIX_FMT_NV21 && !((cap->width | cap->height) & 1)) {
 +			pix->pixelformat = V4L2_PIX_FMT_NV21;
 +			pix->bytesperline = ALIGN(cap->width, 16);
 +			pix->sizeimage = pix->bytesperline * cap->height * 3 / 2;
@@ -261,12 +261,13 @@ index d0d0cac..ceccbeb 100644
  }
  
  static int sg2002_subscribe_event(struct v4l2_fh *fh,
-@@ -1146,7 +1247,10 @@ static int sg2002_enum_framesizes(struct file *file, void *priv,
+@@ -1146,7 +1247,11 @@ static int sg2002_enum_framesizes(struct file *file, void *priv,
  {
  	struct sg2002_capture *cap = video_drvdata(file);
  
 -	if (fsize->index || fsize->pixel_format != cap->pixelformat)
 +	if (fsize->index ||
++	    (fsize->pixel_format == V4L2_PIX_FMT_NV21 && ((cap->width | cap->height) & 1)) ||
 +	    (cap->yuv_input ? fsize->pixel_format != V4L2_PIX_FMT_UYVY :
 +	     fsize->pixel_format != V4L2_PIX_FMT_NV21 &&
 +	     fsize->pixel_format != sg2002_repacked_raw_pixelformat(cap->mbus_code)))
@@ -275,10 +276,10 @@ index d0d0cac..ceccbeb 100644
  	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
 diff --git a/drivers/media/platform/sophgo/sg2002-isp.h b/drivers/media/platform/sophgo/sg2002-isp.h
 new file mode 100644
-index 0000000..fb8d7c4
+index 0000000..04630c3
 --- /dev/null
 +++ b/drivers/media/platform/sophgo/sg2002-isp.h
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,235 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * SG2002 linear Bayer ISP, owned by sg2002-capture.
@@ -317,6 +318,7 @@ index 0000000..fb8d7c4
 +#define ISP_CSC_CTRL		0x56000
 +#define ISP_CSC_ENABLE		BIT(0)
 +#define ISP_CSC_SHADOW		BIT(1)
++#define ISP_CSC_COEFF01		0x56010
 +#define ISP_YUV_MONO		0x6000c
 +#define ISP_YUV_CTRL		0x60060
 +#define ISP_YUV_SIZE		0x60064
@@ -336,13 +338,14 @@ index 0000000..fb8d7c4
 +#define ISP_DMA_SW_ADDR		BIT(16)
 +#define ISP_DMA_SW_GEOMETRY	GENMASK(19, 17)
 +#define ISP_VI_SEL_SIZE		0x7f404
++#define ISP_BLK_IDLE		0x70038
 +
 +#define ISP_FRAME_DONE_POST	BIT(13)
 +#define ISP_FRAME_ERROR		BIT(8)
 +#define ISP_DMA_ERROR		BIT(16)
 +#define ISP_ONLINE_STAGES		(BIT(0) | BIT(8) | BIT(10) | BIT(11))
 +#define ISP_ONLINE_SCENARIO	(BIT(1) | BIT(2) | BIT(5))
-+#define ISP_PIPELINE_IDLE		(BIT(0) | GENMASK(8, 3))
++#define ISP_PIPELINE_IDLE		(BIT(0) | GENMASK(9, 3))
 +
 +struct sg2002_isp_reg {
 +	u32 offset;
@@ -467,7 +470,18 @@ index 0000000..fb8d7c4
 +	sg2002_isp_update(vi, ISP_RGB_CTRL, GENMASK(4, 0) | BIT(8),
 +			   bayer | BIT(8));
 +	writel(size, vi + ISP_RGB_SIZE);
-+	/* CSC reset matrix is the vendor fixed RGB -> YCbCr matrix. */
++	/* Full-range BT.601, signed Q10 coefficients and 10-bit offsets.
++	 * These are the neutral table emitted by isp_algo_csc_main:
++	 *  306  601 117; -173 -339 512; 512 -429 -83; offsets 0,512,512.
++	 * The tuning ABI writes two's-complement coefficients masked to 14
++	 * bits, not the VPSS block's sign-magnitude representation.
++	 */
++	writel(0x02590132, vi + ISP_CSC_COEFF01);
++	writel(0x3f530075, vi + ISP_CSC_COEFF01 + 4);
++	writel(0x02003ead, vi + ISP_CSC_COEFF01 + 8);
++	writel(0x3e530200, vi + ISP_CSC_COEFF01 + 12);
++	writel(0x00003fad, vi + ISP_CSC_COEFF01 + 16);
++	writel(0x02000200, vi + ISP_CSC_COEFF01 + 20);
 +	sg2002_isp_update(vi, ISP_CSC_CTRL, ISP_CSC_ENABLE | ISP_CSC_SHADOW,
 +			   ISP_CSC_ENABLE | ISP_CSC_SHADOW);
 +	writel(size, vi + ISP_YUV_SIZE);

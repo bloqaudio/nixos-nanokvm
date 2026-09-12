@@ -592,6 +592,30 @@ in
     ];
   })
 
+  # Reversible mainline hardware ISP lab. Boots to the ordinary control
+  # shell with the independent watchdog keeper; capture starts explicitly
+  # through V4L2/sg2002-h264-bridge --isp after inspecting the board.
+  (live "mainline" "usb-cam-isp" "live-usb-cam-isp-mainline" {
+    artifactArgs.usbConsole = false;
+    artifactArgs.extraBootargs = [ "systemd.getty_auto=no" "udev.children_max=2" ];
+    mixins = [ ../modules/sg2002-coda.nix ../modules/sg2002-camera.nix ];
+    modules = [
+      ({ pkgs, lib, ... }: {
+        sg2002.fdt = pkgs.sg2002-dtb-mainline-cam;
+        sg2002.watchdogKeeper.initrd.enable = true;
+        sg2002.watchdogKeeper.stage2.enable = true;
+        sg2002.watchdogKeeper.healthHost = protocol.hostIp;
+        sg2002.wifi.enable = false;
+        services.nanokvm.enable = lib.mkForce false;
+        environment.systemPackages = lib.mkForce [
+          pkgs.sg2002-h264-bridge
+          pkgs.procps
+          (pkgs.v4l-utils.override { withGUI = false; withBPF = false; })
+        ];
+      })
+    ];
+  })
+
   # Same USB-gadget NFS lifeboat, plus the GC4653 camera + ethernet DTB.
   (lichee "mainline" [ "live" "usb-nfs-cam" ] {
     profile = "usb-nfs-live";

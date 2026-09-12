@@ -2183,6 +2183,7 @@ struct bridge_options {
 	unsigned int max_fps;
 	unsigned int mid_buffers;
 	unsigned int capture_buffers;
+	unsigned int frame_limit;
 	int half_scale;
 	int use_dmabuf;
 	int use_vpss;
@@ -2473,6 +2474,10 @@ static int live_bridge(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
+			if (opts->frame_limit && encoded_frames >= opts->frame_limit) {
+				stop_requested = 1;
+				break;
+			}
 			if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 					 buffer.index, 0))
 				goto out_errno;
@@ -3058,11 +3063,17 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
+			if (opts->frame_limit && encoded_frames >= opts->frame_limit) {
+				stop_requested = 1;
+				break;
+			}
 			if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 					 buffer.index, 0))
 				goto out_errno;
 			progress = 1;
 		}
+		if (stop_requested)
+			break;
 		/* Encoder OUTPUT done -> middle buffer back to free. */
 		for (;;) {
 			if (dequeue_buffer_mem(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
@@ -3244,6 +3255,7 @@ static void usage(const char *program)
 		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
 		"  --isp               select hardware Bayer->NV21 capture and VPSS->NV12;\n"
 		"                       quarter size (640x360 on GC4653), or --half-scale\n"
+		"  --frames N          stop cleanly after N encoded frames (default unlimited)\n"
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
@@ -3340,6 +3352,9 @@ int main(int argc, char **argv)
 				goto bad_usage;
 		} else if (!strcmp(arg, "--isp")) {
 			opts.use_isp = 1;
+		} else if (!strcmp(arg, "--frames") && i + 1 < argc) {
+			if (parse_u32(argv[++i], &opts.frame_limit) || !opts.frame_limit)
+				goto bad_usage;
 		} else if (!strcmp(arg, "--scaler-node") && i + 1 < argc) {
 			opts.scaler_path = argv[++i];
 		} else if (!strcmp(arg, "--mid-buffers") && i + 1 < argc) {

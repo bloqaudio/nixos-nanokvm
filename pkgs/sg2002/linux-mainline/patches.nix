@@ -273,9 +273,24 @@ let
       name = "mailbox-cv1800-serialize-shared-register-access";
       patch = cv1800MailboxPatch;
     })
+    (patch {
+      name = "media-sophgo-sg2002-hardware-isp-capture";
+      patch = ./patches/0065-media-sophgo-add-SG2002-hardware-ISP-capture.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-sg2002-hardware-isp-capture" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "mainline SG2002 media support provides the linear hardware ISP path";
+      notes = ''
+        Optional NV21 capture on Bayer sources routes FE0 through BE, CFA,
+        CSC and the YUV output DMA pair. The existing RAW and HDMI formats
+        keep their direct DMA6 path. Fixed settings precede future stats
+        and userspace tuning controls; silicon validation is required.
+      '';
+    };
     "mailbox-cv1800-serialize-shared-register-access" = {
       origin = "local";
       upstreamStatus = "draft";
