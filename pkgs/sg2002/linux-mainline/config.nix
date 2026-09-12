@@ -341,24 +341,86 @@ with lib.kernel; {
   RPMSG_NS = no;
   RPMSG_VIRTIO = no;
 
-  # No PCIe, no discrete GPU — kill the DRM stack. Nouveau alone is
-  # ~30 .ko files of dead weight. The legacy FB subsystem stays on for
-  # ssd1307fb (above); it's independent of DRM.
-  DRM = no;
-
-  # No virt here.
-  KVM = no;
-  # VIRTIO itself is a hidden library symbol. RISC-V defconfig selects these
-  # leaves independently, so guard the actual drivers instead.
-  VIRTIO_BALLOON = no;
-  VIRTIO_BLK = no;
-  VIRTIO_NET = no;
-
-  # No PCIe on SG2002 — kills NVMe, SCSI, ATA, most of the net vendor
-  # spam below.
-  PCI = no;
+  # =====================================================================
+  # PCIe / virtio / DRM — dead on the SG2002, alive under QEMU
+  #
+  # None of this exists on the real silicon.  It is here so that the
+  # *same* Image also boots `qemu-system-riscv64 -M virt -cpu thead-c906`
+  # (boards/qemu-riscv-virt.nix) with a display, rather than forcing a
+  # second cross-compile of a near-identical kernel. ARCH_VIRT below
+  # also enables the virt machine's poweroff and RTC plumbing.
+  #
+  # The rule is: modular wherever Kconfig allows, so the board builds
+  # the code but never loads it.  The initrds are module-pruned and no
+  # board DT describes a PCI host bridge or a virtio transport, so the
+  # runtime cost on the 256 MiB device is zero.  CONFIG_PCI is `bool`,
+  # so it is the one piece that has to be built in.
+  # =====================================================================
+  PCI = yes;
+  PCI_HOST_GENERIC = yes; # the virt machine's ECAM bridge
+  # ...but not the SoC-specific host controllers the RISC-V defconfig
+  # switches on once PCI is back. No SG2002 and no virt machine has a
+  # Xilinx / FU740 / StarFive root port.
+  PCIEPORTBUS = no;
+  PCIE_XILINX = no;
+  PCIE_FU740 = no;
+  PCIE_STARFIVE_HOST = no;
+  PHY_STARFIVE_JH7110_PCIE = no;
+  # Still no NVMe/SCSI/ATA anywhere in this fleet; PCI coming back must
+  # not drag the block-driver zoo in behind it.
   SCSI = no;
   ATA = no;
+  BLK_DEV_NVME = no;
+  # ...nor the PCIe NIC zoo. These two are `default y` behind their
+  # NET_VENDOR_* gates and were the concrete "net vendor spam" the old
+  # `PCI = no` comment meant: both are built *into* the Image, on a board
+  # whose only MACs are the internal one and USB/SDIO gadgets, and on a
+  # virt machine that uses virtio-net.
+  E1000E = no;
+  R8169 = no;
+  # Same story for add-in-card UARTs: the SG2002's console is the SoC
+  # 8250-DW, and virt's is the platform ns16550a. Neither is on PCI.
+  # EXAR and PERICOM are `default SERIAL_8250` and do not hang off
+  # SERIAL_8250_PCI, so all three need naming; SERIAL_8250_PCILIB is a
+  # bare `select` and drops out once its two selectors are gone.
+  SERIAL_8250_PCI = no;
+  SERIAL_8250_EXAR = no;
+  SERIAL_8250_PERICOM = no;
+  # Note: CONFIG_PCIEASPM stays `y` and cannot be turned off from here.
+  # Its prompt is `bool "..." if EXPERT` with `default y`, and this tree
+  # builds from a plain defconfig with `# CONFIG_EXPERT is not set`, so
+  # the symbol is invisible and olddefconfig restores the default. It is
+  # ~15 KiB of link-state management for links neither target has.
+
+  # No nested virt in either target.
+  KVM = no;
+  # VIRTIO itself is a hidden library symbol. RISC-V defconfig selects
+  # these leaves independently, so drive the actual drivers. Modular:
+  # only the QEMU guest's initrd ever asks for them.
+  VIRTIO_BALLOON = module;
+  VIRTIO_BLK = module;
+  VIRTIO_NET = module;
+  VIRTIO_PCI = module;
+
+  # The DRM stack exists solely for virtio-gpu — that is the only
+  # framebuffer QEMU's virt machine can offer, since it has no VGA, no
+  # SPI (so no ST7789) and no I2C (so no SSD1307). With
+  # DRM_FBDEV_EMULATION the FRAMEBUFFER_CONSOLE enabled above paints the
+  # QEMU window directly, with no X and no userspace driver.
+  # On hardware the panels keep using the legacy FB path (ssd1307fb),
+  # which is independent of DRM, and drm.ko is never loaded.
+  DRM = module;
+  DRM_VIRTIO_GPU = module;
+  DRM_FBDEV_EMULATION = yes;
+  # Nouveau alone is ~30 .ko files of dead weight, and the RISC-V
+  # defconfig turns these on the moment DRM is non-`no`. Keep them out
+  # of the modules tree so the board's build time and closure don't pay
+  # for a QEMU display.
+  DRM_NOUVEAU = no;
+  DRM_RADEON = no;
+  DRM_AMDGPU = no;
+  DRM_I915 = no;
+  DRM_SUN4I = no;
   MTD = no; # no raw flash, only SD + USB
   INFINIBAND = no;
   # INPUT itself is default-y and not user-visible without CONFIG_EXPERT, so
@@ -489,7 +551,13 @@ with lib.kernel; {
   ARCH_ESWIN = no;
   ARCH_TENSTORRENT = no;
   ARCH_ULTRARISC = no;
-  ARCH_VIRT = no;
+  # ...except QEMU's, which boards/qemu-riscv-virt.nix boots this very
+  # Image on. Unlike the foreign SoCs above, ARCH_VIRT pulls in no
+  # pinctrl/clock/PHY zoo: it selects only POWER_RESET_SYSCON{,_POWEROFF}
+  # and the goldfish RTC. Without it `poweroff` in the guest cannot stop
+  # QEMU and the VM has no clock — for a couple of KB the SG2002 carries
+  # but never probes, since no board DT has a syscon-poweroff node.
+  ARCH_VIRT = yes;
 
   # Other USB host controllers — SG2002's only USB is DWC2 OTG; XHCI/
   # EHCI/OHCI only exist for discrete host controllers we don't have.
@@ -522,10 +590,16 @@ with lib.kernel; {
   NFS_V4 = yes;
   NFS_V4_1 = yes;
   NFS_V4_2 = yes;
-  # 9P defaults on alongside generic Virtio support; NFS is our only network
-  # filesystem and this guard prevents its transport helpers returning.
-  "9P_FS" = no;
-  NET_9P = no;
+  # 9P defaults *built in* alongside generic Virtio support, which is dead
+  # weight on a board whose only network filesystem is NFS. Demote rather
+  # than delete: the QEMU guest (boards/qemu-riscv-virt.nix) mounts the
+  # host store over 9p, and that is the whole reason a rebuild there costs
+  # a closure copy instead of a disk image. Same bargain as the
+  # PCIe/virtio/DRM block above — the board builds these .ko and, with no
+  # 9p mount in any board fileSystems, never pulls them into an initrd.
+  "9P_FS" = module;
+  NET_9P = module;
+  NET_9P_VIRTIO = module;
 
   # aic8800 is out-of-tree and only needs cfg80211/WEXT. Disable the single
   # upstream WLAN driver menu instead of blacklisting every vendor beneath it.
@@ -572,8 +646,40 @@ with lib.kernel; {
   POWER_SUPPLY = no;
   MFD_AXP20X_I2C = no;
 
-  # Networking: no firewall, traffic shaping, software bridge, or VLANs.
-  NETFILTER = no;
+  # Networking: no traffic shaping, software bridge, or VLANs. Netfilter
+  # stays on — the RISC-V defconfig provides the whole iptables/conntrack
+  # set as modules, so an unused firewall costs the board nothing loaded.
+  NETFILTER = yes;
+  # ...but defconfig predates nftables and carries no NFT_* at all, while
+  # nixpkgs' `iptables` has been iptables-nft since 21.11. Without these
+  # two, `networking.firewall` dies at boot with
+  #   iptables: Failed to initialize nft: Protocol not supported
+  # NFT_COMPAT is what lets the nft backend service classic `-m` matches.
+  # The per-family tables are plain bools with no default, so NF_TABLES
+  # alone still leaves `iptables -A INPUT` failing with
+  #   TABLE_ADD failed (Operation not supported): table filter
+  # because there is no `ip` family to add it to. The expression modules
+  # are for the native backend (networking.nftables.enable).
+  NF_TABLES = module;
+  NFT_COMPAT = module;
+  NF_TABLES_IPV4 = yes;
+  NF_TABLES_IPV6 = yes;
+  NF_TABLES_INET = yes;
+  NFT_CT = module;
+  NFT_LOG = module;
+  NFT_LIMIT = module;
+  NFT_REJECT = module;
+  # The three xt extensions NixOS's own firewall-start actually uses
+  # (`-m pkttype`, `-m rpfilter`, `-m conntrack`; the last is already in
+  # defconfig). Missing pkttype is not a soft failure — iptables aborts
+  # the whole ruleset with "Extension pkttype revision 0 not supported"
+  # and firewall.service exits 4.
+  NETFILTER_XT_MATCH_PKTTYPE = module;
+  NETFILTER_XT_TARGET_LOG = module;
+  IP_NF_MATCH_RPFILTER = module;
+  IP6_NF_MATCH_RPFILTER = module;
+  NFT_FIB_IPV4 = module;
+  NFT_FIB_IPV6 = module;
   NET_SCHED = no;
   BRIDGE = no;
   VLAN_8021Q = no;
@@ -582,7 +688,7 @@ with lib.kernel; {
   XFRM_USER = no;
   XFRM_ESP = no;
   INET_ESP = no;
-  IPV6 = no;
+  IPV6 = yes;
   DUMMY = no;
   MACVLAN = no;
   IPVLAN = no;

@@ -84,6 +84,53 @@ The initrd needs the WiFi credential before it can mount the store, so this
 necessarily places the configuration in the Nix store and FIT image. Use a
 dedicated development SSID or PSK rather than a broadly privileged credential.
 
+## QEMU C906 Sandbox
+
+`boards/qemu-riscv-virt.nix` boots the board's own kernel on
+`qemu-system-riscv64 -M virt -cpu thead-c906 -m 256 -smp 1`, with a
+visible virtio-gpu console:
+
+```sh
+nix run .#qemu-c906-virt
+QEMU_OPTS='-display vnc=:0' nix run .#qemu-c906-virt   # headless host
+```
+
+`-m 256` and `-smp 1` come from the mainline DT, not from taste:
+`sg2002.dtsi` declares `memory@80000000 reg = <0x80000000 0x10000000>`, and
+`cv180x-cpus.dtsi` declares a single `cpu@0` with `compatible =
+"thead,c906"` and `riscv,isa = "rv64imafdc"`. The die's second C906 (700
+MHz) and its 8051 are separate firmware domains, not SMP siblings, so
+Linux never enumerates them.
+
+The kernel is `pkgs.sg2002-kernel-mainline` — the same store path the
+boards get, verifiable with:
+
+```sh
+nix eval --raw .#nixosConfigurations.qemu-c906-virt.config.boot.kernelPackages.kernel
+nix eval --raw .#nixosConfigurations.picoclaw-mainline-live-usb-lcd.config.boot.kernelPackages.kernel
+```
+
+To make that possible, `linux-mainline/config.nix` keeps PCI, virtio, 9p
+and DRM — none of which exist on the SG2002 — modular wherever Kconfig
+allows. See the "PCIe / virtio / DRM" block there. In isolation that costs
+the board 5 KiB of `Image`: the ~165 KiB of added text fits inside the
+padding that already existed before `__init_begin`.
+
+`Image` did grow 2 MiB overall, but from two separate decisions in the same
+block: `IPV6` and `NETFILTER` are now on. Netfilter needs more than its own
+gate to be usable — nixpkgs' `iptables` is iptables-nft, so `NF_TABLES`,
+`NFT_COMPAT` and the per-family `NF_TABLES_IPV4`/`IPV6`/`INET` tables have
+to be on or `iptables -A` fails with `TABLE_ADD failed (Operation not
+supported)`, and `networking.firewall` additionally wants the `pkttype`
+and `rpfilter` xt matches. Together these push `_etext` past the 8 MiB
+mark, so `__init_begin` moves to the next 2 MiB alignment; actual code
+growth is ~511 KiB. The modules tree goes 4.6 MiB → 8.1 MiB (50 → 103
+`.ko`), none of it loaded by any board DT.
+
+QEMU has no CV181x machine model, so nothing SoC-specific runs here: no
+SPI (no ST7789), no I2C (no SSD1307), no CSI, no USB gadget, no Coda980.
+This is for userspace, systemd units, and C906 codegen — not peripherals.
+
 ## Downstream Use
 
 Import the reusable board module, then add deployment-specific policy in your

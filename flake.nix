@@ -256,6 +256,18 @@
             mkK3System k3BoardModules.k3."pico-itx"."initrd-rescue";
         };
 
+      # A T-Head C906 sandbox on `qemu-system-riscv64 -M virt`, booting
+      # the *same* sg2002-kernel-mainline the boards boot. Deliberately
+      # not a catalog entry: it imports no platform/cv181x.nix, sets no
+      # `sg2002.enable`, and builds no FIP/FIT, so it has no
+      # {board, kernel, profile} coordinates to sit at.
+      qemuVirtSystem = nixpkgs.lib.nixosSystem {
+        modules = [
+          ./boards/qemu-riscv-virt.nix
+          { _module.args = boardExtraArgs; }
+        ];
+      };
+
       # `nixosConfigurations` is a standard flake schema: every direct child
       # must be a standalone NixOS system. Publish the self-contained mainline
       # systems under stable dash-joined names. Vendor systems and the K3
@@ -271,6 +283,7 @@
         // {
           k3-pico-itx-recovery-sd = k3BoardSystems.k3."pico-itx"."recovery-sd";
           k3-pico-itx-kexec-installer = k3BoardSystems.k3."pico-itx"."kexec-installer";
+          qemu-c906-virt = qemuVirtSystem;
         };
 
       # =============================================================
@@ -733,6 +746,13 @@
           capture-usb-oled-top = {
             type = "app";
             program = "${captureUsbOledTop}/bin/capture-usb-oled-top";
+          };
+          # `nix run .#qemu-c906-virt` — the board's own kernel on
+          # `-M virt -cpu thead-c906 -m 256 -smp 1`, in a window.
+          # Set QEMU_OPTS='-display vnc=:0' on a headless build host.
+          qemu-c906-virt = {
+            type = "app";
+            program = "${qemuVirtSystem.config.system.build.vm}/bin/run-c906-virt-vm";
           };
         });
 
