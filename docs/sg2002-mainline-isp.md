@@ -68,8 +68,13 @@ sg2002-h264-bridge /dev/videoX /dev/videoY \
   --frames 300 --output /tmp/isp-300.h264
 ```
 
+The encoder retains one synthetic priming/reference picture at the beginning
+of the stream. `--frames 300` excludes it from the live-frame limit: the file
+contains 301 decoded pictures, of which 300 must come from the sensor. Exclude
+the first picture from camera image comparisons.
+
 The acceptance evidence must include actual completed capture frames, a
-decodable 300-frame H.264 stream with VCL/IDR content, image geometry and colour
+decodable H.264 stream with 300 live pictures and VCL/IDR content, geometry and colour
 checks, CPU/RSS measurements, clean streamoff and a subsequent successful
 stream restart. A successful cross-build alone does not establish these.
 

@@ -952,6 +952,28 @@ static int set_encoder_format(int fd, enum v4l2_buf_type type,
 	return set_video_format(fd, type, pixel_format, width, height, NULL, actual);
 }
 
+/* Both pipelines encode one synthetic reference picture before live input. */
+static uint64_t live_encoded_frames(uint64_t encoded_frames)
+{
+	return encoded_frames ? encoded_frames - 1 : 0;
+}
+
+static int live_frame_limit_reached(unsigned int limit, uint64_t encoded_frames)
+{
+	return limit && live_encoded_frames(encoded_frames) >= limit;
+}
+
+static int report_live_frames(unsigned int limit, uint64_t encoded_frames)
+{
+	fprintf(stderr, "encoded provenance: %" PRIu64 " live frames, %u priming picture\n",
+		live_encoded_frames(encoded_frames), encoded_frames ? 1U : 0U);
+	if (limit && !live_frame_limit_reached(limit, encoded_frames)) {
+		errno = ECANCELED;
+		return -1;
+	}
+	return 0;
+}
+
 static int set_output_crop(int fd, unsigned int width, unsigned int height)
 {
 	struct v4l2_selection selection = {
@@ -2492,7 +2514,7 @@ static int live_bridge(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
-			if (opts->frame_limit && encoded_frames >= opts->frame_limit) {
+			if (live_frame_limit_reached(opts->frame_limit, encoded_frames)) {
 				stop_requested = 1;
 				break;
 			}
@@ -2652,7 +2674,8 @@ static int live_bridge(const struct bridge_options *opts)
 		" encoded frames, %" PRIu64 " encoded bytes, %" PRIu64
 		" max-fps skips\n",
 		frames, encoded_frames, encoded_bytes, skipped_frames);
-	ret = 0;
+	init_step = "bounded capture completion";
+	ret = report_live_frames(opts->frame_limit, encoded_frames);
 out_errno:
 	if (ret)
 		die_step();
@@ -3082,7 +3105,7 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
-			if (opts->frame_limit && encoded_frames >= opts->frame_limit) {
+			if (live_frame_limit_reached(opts->frame_limit, encoded_frames)) {
 				stop_requested = 1;
 				break;
 			}
@@ -3211,7 +3234,8 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	fprintf(stderr, "stopped after %" PRIu64 " scaled frames, %" PRIu64
 		" encoded frames, %" PRIu64 " encoded bytes\n",
 		frames, encoded_frames, encoded_bytes);
-	ret = 0;
+	init_step = "bounded capture completion";
+	ret = report_live_frames(opts->frame_limit, encoded_frames);
 out_errno:
 	if (ret)
 		die_step();
@@ -3274,7 +3298,8 @@ static void usage(const char *program)
 		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
 		"  --isp               select hardware Bayer->NV21 capture and VPSS->NV12;\n"
 		"                       quarter size (640x360 on GC4653), or --size half\n"
-		"  --frames N          stop cleanly after N encoded frames (default unlimited)\n"
+		"  --frames N          stop after N encoded live frames, excluding the one\n"
+		"                       priming picture retained in the stream (default unlimited)\n"
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"

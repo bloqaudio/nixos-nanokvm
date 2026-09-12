@@ -71,6 +71,19 @@ int main(void)
 		V4L2_PIX_FMT_NV12, 640, 368, &actual));
 	assert(actual.colorspace == V4L2_COLORSPACE_DEFAULT);
 	assert(actual.quantization == V4L2_QUANTIZATION_DEFAULT);
+	assert(live_encoded_frames(0) == 0);
+	assert(live_encoded_frames(1) == 0);
+	assert(live_encoded_frames(301) == 300);
+	assert(!live_frame_limit_reached(0, UINT64_MAX));
+	assert(!live_frame_limit_reached(1, 1));
+	assert(live_frame_limit_reached(1, 2));
+	assert(!live_frame_limit_reached(300, 300));
+	assert(live_frame_limit_reached(300, 301));
+	assert(!live_frame_limit_reached(UINT32_MAX, UINT32_MAX));
+	assert(live_frame_limit_reached(UINT32_MAX, (uint64_t)UINT32_MAX + 1));
+	assert(report_live_frames(300, 300) == -1 && errno == ECANCELED);
+	assert(!report_live_frames(300, 301));
+	assert(!report_live_frames(0, 0));
 	puts("bridge colour format helpers: full601/linear, limited709, defaults OK");
 	return 0;
 }
