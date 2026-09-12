@@ -84,6 +84,24 @@ The initrd needs the WiFi credential before it can mount the store, so this
 necessarily places the configuration in the Nix store and FIT image. Use a
 dedicated development SSID or PSK rather than a broadly privileged credential.
 
+## C906L Rust firmware
+
+The auxiliary 700 MHz RISC-V core has opt-in `no_std` Rust firmware, a
+reproducible bare-metal toolchain, Linux mailbox/RPMsg integration and typed
+Timer4–7 drivers. Firmware, reserved memory, device tree and Linux drivers
+share a generated contract. Camera and ISP hardware remains Linux-owned.
+
+```sh
+nix develop .#c906l
+nix build .#checks.x86_64-linux.sg2002-c906l-rust-all-timers
+nix build .#checks.x86_64-linux.sg2002-c906l-firmware-all-timers
+nix run .#boards.licheerv.mainline.live.usb-c906l.usb-boot
+```
+
+The last command boots an opt-in RAM image on an attached board. See
+[the C906L guide](docs/sg2002-c906l.md) for peripheral selection, recovery and
+the distinction between build verification and completed hardware tests.
+
 ## QEMU C906 Sandbox
 
 `boards/qemu-riscv-virt.nix` boots the board's own kernel on
@@ -112,20 +130,10 @@ nix eval --raw .#nixosConfigurations.picoclaw-mainline-live-usb-lcd.config.boot.
 
 To make that possible, `linux-mainline/config.nix` keeps PCI, virtio, 9p
 and DRM — none of which exist on the SG2002 — modular wherever Kconfig
-allows. See the "PCIe / virtio / DRM" block there. In isolation that costs
-the board 5 KiB of `Image`: the ~165 KiB of added text fits inside the
-padding that already existed before `__init_begin`.
-
-`Image` did grow 2 MiB overall, but from two separate decisions in the same
-block: `IPV6` and `NETFILTER` are now on. Netfilter needs more than its own
-gate to be usable — nixpkgs' `iptables` is iptables-nft, so `NF_TABLES`,
-`NFT_COMPAT` and the per-family `NF_TABLES_IPV4`/`IPV6`/`INET` tables have
-to be on or `iptables -A` fails with `TABLE_ADD failed (Operation not
-supported)`, and `networking.firewall` additionally wants the `pkttype`
-and `rpfilter` xt matches. Together these push `_etext` past the 8 MiB
-mark, so `__init_begin` moves to the next 2 MiB alignment; actual code
-growth is ~511 KiB. The modules tree goes 4.6 MiB → 8.1 MiB (50 → 103
-`.ko`), none of it loaded by any board DT.
+allows. The shared kernel also enables IPv6 and the netfilter support
+needed by the guest's NixOS firewall. Built-in support increases the board
+kernel's footprint; the QEMU-specific modules are loaded only in the guest.
+See the "PCIe / virtio / DRM" and networking blocks in that configuration.
 
 QEMU has no CV181x machine model, so nothing SoC-specific runs here: no
 SPI (no ST7789), no I2C (no SSD1307), no CSI, no USB gadget, no Coda980.
