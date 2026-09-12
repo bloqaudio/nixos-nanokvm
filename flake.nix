@@ -694,6 +694,8 @@
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           sg2002-h264-bridge-colour =
             pkgs.callPackage ./pkgs/sg2002/h264-bridge/test-colour.nix { };
+          sg2002-vpss-state =
+            pkgs.callPackage ./pkgs/sg2002/linux-mainline/tests/vpss-state.nix { };
           sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
           sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;
           sg2002-c906l-contract-timer5 = pkgs.sg2002-c906l-contract-timer5;

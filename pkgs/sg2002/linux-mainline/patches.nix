@@ -285,9 +285,19 @@ let
       name = "media-sophgo-preserve-vpss-source-colourimetry";
       patch = ./patches/0067-media-sophgo-preserve-VPSS-source-colourimetry.patch;
     })
+    (patch {
+      name = "media-sophgo-align-vpss-format-enumeration";
+      patch = ./patches/0068-media-sophgo-align-VPSS-format-enumeration.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-align-vpss-format-enumeration" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "ENUM_FMT must advertise the same packed/semiplanar source and semiplanar destination formats as S_FMT.";
+    };
     "media-sophgo-preserve-vpss-source-colourimetry" = {
       origin = "local";
       upstreamStatus = "draft";
