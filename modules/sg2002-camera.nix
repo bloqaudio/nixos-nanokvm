@@ -11,7 +11,7 @@
     # systemd-modules-load does not replay boot.kernelModules after switch-root,
     # and udev cannot infer a module from a media graph before the subdevice
     # exists.
-    boot.kernelModules = [ "gc4653" ];
+    boot.kernelModules = [ "gc4653" "sg2002-vpss" ];
     sg2002.initrd.availableKernelModules = [ "gc4653" ];
     sg2002.initrd.kernelModules = [ "gc4653" ];
   };

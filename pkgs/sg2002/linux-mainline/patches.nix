@@ -273,9 +273,54 @@ let
       name = "mailbox-cv1800-serialize-shared-register-access";
       patch = cv1800MailboxPatch;
     })
+    (patch {
+      name = "media-sophgo-sg2002-hardware-isp-capture";
+      patch = ./patches/0065-media-sophgo-add-SG2002-hardware-ISP-capture.patch;
+    })
+    (patch {
+      name = "media-sophgo-fix-vpss-queue-state-bounds";
+      patch = ./patches/0066-media-sophgo-fix-VPSS-queue-state-bounds.patch;
+    })
+    (patch {
+      name = "media-sophgo-preserve-vpss-source-colourimetry";
+      patch = ./patches/0067-media-sophgo-preserve-VPSS-source-colourimetry.patch;
+    })
+    (patch {
+      name = "media-sophgo-align-vpss-format-enumeration";
+      patch = ./patches/0068-media-sophgo-align-VPSS-format-enumeration.patch;
+    })
   ];
 
   meta = {
+    "media-sophgo-align-vpss-format-enumeration" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "ENUM_FMT must advertise the same packed/semiplanar source and semiplanar destination formats as S_FMT.";
+    };
+    "media-sophgo-preserve-vpss-source-colourimetry" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "YUV scaling preserves source matrix, transfer function and range; CAPTURE reports the OUTPUT colour tuple.";
+    };
+    "media-sophgo-fix-vpss-queue-state-bounds" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Folded into the SG2002 VPSS driver before submission";
+      notes = "V4L2 OUTPUT is index 2; reserve it instead of overwriting crop state.";
+    };
+    "media-sophgo-sg2002-hardware-isp-capture" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "mainline SG2002 media support provides the linear hardware ISP path";
+      notes = ''
+        Optional NV21 capture on Bayer sources routes FE0 through BE, CFA,
+        CSC and the YUV output DMA pair. The existing RAW and HDMI formats
+        keep their direct DMA6 path. Fixed settings precede future stats
+        and userspace tuning controls; silicon validation is required.
+      '';
+    };
     "mailbox-cv1800-serialize-shared-register-access" = {
       origin = "local";
       upstreamStatus = "draft";

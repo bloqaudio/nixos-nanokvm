@@ -911,15 +911,18 @@ static int get_format(int fd, enum v4l2_buf_type type,
 		      struct v4l2_pix_format *pix)
 {
 	struct v4l2_format format = { .type = type };
+	format.fmt.pix.priv = V4L2_PIX_FMT_PRIV_MAGIC;
 	if (xioctl(fd, VIDIOC_G_FMT, &format))
 		return -1;
 	*pix = format.fmt.pix;
 	return 0;
 }
 
-static int set_encoder_format(int fd, enum v4l2_buf_type type,
-			      uint32_t pixel_format, unsigned int width,
-			      unsigned int height, struct v4l2_pix_format *actual)
+static int set_video_format(int fd, enum v4l2_buf_type type,
+			    uint32_t pixel_format, unsigned int width,
+			    unsigned int height,
+			    const struct v4l2_pix_format *color,
+			    struct v4l2_pix_format *actual)
 {
 	struct v4l2_format format = { .type = type };
 
@@ -927,11 +930,47 @@ static int set_encoder_format(int fd, enum v4l2_buf_type type,
 	format.fmt.pix.height = height;
 	format.fmt.pix.pixelformat = pixel_format;
 	format.fmt.pix.field = V4L2_FIELD_NONE;
+	format.fmt.pix.priv = V4L2_PIX_FMT_PRIV_MAGIC;
+	if (color) {
+		format.fmt.pix.colorspace = color->colorspace;
+		format.fmt.pix.xfer_func = color->xfer_func;
+		format.fmt.pix.ycbcr_enc = color->ycbcr_enc;
+		format.fmt.pix.quantization = color->quantization;
+	}
 	if (pixel_format == V4L2_PIX_FMT_H264)
 		format.fmt.pix.sizeimage = 1024U * 1024U;
 	if (xioctl(fd, VIDIOC_S_FMT, &format))
 		return -1;
 	*actual = format.fmt.pix;
+	return 0;
+}
+
+static int set_encoder_format(int fd, enum v4l2_buf_type type,
+			      uint32_t pixel_format, unsigned int width,
+			      unsigned int height, struct v4l2_pix_format *actual)
+{
+	return set_video_format(fd, type, pixel_format, width, height, NULL, actual);
+}
+
+/* Both pipelines encode one synthetic reference picture before live input. */
+static uint64_t live_encoded_frames(uint64_t encoded_frames)
+{
+	return encoded_frames ? encoded_frames - 1 : 0;
+}
+
+static int live_frame_limit_reached(unsigned int limit, uint64_t encoded_frames)
+{
+	return limit && live_encoded_frames(encoded_frames) >= limit;
+}
+
+static int report_live_frames(unsigned int limit, uint64_t encoded_frames)
+{
+	fprintf(stderr, "encoded provenance: %" PRIu64 " live frames, %u priming picture\n",
+		live_encoded_frames(encoded_frames), encoded_frames ? 1U : 0U);
+	if (limit && !live_frame_limit_reached(limit, encoded_frames)) {
+		errno = ECANCELED;
+		return -1;
+	}
 	return 0;
 }
 
@@ -2183,9 +2222,11 @@ struct bridge_options {
 	unsigned int max_fps;
 	unsigned int mid_buffers;
 	unsigned int capture_buffers;
+	unsigned int frame_limit;
 	int half_scale;
 	int use_dmabuf;
 	int use_vpss;
+	int use_isp;
 	int mid_heap_reserved;
 	uint32_t encoder_input_format; /* V4L2_PIX_FMT_NV21 or NV12 */
 };
@@ -2455,7 +2496,8 @@ static int live_bridge(const struct bridge_options *opts)
 				goto out_errno;
 			}
 			if (buffer.index >= encoder_cap.count ||
-			    buffer.bytesused > encoder_cap.bufs[buffer.index].length) {
+			    buffer.bytesused > encoder_cap.bufs[buffer.index].length ||
+			    (buffer.flags & V4L2_BUF_FLAG_ERROR) || !buffer.bytesused) {
 				fprintf(stderr, "encoder returned an invalid capture buffer\n");
 				goto out;
 			}
@@ -2472,6 +2514,10 @@ static int live_bridge(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
+			if (live_frame_limit_reached(opts->frame_limit, encoded_frames)) {
+				stop_requested = 1;
+				break;
+			}
 			if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 					 buffer.index, 0))
 				goto out_errno;
@@ -2628,7 +2674,8 @@ static int live_bridge(const struct bridge_options *opts)
 		" encoded frames, %" PRIu64 " encoded bytes, %" PRIu64
 		" max-fps skips\n",
 		frames, encoded_frames, encoded_bytes, skipped_frames);
-	ret = 0;
+	init_step = "bounded capture completion";
+	ret = report_live_frames(opts->frame_limit, encoded_frames);
 out_errno:
 	if (ret)
 		die_step();
@@ -2741,22 +2788,44 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	init_step = "capture G_FMT";
 	if (get_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, &capture_fmt))
 		goto out_errno;
-	if (capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY ||
+	if (opts->use_isp) {
+		init_step = "capture ISP NV21 S_FMT";
+		if (set_encoder_format(capture_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+				       V4L2_PIX_FMT_NV21, capture_fmt.width,
+				       capture_fmt.height, &capture_fmt))
+			goto out_errno;
+		if (capture_fmt.pixelformat != V4L2_PIX_FMT_NV21) {
+			fprintf(stderr, "capture driver did not accept hardware ISP NV21\n");
+			goto out;
+		}
+	}
+	if ((capture_fmt.pixelformat != V4L2_PIX_FMT_UYVY &&
+	     capture_fmt.pixelformat != V4L2_PIX_FMT_NV21 &&
+	     capture_fmt.pixelformat != V4L2_PIX_FMT_NV12) ||
 	    capture_fmt.width < 4 || capture_fmt.height < 2 ||
-	    capture_fmt.bytesperline < capture_fmt.width * 2) {
-		fprintf(stderr, "capture must provide packed UYVY with a valid stride\n");
+	    capture_fmt.bytesperline < capture_fmt.width *
+		(capture_fmt.pixelformat == V4L2_PIX_FMT_UYVY ? 2U : 1U)) {
+		fprintf(stderr, "capture must provide UYVY/NV12/NV21 with a valid stride\n");
 		goto out;
 	}
-	visible_width = opts->half_scale ? capture_fmt.width / 2 : capture_fmt.width;
-	visible_height = opts->half_scale ? capture_fmt.height / 2 : capture_fmt.height;
+	{
+		unsigned int scale = opts->half_scale ? 2U : opts->use_isp ? 4U : 1U;
+
+		if (capture_fmt.width % (scale * 2) || capture_fmt.height % (scale * 2)) {
+			fprintf(stderr, "capture geometry cannot produce aligned %ux YUV420\n", scale);
+			goto out;
+		}
+		visible_width = capture_fmt.width / scale;
+		visible_height = capture_fmt.height / scale;
+	}
 	coded_height = (visible_height + 15U) & ~15U;
 
 	/* Encoder first: its padded OUTPUT geometry dictates the VPSS
 	 * CAPTURE surface layout. */
 	init_step = "encoder OUTPUT S_FMT";
-	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+	if (set_video_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			       opts->encoder_input_format, visible_width,
-			       coded_height, &encoder_out_fmt))
+			       coded_height, &capture_fmt, &encoder_out_fmt))
 		goto out_errno;
 	init_step = "encoder OUTPUT crop";
 	if (set_output_crop(encoder_fd, visible_width, visible_height))
@@ -2765,9 +2834,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	if (get_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT, &encoder_out_fmt))
 		goto out_errno;
 	init_step = "encoder CAPTURE S_FMT";
-	if (set_encoder_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
-			       V4L2_PIX_FMT_H264, visible_width,
-			       visible_height, &encoder_cap_fmt))
+	if (set_video_format(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+			     V4L2_PIX_FMT_H264, visible_width,
+			     visible_height, &capture_fmt, &encoder_cap_fmt))
 		goto out_errno;
 	if (encoder_cap_fmt.pixelformat != V4L2_PIX_FMT_H264)
 		goto out;
@@ -2777,9 +2846,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 
 	/* VPSS: OUTPUT = the capture frame, CAPTURE = the encoder surface. */
 	init_step = "scaler OUTPUT S_FMT";
-	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
-			       V4L2_PIX_FMT_UYVY, capture_fmt.width,
-			       capture_fmt.height, &scaler_in_fmt))
+	if (set_video_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
+			       capture_fmt.pixelformat, capture_fmt.width,
+			       capture_fmt.height, &capture_fmt, &scaler_in_fmt))
 		goto out_errno;
 	if (scaler_in_fmt.bytesperline != capture_fmt.bytesperline) {
 		fprintf(stderr, "capture stride %u unsupported by scaler (wants %u)\n",
@@ -2787,9 +2856,9 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 		goto out;
 	}
 	init_step = "scaler CAPTURE S_FMT";
-	if (set_encoder_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
+	if (set_video_format(scaler_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			       opts->encoder_input_format, encoder_out_fmt.width,
-			       encoder_out_fmt.height, &scaler_out_fmt))
+			       encoder_out_fmt.height, &capture_fmt, &scaler_out_fmt))
 		goto out_errno;
 	if (scaler_out_fmt.bytesperline != encoder_out_fmt.bytesperline ||
 	    scaler_out_fmt.sizeimage > encoder_out_fmt.sizeimage) {
@@ -3018,7 +3087,8 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 				goto out_errno;
 			}
 			if (buffer.index >= encoder_cap.count ||
-			    buffer.bytesused > encoder_cap.bufs[buffer.index].length) {
+			    buffer.bytesused > encoder_cap.bufs[buffer.index].length ||
+			    (buffer.flags & V4L2_BUF_FLAG_ERROR) || !buffer.bytesused) {
 				fprintf(stderr, "encoder returned an invalid capture buffer\n");
 				goto out;
 			}
@@ -3035,11 +3105,17 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 					   buffer.bytesused, pts_ms);
 			encoded_frames++;
 			encoded_bytes += buffer.bytesused;
+			if (live_frame_limit_reached(opts->frame_limit, encoded_frames)) {
+				stop_requested = 1;
+				break;
+			}
 			if (queue_buffer(encoder_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE,
 					 buffer.index, 0))
 				goto out_errno;
 			progress = 1;
 		}
+		if (stop_requested)
+			break;
 		/* Encoder OUTPUT done -> middle buffer back to free. */
 		for (;;) {
 			if (dequeue_buffer_mem(encoder_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
@@ -3158,7 +3234,8 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 	fprintf(stderr, "stopped after %" PRIu64 " scaled frames, %" PRIu64
 		" encoded frames, %" PRIu64 " encoded bytes\n",
 		frames, encoded_frames, encoded_bytes);
-	ret = 0;
+	init_step = "bounded capture completion";
+	ret = report_live_frames(opts->frame_limit, encoded_frames);
 out_errno:
 	if (ret)
 		die_step();
@@ -3219,6 +3296,10 @@ static void usage(const char *program)
 		"  --scaler cpu|vpss    cpu = software UYVY->NVxx (default); vpss = hardware\n"
 		"                       scaler/CSC via the mem2mem node, zero-copy dmabuf chain\n"
 		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
+		"  --isp               select hardware Bayer->NV21 capture and VPSS->NV12;\n"
+		"                       quarter size (640x360 on GC4653), or --size half\n"
+		"  --frames N          stop after N encoded live frames, excluding the one\n"
+		"                       priming picture retained in the stream (default unlimited)\n"
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"
 		"                       then the reserved media pool, then system)\n"
@@ -3313,6 +3394,11 @@ int main(int argc, char **argv)
 				opts.use_vpss = 1;
 			else if (strcmp(argv[i], "cpu"))
 				goto bad_usage;
+		} else if (!strcmp(arg, "--isp")) {
+			opts.use_isp = 1;
+		} else if (!strcmp(arg, "--frames") && i + 1 < argc) {
+			if (parse_u32(argv[++i], &opts.frame_limit) || !opts.frame_limit)
+				goto bad_usage;
 		} else if (!strcmp(arg, "--scaler-node") && i + 1 < argc) {
 			opts.scaler_path = argv[++i];
 		} else if (!strcmp(arg, "--mid-buffers") && i + 1 < argc) {
@@ -3368,6 +3454,10 @@ int main(int argc, char **argv)
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGINT, &action, NULL) ||
 	    sigaction(SIGTERM, &action, NULL))
 		return EXIT_FAILURE;
+	if (opts.use_isp) {
+		opts.use_vpss = 1;
+		opts.encoder_input_format = V4L2_PIX_FMT_NV12;
+	}
 	if (opts.use_vpss && opts.max_fps) {
 		fprintf(stderr, "--max-fps is not supported with --scaler vpss\n");
 		goto bad_usage;
