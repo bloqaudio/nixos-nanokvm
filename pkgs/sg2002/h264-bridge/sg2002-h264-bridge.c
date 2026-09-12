@@ -2457,7 +2457,8 @@ static int live_bridge(const struct bridge_options *opts)
 				goto out_errno;
 			}
 			if (buffer.index >= encoder_cap.count ||
-			    buffer.bytesused > encoder_cap.bufs[buffer.index].length) {
+			    buffer.bytesused > encoder_cap.bufs[buffer.index].length ||
+			    (buffer.flags & V4L2_BUF_FLAG_ERROR) || !buffer.bytesused) {
 				fprintf(stderr, "encoder returned an invalid capture buffer\n");
 				goto out;
 			}
@@ -3046,7 +3047,8 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 				goto out_errno;
 			}
 			if (buffer.index >= encoder_cap.count ||
-			    buffer.bytesused > encoder_cap.bufs[buffer.index].length) {
+			    buffer.bytesused > encoder_cap.bufs[buffer.index].length ||
+			    (buffer.flags & V4L2_BUF_FLAG_ERROR) || !buffer.bytesused) {
 				fprintf(stderr, "encoder returned an invalid capture buffer\n");
 				goto out;
 			}
@@ -3254,7 +3256,7 @@ static void usage(const char *program)
 		"                       scaler/CSC via the mem2mem node, zero-copy dmabuf chain\n"
 		"  --scaler-node PATH   VPSS mem2mem node (default " DEFAULT_SCALER ")\n"
 		"  --isp               select hardware Bayer->NV21 capture and VPSS->NV12;\n"
-		"                       quarter size (640x360 on GC4653), or --half-scale\n"
+		"                       quarter size (640x360 on GC4653), or --size half\n"
 		"  --frames N          stop cleanly after N encoded frames (default unlimited)\n"
 		"  --mid-buffers N      vpss mode: shared scaler/encoder buffers (default 4)\n"
 		"  --heap auto|reserved vpss mode: middle-buffer heap (default auto: CMA,\n"

@@ -25,7 +25,7 @@ The camera DT enables VPSS as a separate V4L2 mem2mem device, with its own
 fabric-clock references. The bridge's `--isp` option requests NV21 capture and
 imports that allocation into VPSS, which scales and writes NV12 directly into
 the encoder's DMA-BUF. It defaults to quarter resolution (640×360 for GC4653);
-`--half-scale` selects 1280×720. No CPU demosaic/conversion runs in this mode.
+`--size half` selects 1280×720. No CPU demosaic/conversion runs in this mode.
 
 ## Reversible laboratory boot
 
@@ -54,7 +54,7 @@ First request a bounded ISP-only capture, then run the integrated encoder:
 ```sh
 timeout 30 v4l2-ctl -d /dev/videoX \
   --set-fmt-video=width=2560,height=1440,pixelformat=NV21 \
-  --stream-mmap=2 --stream-count=30 --stream-to=/tmp/isp.nv21
+  --stream-mmap=2 --stream-count=30 --stream-to=/dev/null
 
 sg2002-h264-bridge /dev/videoX /dev/videoY \
   --scaler-node /dev/videoZ --isp --capture-buffers 2 --mid-buffers 2 \
