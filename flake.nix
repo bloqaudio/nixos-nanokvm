@@ -691,11 +691,15 @@
           sg2002-c906l-rust-timer5 = pkgs.sg2002-c906l-rust-tests-timer5;
           sg2002-c906l-rust-timer6 = pkgs.sg2002-c906l-rust-tests-timer6;
           sg2002-c906l-rust-timer7 = pkgs.sg2002-c906l-rust-tests-timer7;
+          sg2002-c906l-rust-all-timers =
+            pkgs.sg2002-c906l-rust-tests-for [ "timer4" "timer5" "timer6" "timer7" ];
           sg2002-c906l-firmware = pkgs.sg2002-c906l-firmware;
           sg2002-c906l-firmware-timer4 = pkgs.sg2002-c906l-firmware-timer4;
           sg2002-c906l-firmware-timer5 = pkgs.sg2002-c906l-firmware-timer5;
           sg2002-c906l-firmware-timer6 = pkgs.sg2002-c906l-firmware-timer6;
           sg2002-c906l-firmware-timer7 = pkgs.sg2002-c906l-firmware-timer7;
+          sg2002-c906l-firmware-all-timers =
+            pkgs.sg2002-c906l-firmware-for [ "timer4" "timer5" "timer6" "timer7" ];
           sg2002-c906l-control = pkgs.sg2002-c906l-control;
           sg2002-c906l-control-timer4 = pkgs.sg2002-c906l-control-timer4;
           sg2002-c906l-control-timer5 = pkgs.sg2002-c906l-control-timer5;

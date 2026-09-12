@@ -69,36 +69,82 @@ pub(crate) trait LeaseActivator {
 
 pub(crate) struct HardwareLeases;
 
+#[cfg(any(
+    feature = "timer4",
+    feature = "timer5",
+    feature = "timer6",
+    feature = "timer7"
+))]
+fn timer_failure(error: crate::dw_apb_timer::SelfTestError, flag: u32) -> LeaseFailure {
+    LeaseFailure {
+        result: match error {
+            crate::dw_apb_timer::SelfTestError::ClockXtalMiscDisabled
+            | crate::dw_apb_timer::SelfTestError::ClockChannelDisabled
+            | crate::dw_apb_timer::SelfTestError::TimerResetAsserted
+            | crate::dw_apb_timer::SelfTestError::ChannelResetAsserted
+            | crate::dw_apb_timer::SelfTestError::WrongClockSource => {
+                crate::contract::ACTIVATION_RESULT_PRECONDITION_FAILED
+            }
+            crate::dw_apb_timer::SelfTestError::InterruptRegistration => {
+                crate::contract::ACTIVATION_RESULT_IRQ_INSTALL_FAILED
+            }
+            crate::dw_apb_timer::SelfTestError::Timeout => {
+                crate::contract::ACTIVATION_RESULT_SELF_TEST_TIMEOUT
+            }
+            crate::dw_apb_timer::SelfTestError::InvalidContract => {
+                ACTIVATION_RESULT_INTERNAL_FAILURE
+            }
+        },
+        flag,
+    }
+}
+
+#[cfg(any(
+    feature = "timer4",
+    feature = "timer5",
+    feature = "timer6",
+    feature = "timer7"
+))]
+fn activate_selected_timers(
+    mut activate_one: impl FnMut(
+        crate::dw_apb_timer::TimerConfig,
+    ) -> Result<(), crate::dw_apb_timer::SelfTestError>,
+) -> Result<(), LeaseFailure> {
+    // Keep activation deterministic. Every successful self-test stops its
+    // channel and disables its PLIC input before the next lease is touched.
+    #[cfg(feature = "timer4")]
+    activate_one(crate::dw_apb_timer::TIMER4)
+        .map_err(|error| timer_failure(error, crate::contract::FLAG_TIMER4_SELF_TEST_FAILED))?;
+    #[cfg(feature = "timer5")]
+    activate_one(crate::dw_apb_timer::TIMER5)
+        .map_err(|error| timer_failure(error, crate::contract::FLAG_TIMER5_SELF_TEST_FAILED))?;
+    #[cfg(feature = "timer6")]
+    activate_one(crate::dw_apb_timer::TIMER6)
+        .map_err(|error| timer_failure(error, crate::contract::FLAG_TIMER6_SELF_TEST_FAILED))?;
+    #[cfg(feature = "timer7")]
+    activate_one(crate::dw_apb_timer::TIMER7)
+        .map_err(|error| timer_failure(error, crate::contract::FLAG_TIMER7_SELF_TEST_FAILED))?;
+    Ok(())
+}
+
 impl LeaseActivator for HardwareLeases {
     fn activate(&mut self) -> Result<(), LeaseFailure> {
-        #[cfg(feature = "timer4")]
+        #[cfg(any(
+            feature = "timer4",
+            feature = "timer5",
+            feature = "timer6",
+            feature = "timer7"
+        ))]
         {
-            return crate::dw_apb_timer::self_test(crate::dw_apb_timer::TIMER4).map_err(|error| {
-                LeaseFailure {
-                    result: match error {
-                        crate::dw_apb_timer::SelfTestError::ClockXtalMiscDisabled
-                        | crate::dw_apb_timer::SelfTestError::ClockChannelDisabled
-                        | crate::dw_apb_timer::SelfTestError::TimerResetAsserted
-                        | crate::dw_apb_timer::SelfTestError::ChannelResetAsserted
-                        | crate::dw_apb_timer::SelfTestError::WrongClockSource => {
-                            crate::contract::ACTIVATION_RESULT_PRECONDITION_FAILED
-                        }
-                        crate::dw_apb_timer::SelfTestError::InterruptRegistration => {
-                            crate::contract::ACTIVATION_RESULT_IRQ_INSTALL_FAILED
-                        }
-                        crate::dw_apb_timer::SelfTestError::Timeout => {
-                            crate::contract::ACTIVATION_RESULT_SELF_TEST_TIMEOUT
-                        }
-                        crate::dw_apb_timer::SelfTestError::InvalidContract => {
-                            ACTIVATION_RESULT_INTERNAL_FAILURE
-                        }
-                    },
-                    flag: crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
-                }
-            });
+            activate_selected_timers(crate::dw_apb_timer::self_test)
         }
 
-        #[cfg(not(feature = "timer4"))]
+        #[cfg(not(any(
+            feature = "timer4",
+            feature = "timer5",
+            feature = "timer6",
+            feature = "timer7"
+        )))]
         {
             // A generated base contract has no physical lease and never calls
             // this method.  Keep the impossible path fail-closed.
@@ -477,12 +523,41 @@ mod tests {
         assert!(!publish_manifest_with(&mut io, 7));
     }
 
-    #[cfg(feature = "timer4")]
+    #[cfg(any(
+        feature = "timer4",
+        feature = "timer5",
+        feature = "timer6",
+        feature = "timer7"
+    ))]
     mod leased {
         use super::*;
         use crate::contract::{
             ACTIVATION_RESULT_SELF_TEST_FAILED, ACTIVATION_STATE_INITIALIZING, STATE_RUNNING,
         };
+        use std::vec::Vec;
+
+        const SELECTED_TIMERS: &[(crate::dw_apb_timer::TimerConfig, u32)] = &[
+            #[cfg(feature = "timer4")]
+            (
+                crate::dw_apb_timer::TIMER4,
+                crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
+            ),
+            #[cfg(feature = "timer5")]
+            (
+                crate::dw_apb_timer::TIMER5,
+                crate::contract::FLAG_TIMER5_SELF_TEST_FAILED,
+            ),
+            #[cfg(feature = "timer6")]
+            (
+                crate::dw_apb_timer::TIMER6,
+                crate::contract::FLAG_TIMER6_SELF_TEST_FAILED,
+            ),
+            #[cfg(feature = "timer7")]
+            (
+                crate::dw_apb_timer::TIMER7,
+                crate::contract::FLAG_TIMER7_SELF_TEST_FAILED,
+            ),
+        ];
 
         struct FakeRequestSource {
             first: ActivationRequest,
@@ -821,7 +896,7 @@ mod tests {
             let mut source = source(request);
             let failure = LeaseFailure {
                 result: ACTIVATION_RESULT_SELF_TEST_FAILED,
-                flag: crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
+                flag: SELECTED_TIMERS[0].1,
             };
             let mut timer = FakeTimerLease {
                 failure: Some(failure),
@@ -843,10 +918,7 @@ mod tests {
             assert_eq!(status.activation_state, ACTIVATION_STATE_LEASE_FAULT);
             assert_eq!(status.capabilities, DORMANT_CAPABILITIES);
             assert_ne!(status.flags & FLAG_ACTIVATION_FAILED, 0);
-            assert_ne!(
-                status.flags & crate::contract::FLAG_TIMER4_SELF_TEST_FAILED,
-                0
-            );
+            assert_ne!(status.flags & SELECTED_TIMERS[0].1, 0);
             assert_eq!(
                 handle(
                     envelope(42),
@@ -859,6 +931,49 @@ mod tests {
                 ACTIVATION_RESULT_INVALID_STATE
             );
             assert_eq!(timer.mmio_accesses, 1);
+        }
+
+        #[test]
+        fn selected_timers_activate_in_order_and_stop_at_first_failure() {
+            let mut activated = Vec::new();
+            assert!(
+                activate_selected_timers(|config| {
+                    activated.push(config);
+                    Ok(())
+                })
+                .is_ok()
+            );
+            assert_eq!(
+                activated,
+                SELECTED_TIMERS
+                    .iter()
+                    .map(|(config, _flag)| *config)
+                    .collect::<Vec<_>>()
+            );
+
+            let failure_index = SELECTED_TIMERS.len() / 2;
+            let mut attempted = Vec::new();
+            let failure = activate_selected_timers(|config| {
+                attempted.push(config);
+                if attempted.len() == failure_index + 1 {
+                    Err(crate::dw_apb_timer::SelfTestError::Timeout)
+                } else {
+                    Ok(())
+                }
+            })
+            .expect_err("selected timer failure must stop activation");
+            assert_eq!(
+                attempted,
+                SELECTED_TIMERS[..=failure_index]
+                    .iter()
+                    .map(|(config, _flag)| *config)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                failure.result,
+                crate::contract::ACTIVATION_RESULT_SELF_TEST_TIMEOUT
+            );
+            assert_eq!(failure.flag, SELECTED_TIMERS[failure_index].1);
         }
 
         #[test]

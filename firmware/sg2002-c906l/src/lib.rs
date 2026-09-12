@@ -16,7 +16,12 @@ mod contract {
 }
 
 mod activation;
-#[cfg(feature = "timer4")]
+#[cfg(any(
+    feature = "timer4",
+    feature = "timer5",
+    feature = "timer6",
+    feature = "timer7"
+))]
 mod dw_apb_timer;
 mod rpmsg;
 

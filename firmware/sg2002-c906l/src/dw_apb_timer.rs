@@ -11,19 +11,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use sg2002_pac::timer::{CHANNEL_SIZE, TimerChannel};
 
 use super::{c906l_delay, c906l_ticks, deadline_reached, io_fence};
-use crate::contract::{
-    TIMER4_BANK_ADDRESS, TIMER4_BANK_SIZE, TIMER4_CONTROL_ADDRESS, TIMER4_EOI_ADDRESS, TIMER4_IRQ,
-    TIMER4_LOAD_ADDRESS, TIMER4_PRECONDITION_CLOCK_SOURCE_ADDRESS,
-    TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED, TIMER4_PRECONDITION_CLOCK_SOURCE_MASK,
-    TIMER4_PRECONDITION_CLOCK_TIMER4_ADDRESS, TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED,
-    TIMER4_PRECONDITION_CLOCK_TIMER4_MASK, TIMER4_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
-    TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED, TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK,
-    TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS, TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED,
-    TIMER4_PRECONDITION_RESET_TIMER_IP_MASK, TIMER4_PRECONDITION_RESET_TIMER4_ADDRESS,
-    TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED, TIMER4_PRECONDITION_RESET_TIMER4_MASK,
-    TIMER4_TEST_PERIOD_TICKS, TIMER4_TEST_TIMEOUT_RTOS_TICKS,
-};
-
 const CONTROL_ENABLE: u32 = 1 << 0;
 const CONTROL_USER_DEFINED: u32 = 1 << 1;
 const CONTROL_INTERRUPT_MASK: u32 = 1 << 2;
@@ -44,8 +31,10 @@ pub(crate) struct TimerConfig {
     bank_address: usize,
     bank_size: usize,
     load_address: usize,
+    current_address: usize,
     control_address: usize,
     eoi_address: usize,
+    status_address: usize,
     clock_xtal_misc: Precondition,
     clock_channel: Precondition,
     reset_timer_ip: Precondition,
@@ -67,17 +56,26 @@ impl TimerConfig {
         let Some(channel_end) = self.load_address.checked_add(CHANNEL_SIZE) else {
             return false;
         };
+        let Some(channel_offset) = (self.channel as usize).checked_mul(CHANNEL_SIZE) else {
+            return false;
+        };
+        let Some(expected_load_address) = self.bank_address.checked_add(channel_offset) else {
+            return false;
+        };
 
         self.channel >= 4
             && self.channel <= 7
-            && self.irq != 0
+            && self.irq == self.channel + 51
             && self.bank_size >= CHANNEL_SIZE
             && self.load_address != 0
             && self.load_address % core::mem::align_of::<u32>() == 0
             && self.load_address >= self.bank_address
+            && self.load_address == expected_load_address
             && channel_end <= bank_end
+            && self.current_address == self.load_address + 0x04
             && self.control_address == self.load_address + 0x08
             && self.eoi_address == self.load_address + 0x0c
+            && self.status_address == self.load_address + 0x10
             && self.reset_timer_ip.address == self.reset_channel.address
             && self.clock_xtal_misc.address % core::mem::align_of::<u32>() == 0
             && self.clock_channel.address % core::mem::align_of::<u32>() == 0
@@ -98,42 +96,219 @@ impl TimerConfig {
     }
 }
 
-pub(crate) const TIMER4: TimerConfig = TimerConfig {
+macro_rules! timer_config {
+    (
+        channel: $channel:literal,
+        irq: $irq:ident,
+        bank: ($bank_address:ident, $bank_size:ident),
+        registers: ($load:ident, $current:ident, $control:ident, $eoi:ident, $status:ident),
+        clock_xtal_misc: ($xtal_address:ident, $xtal_mask:ident, $xtal_expected:ident),
+        clock_channel: ($clock_address:ident, $clock_mask:ident, $clock_expected:ident),
+        reset_timer_ip: ($ip_reset_address:ident, $ip_reset_mask:ident, $ip_reset_expected:ident),
+        reset_channel: ($channel_reset_address:ident, $channel_reset_mask:ident, $channel_reset_expected:ident),
+        clock_source: ($source_address:ident, $source_mask:ident, $source_expected:ident),
+        self_test: ($period_ticks:ident, $timeout_ticks:ident) $(,)?
+    ) => {
+        TimerConfig {
+            channel: $channel,
+            irq: crate::contract::$irq,
+            bank_address: crate::contract::$bank_address,
+            bank_size: crate::contract::$bank_size,
+            load_address: crate::contract::$load,
+            current_address: crate::contract::$current,
+            control_address: crate::contract::$control,
+            eoi_address: crate::contract::$eoi,
+            status_address: crate::contract::$status,
+            clock_xtal_misc: Precondition {
+                address: crate::contract::$xtal_address,
+                mask: crate::contract::$xtal_mask,
+                expected: crate::contract::$xtal_expected,
+            },
+            clock_channel: Precondition {
+                address: crate::contract::$clock_address,
+                mask: crate::contract::$clock_mask,
+                expected: crate::contract::$clock_expected,
+            },
+            reset_timer_ip: Precondition {
+                address: crate::contract::$ip_reset_address,
+                mask: crate::contract::$ip_reset_mask,
+                expected: crate::contract::$ip_reset_expected,
+            },
+            reset_channel: Precondition {
+                address: crate::contract::$channel_reset_address,
+                mask: crate::contract::$channel_reset_mask,
+                expected: crate::contract::$channel_reset_expected,
+            },
+            clock_source: Precondition {
+                address: crate::contract::$source_address,
+                mask: crate::contract::$source_mask,
+                expected: crate::contract::$source_expected,
+            },
+            period_ticks: crate::contract::$period_ticks,
+            timeout_rtos_ticks: crate::contract::$timeout_ticks,
+        }
+    };
+}
+
+#[cfg(feature = "timer4")]
+pub(crate) const TIMER4: TimerConfig = timer_config!(
     channel: 4,
     irq: TIMER4_IRQ,
-    bank_address: TIMER4_BANK_ADDRESS,
-    bank_size: TIMER4_BANK_SIZE,
-    load_address: TIMER4_LOAD_ADDRESS,
-    control_address: TIMER4_CONTROL_ADDRESS,
-    eoi_address: TIMER4_EOI_ADDRESS,
-    clock_xtal_misc: Precondition {
-        address: TIMER4_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
-        mask: TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK,
-        expected: TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED,
-    },
-    clock_channel: Precondition {
-        address: TIMER4_PRECONDITION_CLOCK_TIMER4_ADDRESS,
-        mask: TIMER4_PRECONDITION_CLOCK_TIMER4_MASK,
-        expected: TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED,
-    },
-    reset_timer_ip: Precondition {
-        address: TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS,
-        mask: TIMER4_PRECONDITION_RESET_TIMER_IP_MASK,
-        expected: TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED,
-    },
-    reset_channel: Precondition {
-        address: TIMER4_PRECONDITION_RESET_TIMER4_ADDRESS,
-        mask: TIMER4_PRECONDITION_RESET_TIMER4_MASK,
-        expected: TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED,
-    },
-    clock_source: Precondition {
-        address: TIMER4_PRECONDITION_CLOCK_SOURCE_ADDRESS,
-        mask: TIMER4_PRECONDITION_CLOCK_SOURCE_MASK,
-        expected: TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED,
-    },
-    period_ticks: TIMER4_TEST_PERIOD_TICKS,
-    timeout_rtos_ticks: TIMER4_TEST_TIMEOUT_RTOS_TICKS,
-};
+    bank: (TIMER4_BANK_ADDRESS, TIMER4_BANK_SIZE),
+    registers: (
+        TIMER4_LOAD_ADDRESS,
+        TIMER4_CURRENT_ADDRESS,
+        TIMER4_CONTROL_ADDRESS,
+        TIMER4_EOI_ADDRESS,
+        TIMER4_STATUS_ADDRESS
+    ),
+    clock_xtal_misc: (
+        TIMER4_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
+        TIMER4_PRECONDITION_CLOCK_XTAL_MISC_MASK,
+        TIMER4_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED
+    ),
+    clock_channel: (
+        TIMER4_PRECONDITION_CLOCK_TIMER4_ADDRESS,
+        TIMER4_PRECONDITION_CLOCK_TIMER4_MASK,
+        TIMER4_PRECONDITION_CLOCK_TIMER4_EXPECTED
+    ),
+    reset_timer_ip: (
+        TIMER4_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+        TIMER4_PRECONDITION_RESET_TIMER_IP_MASK,
+        TIMER4_PRECONDITION_RESET_TIMER_IP_EXPECTED
+    ),
+    reset_channel: (
+        TIMER4_PRECONDITION_RESET_TIMER4_ADDRESS,
+        TIMER4_PRECONDITION_RESET_TIMER4_MASK,
+        TIMER4_PRECONDITION_RESET_TIMER4_EXPECTED
+    ),
+    clock_source: (
+        TIMER4_PRECONDITION_CLOCK_SOURCE_ADDRESS,
+        TIMER4_PRECONDITION_CLOCK_SOURCE_MASK,
+        TIMER4_PRECONDITION_CLOCK_SOURCE_EXPECTED
+    ),
+    self_test: (TIMER4_TEST_PERIOD_TICKS, TIMER4_TEST_TIMEOUT_RTOS_TICKS),
+);
+
+#[cfg(feature = "timer5")]
+pub(crate) const TIMER5: TimerConfig = timer_config!(
+    channel: 5,
+    irq: TIMER5_IRQ,
+    bank: (TIMER5_BANK_ADDRESS, TIMER5_BANK_SIZE),
+    registers: (
+        TIMER5_LOAD_ADDRESS,
+        TIMER5_CURRENT_ADDRESS,
+        TIMER5_CONTROL_ADDRESS,
+        TIMER5_EOI_ADDRESS,
+        TIMER5_STATUS_ADDRESS
+    ),
+    clock_xtal_misc: (
+        TIMER5_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
+        TIMER5_PRECONDITION_CLOCK_XTAL_MISC_MASK,
+        TIMER5_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED
+    ),
+    clock_channel: (
+        TIMER5_PRECONDITION_CLOCK_TIMER5_ADDRESS,
+        TIMER5_PRECONDITION_CLOCK_TIMER5_MASK,
+        TIMER5_PRECONDITION_CLOCK_TIMER5_EXPECTED
+    ),
+    reset_timer_ip: (
+        TIMER5_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+        TIMER5_PRECONDITION_RESET_TIMER_IP_MASK,
+        TIMER5_PRECONDITION_RESET_TIMER_IP_EXPECTED
+    ),
+    reset_channel: (
+        TIMER5_PRECONDITION_RESET_TIMER5_ADDRESS,
+        TIMER5_PRECONDITION_RESET_TIMER5_MASK,
+        TIMER5_PRECONDITION_RESET_TIMER5_EXPECTED
+    ),
+    clock_source: (
+        TIMER5_PRECONDITION_CLOCK_SOURCE_ADDRESS,
+        TIMER5_PRECONDITION_CLOCK_SOURCE_MASK,
+        TIMER5_PRECONDITION_CLOCK_SOURCE_EXPECTED
+    ),
+    self_test: (TIMER5_TEST_PERIOD_TICKS, TIMER5_TEST_TIMEOUT_RTOS_TICKS),
+);
+
+#[cfg(feature = "timer6")]
+pub(crate) const TIMER6: TimerConfig = timer_config!(
+    channel: 6,
+    irq: TIMER6_IRQ,
+    bank: (TIMER6_BANK_ADDRESS, TIMER6_BANK_SIZE),
+    registers: (
+        TIMER6_LOAD_ADDRESS,
+        TIMER6_CURRENT_ADDRESS,
+        TIMER6_CONTROL_ADDRESS,
+        TIMER6_EOI_ADDRESS,
+        TIMER6_STATUS_ADDRESS
+    ),
+    clock_xtal_misc: (
+        TIMER6_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
+        TIMER6_PRECONDITION_CLOCK_XTAL_MISC_MASK,
+        TIMER6_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED
+    ),
+    clock_channel: (
+        TIMER6_PRECONDITION_CLOCK_TIMER6_ADDRESS,
+        TIMER6_PRECONDITION_CLOCK_TIMER6_MASK,
+        TIMER6_PRECONDITION_CLOCK_TIMER6_EXPECTED
+    ),
+    reset_timer_ip: (
+        TIMER6_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+        TIMER6_PRECONDITION_RESET_TIMER_IP_MASK,
+        TIMER6_PRECONDITION_RESET_TIMER_IP_EXPECTED
+    ),
+    reset_channel: (
+        TIMER6_PRECONDITION_RESET_TIMER6_ADDRESS,
+        TIMER6_PRECONDITION_RESET_TIMER6_MASK,
+        TIMER6_PRECONDITION_RESET_TIMER6_EXPECTED
+    ),
+    clock_source: (
+        TIMER6_PRECONDITION_CLOCK_SOURCE_ADDRESS,
+        TIMER6_PRECONDITION_CLOCK_SOURCE_MASK,
+        TIMER6_PRECONDITION_CLOCK_SOURCE_EXPECTED
+    ),
+    self_test: (TIMER6_TEST_PERIOD_TICKS, TIMER6_TEST_TIMEOUT_RTOS_TICKS),
+);
+
+#[cfg(feature = "timer7")]
+pub(crate) const TIMER7: TimerConfig = timer_config!(
+    channel: 7,
+    irq: TIMER7_IRQ,
+    bank: (TIMER7_BANK_ADDRESS, TIMER7_BANK_SIZE),
+    registers: (
+        TIMER7_LOAD_ADDRESS,
+        TIMER7_CURRENT_ADDRESS,
+        TIMER7_CONTROL_ADDRESS,
+        TIMER7_EOI_ADDRESS,
+        TIMER7_STATUS_ADDRESS
+    ),
+    clock_xtal_misc: (
+        TIMER7_PRECONDITION_CLOCK_XTAL_MISC_ADDRESS,
+        TIMER7_PRECONDITION_CLOCK_XTAL_MISC_MASK,
+        TIMER7_PRECONDITION_CLOCK_XTAL_MISC_EXPECTED
+    ),
+    clock_channel: (
+        TIMER7_PRECONDITION_CLOCK_TIMER7_ADDRESS,
+        TIMER7_PRECONDITION_CLOCK_TIMER7_MASK,
+        TIMER7_PRECONDITION_CLOCK_TIMER7_EXPECTED
+    ),
+    reset_timer_ip: (
+        TIMER7_PRECONDITION_RESET_TIMER_IP_ADDRESS,
+        TIMER7_PRECONDITION_RESET_TIMER_IP_MASK,
+        TIMER7_PRECONDITION_RESET_TIMER_IP_EXPECTED
+    ),
+    reset_channel: (
+        TIMER7_PRECONDITION_RESET_TIMER7_ADDRESS,
+        TIMER7_PRECONDITION_RESET_TIMER7_MASK,
+        TIMER7_PRECONDITION_RESET_TIMER7_EXPECTED
+    ),
+    clock_source: (
+        TIMER7_PRECONDITION_CLOCK_SOURCE_ADDRESS,
+        TIMER7_PRECONDITION_CLOCK_SOURCE_MASK,
+        TIMER7_PRECONDITION_CLOCK_SOURCE_EXPECTED
+    ),
+    self_test: (TIMER7_TEST_PERIOD_TICKS, TIMER7_TEST_TIMEOUT_RTOS_TICKS),
+);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Register {
@@ -447,11 +622,23 @@ pub(crate) fn self_test(config: TimerConfig) -> Result<(), SelfTestError> {
 }
 
 fn interrupt_config(channel: u32, irq: u32) -> Option<TimerConfig> {
+    #[cfg(feature = "timer4")]
     if channel == TIMER4.channel && irq == TIMER4.irq {
-        Some(TIMER4)
-    } else {
-        None
+        return Some(TIMER4);
     }
+    #[cfg(feature = "timer5")]
+    if channel == TIMER5.channel && irq == TIMER5.irq {
+        return Some(TIMER5);
+    }
+    #[cfg(feature = "timer6")]
+    if channel == TIMER6.channel && irq == TIMER6.irq {
+        return Some(TIMER6);
+    }
+    #[cfg(feature = "timer7")]
+    if channel == TIMER7.channel && irq == TIMER7.irq {
+        return Some(TIMER7);
+    }
+    None
 }
 
 /// Called by a generated-contract C trampoline. Invalid or unselected pairs
@@ -476,6 +663,21 @@ mod tests {
 
     use super::*;
     use std::vec::Vec;
+
+    const SELECTED_CONFIGS: &[TimerConfig] = &[
+        #[cfg(feature = "timer4")]
+        TIMER4,
+        #[cfg(feature = "timer5")]
+        TIMER5,
+        #[cfg(feature = "timer6")]
+        TIMER6,
+        #[cfg(feature = "timer7")]
+        TIMER7,
+    ];
+
+    fn test_config() -> TimerConfig {
+        SELECTED_CONFIGS[0]
+    }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum Operation {
@@ -525,31 +727,45 @@ mod tests {
         }
     }
 
-    fn timer4() -> Timer<FakeIo> {
-        Timer::new(TIMER4, FakeIo::ready(TIMER4))
+    fn test_timer() -> Timer<FakeIo> {
+        let config = test_config();
+        Timer::new(config, FakeIo::ready(config))
     }
 
     #[test]
-    fn timer4_registers_irq_and_channel_slice_are_exact() {
-        assert!(TIMER4.valid());
-        assert_eq!(TIMER4.channel, 4);
-        assert_eq!(TIMER4.irq, 55);
-        assert_eq!(Register::ClockXtalMisc.address(TIMER4), 0x0300_2000);
-        assert_eq!(Register::ClockChannel.address(TIMER4), 0x0300_200c);
-        assert_eq!(Register::ResetTimer.address(TIMER4), 0x0300_3008);
-        assert_eq!(Register::TimerSource.address(TIMER4), 0x0300_01a0);
-        assert_eq!(Register::Load.address(TIMER4), 0x030a_0050);
-        assert_eq!(Register::Control.address(TIMER4), 0x030a_0058);
-        assert_eq!(Register::Eoi.address(TIMER4), 0x030a_005c);
-        assert_eq!(TIMER4.load_address + CHANNEL_SIZE, 0x030a_0064);
-        assert_ne!(Register::Eoi.address(TIMER4), 0x030a_00a4);
+    fn selected_registers_irqs_and_channel_slices_are_exact() {
+        for config in SELECTED_CONFIGS {
+            let offset = (config.channel - 4) as usize;
+            let load = 0x030a_0050 + offset * CHANNEL_SIZE;
+            assert!(config.valid());
+            assert_eq!(config.irq, config.channel + 51);
+            assert_eq!(config.bank_address, 0x030a_0000);
+            assert_eq!(config.bank_size, 0x0001_0000);
+            assert_eq!(Register::ClockXtalMisc.address(*config), 0x0300_2000);
+            assert_eq!(config.clock_xtal_misc.mask, 0x0000_4000);
+            assert_eq!(Register::ClockChannel.address(*config), 0x0300_200c);
+            assert_eq!(config.clock_channel.mask, 0x0000_2000 << offset);
+            assert_eq!(Register::ResetTimer.address(*config), 0x0300_3008);
+            assert_eq!(config.reset_timer_ip.mask, 0x0000_2000);
+            assert_eq!(config.reset_channel.mask, 0x0004_0000 << offset);
+            assert_eq!(Register::TimerSource.address(*config), 0x0300_01a0);
+            assert_eq!(config.clock_source.mask, 0x10 << offset);
+            assert_eq!(Register::Load.address(*config), load);
+            assert_eq!(config.current_address, load + 0x04);
+            assert_eq!(Register::Control.address(*config), load + 0x08);
+            assert_eq!(Register::Eoi.address(*config), load + 0x0c);
+            assert_eq!(config.status_address, load + 0x10);
+            assert_eq!(config.load_address + CHANNEL_SIZE, load + 0x14);
+            assert_ne!(Register::Eoi.address(*config), 0x030a_00a4);
+        }
     }
 
     #[test]
     fn invalid_contract_is_rejected_before_mmio() {
+        let config = test_config();
         let invalid = TimerConfig {
-            eoi_address: TIMER4.eoi_address + 4,
-            ..TIMER4
+            status_address: config.status_address + 4,
+            ..config
         };
         let mut timer = Timer::new(invalid, FakeIo::ready(invalid));
         let mut runtime = FakeRuntime::default();
@@ -563,7 +779,8 @@ mod tests {
 
     #[test]
     fn validates_all_shared_prerequisites_before_first_timer_write() {
-        let mut timer = timer4();
+        let mut timer = test_timer();
+        let config = timer.config;
         assert_eq!(timer.validate_platform(), Ok(()));
         timer.prepare();
 
@@ -576,24 +793,25 @@ mod tests {
                 Operation::Read(Register::TimerSource),
                 Operation::Write(Register::Control, CONTROL_STOPPED_MASKED),
                 Operation::Read(Register::Eoi),
-                Operation::Write(Register::Load, TIMER4_TEST_PERIOD_TICKS),
+                Operation::Write(Register::Load, config.period_ticks),
             ]
         );
     }
 
     #[test]
     fn failed_validation_performs_no_write() {
+        let config = test_config();
         for fault in 0..5 {
-            let mut io = FakeIo::ready(TIMER4);
+            let mut io = FakeIo::ready(config);
             match fault {
-                0 => io.xtal_gate ^= TIMER4.clock_xtal_misc.mask,
-                1 => io.timer_gate ^= TIMER4.clock_channel.mask,
-                2 => io.reset ^= TIMER4.reset_timer_ip.mask,
-                3 => io.reset ^= TIMER4.reset_channel.mask,
-                4 => io.source ^= TIMER4.clock_source.mask,
+                0 => io.xtal_gate ^= config.clock_xtal_misc.mask,
+                1 => io.timer_gate ^= config.clock_channel.mask,
+                2 => io.reset ^= config.reset_timer_ip.mask,
+                3 => io.reset ^= config.reset_channel.mask,
+                4 => io.source ^= config.clock_source.mask,
                 _ => unreachable!(),
             }
-            let mut timer = Timer::new(TIMER4, io);
+            let mut timer = Timer::new(config, io);
             assert!(timer.validate_platform().is_err());
             assert!(
                 timer
@@ -607,7 +825,7 @@ mod tests {
 
     #[test]
     fn isr_reads_only_channel_eoi_then_masks() {
-        let mut timer = timer4();
+        let mut timer = test_timer();
         timer.acknowledge_and_stop();
         assert_eq!(
             timer.io.operations,
@@ -662,9 +880,10 @@ mod tests {
 
     #[test]
     fn failed_precondition_never_touches_plic_or_irq_runtime() {
-        let mut io = FakeIo::ready(TIMER4);
-        io.xtal_gate ^= TIMER4.clock_xtal_misc.mask;
-        let mut timer = Timer::new(TIMER4, io);
+        let config = test_config();
+        let mut io = FakeIo::ready(config);
+        io.xtal_gate ^= config.clock_xtal_misc.mask;
+        let mut timer = Timer::new(config, io);
         let mut runtime = FakeRuntime::default();
         assert_eq!(
             self_test_with(&mut timer, &mut runtime),
@@ -685,7 +904,7 @@ mod tests {
 
     #[test]
     fn self_test_success_has_bounded_mmio_and_balanced_irq_lifetime() {
-        let mut timer = timer4();
+        let mut timer = test_timer();
         let mut runtime = FakeRuntime {
             fire_after_delays: Some(3),
             ..FakeRuntime::default()
@@ -700,7 +919,8 @@ mod tests {
 
     #[test]
     fn self_test_timeout_is_independently_poll_bounded() {
-        let mut timer = timer4();
+        let mut timer = test_timer();
+        let timeout_rtos_ticks = timer.config.timeout_rtos_ticks;
         let mut runtime = FakeRuntime::default();
         assert_eq!(
             self_test_with(&mut timer, &mut runtime),
@@ -708,12 +928,12 @@ mod tests {
         );
         assert_eq!(runtime.install_calls, 1);
         assert_eq!(runtime.disable_calls, 1);
-        assert!(runtime.delay_calls <= TIMER4.timeout_rtos_ticks as usize + 1);
+        assert!(runtime.delay_calls <= timeout_rtos_ticks as usize + 1);
     }
 
     #[test]
     fn failed_irq_install_stops_timer_without_disabling_unowned_irq() {
-        let mut timer = timer4();
+        let mut timer = test_timer();
         let mut runtime = FakeRuntime {
             install_result: -1,
             ..FakeRuntime::default()
@@ -733,7 +953,14 @@ mod tests {
 
     #[test]
     fn invalid_or_unselected_interrupt_pair_is_rejected() {
-        assert_eq!(interrupt_config(5, 56), None);
-        assert_eq!(interrupt_config(TIMER4.channel, TIMER4.irq + 1), None);
+        assert_eq!(interrupt_config(0, u32::MAX), None);
+        for (channel, irq) in [(4, 55), (5, 56), (6, 57), (7, 58)] {
+            let expected = SELECTED_CONFIGS
+                .iter()
+                .copied()
+                .find(|config| config.channel == channel);
+            assert_eq!(interrupt_config(channel, irq), expected);
+            assert_eq!(interrupt_config(channel, irq + 1), None);
+        }
     }
 }
