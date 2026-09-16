@@ -441,9 +441,33 @@ let
     ]
       true;
 
+  # Board wiring, ownership protocol and padding are one frozen composite
+  # lease. Keep its semantic fingerprint explicit, as with the exact timer
+  # topology above: edits require deliberate review of both validators.
+  validateLcdPeripheral = peripheralName: peripheral:
+    builtins.deepSeq [
+      (require (peripheralName == "picoclawLcd")
+        "the LCD descriptor must use the PicoClaw lease identity")
+      (require
+        (builtins.hashString "sha256" (builtins.toJSON (stripDocumentation peripheral))
+          == "645f6b64a222f7ae13e646f4cdf96ad233be09e8991080a41e9578ec24c78c19")
+        "PicoClaw LCD does not match the frozen board and framebuffer contract")
+      (require
+        (contract.abi.capabilities.picoclawLcd.bit == 7
+          && contract.abi.flags.picoclawLcdFailed.bit == 11)
+        "PicoClaw LCD has incorrect ABI capability/status bits")
+      (require
+        (shared.address + shared.regions.bulk.offset
+          == peripheral.constants.ownership0Address
+          && peripheral.constants.frameSlot1Address + peripheral.constants.frameSize
+          <= shared.address + shared.regions.bulk.offset + shared.regions.bulk.size)
+        "PicoClaw framebuffer does not fit the shared bulk region")
+    ]
+      true;
+
   validatePeripheral = peripheralName: peripheral:
     builtins.deepSeq [
-      (require (validSlug peripheralName)
+      (require (validKey peripheralName)
         "peripheral `${peripheralName}` has an unsafe name")
       (require (builtins.isString peripheral.kind)
         "peripheral `${peripheralName}` has no kind")
@@ -456,6 +480,8 @@ let
         "peripheral `${peripheralName}` has an invalid lease bit")
       (if peripheral.kind == "dw-apb-timer-channel" then
         validateTimerPeripheral peripheralName peripheral
+      else if peripheral.kind == "picoclaw-st7789" then
+        validateLcdPeripheral peripheralName peripheral
       else
         fail "peripheral `${peripheralName}` has unsupported kind `${peripheral.kind}`")
     ]
@@ -482,19 +508,21 @@ let
 
   baseCapabilities = contract.profiles.base.capabilities;
   peripheralValues = values contract.peripherals;
+  timerValues = lib.filter (peripheral: peripheral.kind == "dw-apb-timer-channel")
+    peripheralValues;
   peripheralCargoFeatures = map (peripheral: peripheral.cargoFeature)
     peripheralValues;
   peripheralCapabilities = map (peripheral: peripheral.capability)
     peripheralValues;
   peripheralFailureFlags = map (peripheral: peripheral.failureFlag)
     peripheralValues;
-  peripheralIrqs = map (peripheral: peripheral.irq) peripheralValues;
+  peripheralIrqs = map (peripheral: peripheral.irq) timerValues;
   peripheralChannels = map (peripheral: peripheral.bank.channel)
-    peripheralValues;
+    timerValues;
   peripheralRegisterAddresses = lib.concatMap
     (peripheral: map (register: register.address)
       (values peripheral.registers))
-    peripheralValues;
+    timerValues;
   orderedPeripheralRanges = lib.sort
     (left: right: left.start < right.start)
     (map
@@ -502,7 +530,7 @@ let
         start = peripheral.registers.load.address;
         end = peripheral.registers.status.address + 4;
       })
-      peripheralValues);
+      timerValues);
   peripheralRangePartition = lib.foldl'
     (state: range:
       builtins.deepSeq
@@ -536,6 +564,10 @@ let
         "profile `${profileName}` has an unsafe name")
       (require (allUnique profile.peripherals)
         "profile `${profileName}` contains duplicate peripherals")
+      (require
+        (!builtins.elem "picoclawLcd" profile.peripherals
+          || profile.peripherals == [ "picoclawLcd" ])
+        "PicoClaw LCD must be selected alone")
       (require (allUnique profile.capabilities)
         "profile `${profileName}` contains duplicate capabilities")
       (require (unknownPeripherals == [ ])
@@ -614,8 +646,8 @@ let
       (allUnique
         (map (peripheral: peripheral.leaseBit) (values contract.peripherals)))
       "peripheral lease bits are not unique")
-    (require (names contract.peripherals == names expectedSg2002Timers)
-      "the SG2002 C906L timer topology must contain exactly Timer4 through Timer7")
+    (require (names contract.peripherals == [ "picoclawLcd" ] ++ names expectedSg2002Timers)
+      "the SG2002 C906L topology must contain PicoClaw LCD and Timer4 through Timer7")
     (require (allUnique peripheralCargoFeatures)
       "peripheral Cargo features are not unique")
     (require (allUnique peripheralCapabilities)
@@ -891,6 +923,8 @@ let
       fail "peripheral selection contains duplicates"
     else if unknownPeripherals != [ ] then
       fail "unknown peripherals: ${lib.concatStringsSep ", " unknownPeripherals}"
+    else if builtins.elem "picoclawLcd" sorted && sorted != [ "picoclawLcd" ] then
+      fail "PicoClaw LCD must be selected alone"
     else if builtins.length matchingProfiles > 1 then
       fail "multiple named profiles match peripherals: ${lib.concatStringsSep ", " sorted}"
     else

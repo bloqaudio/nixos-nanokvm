@@ -166,7 +166,11 @@ def expected_sg2002_timer(name: str, descriptor: dict[str, int]) -> dict[str, An
 
 
 def validate_sg2002_timers(contract: dict[str, Any]) -> None:
-    leases = contract["peripheralLeases"]
+    leases = {
+        name: lease
+        for name, lease in contract["peripheralLeases"].items()
+        if name != "picoclawLcd"
+    }
     capabilities = contract["abi"]["capabilities"]
     flags = contract["abi"]["flags"]
 
@@ -223,6 +227,48 @@ def validate_sg2002_timers(contract: dict[str, Any]) -> None:
             timer == expected_sg2002_timer(name, SG2002_TIMER_DESCRIPTORS[name]),
             f"{name} does not match the exact SG2002 C906L timer topology",
         )
+
+
+def validate_picoclaw_lcd(contract: dict[str, Any]) -> None:
+    leases = contract["peripheralLeases"]
+    require(
+        contract["abi"]["capabilities"].get("picoclawLcd", {}).get("bit") == 7,
+        "PicoClaw LCD capability must use bit 7",
+    )
+    require(
+        contract["abi"]["flags"].get("picoclawLcdFailed", {}).get("bit") == 11,
+        "PicoClaw LCD failure flag must use bit 11",
+    )
+    if "picoclawLcd" not in leases:
+        return
+    require(list(leases) == ["picoclawLcd"], "PicoClaw LCD must be selected alone")
+    lcd = leases["picoclawLcd"]
+    # Freeze physical wiring and framebuffer ownership together. No arbitrary
+    # MMIO or weaker ownership contract is accepted merely because it hashes.
+    require(
+        hashlib.sha256(canonical_json(strip_documentation(lcd))).hexdigest()
+        == "645f6b64a222f7ae13e646f4cdf96ad233be09e8991080a41e9578ec24c78c19",
+        "PicoClaw LCD does not match the frozen board and framebuffer contract",
+    )
+    constants = lcd["constants"]
+    shared = contract["memory"]["shared"]
+    bulk_start = shared["address"] + shared["regions"]["bulk"]["offset"]
+    bulk_end = bulk_start + shared["regions"]["bulk"]["size"]
+    require(
+        constants["ownership0Address"] == bulk_start
+        and constants["frameSlot1Address"] + constants["frameSize"] <= bulk_end,
+        "PicoClaw framebuffer does not fit the shared bulk region",
+    )
+    profile = contract["profile"]
+    require(
+        profile["leaseMask"] == 16
+        and profile["profileId"] == 17
+        and profile["activationRequired"]
+        and profile["manifestFlags"] == 3
+        and profile["expectedCapabilities"] == 0x8B
+        and profile["dormantCapabilities"] == 0x0B,
+        "PicoClaw LCD has an invalid activation identity",
+    )
 
 
 def load_resolved(path: Path, expected_sha256: str) -> tuple[dict[str, Any], bytes]:
@@ -288,6 +334,7 @@ def load_resolved(path: Path, expected_sha256: str) -> tuple[dict[str, Any], byt
             f"{group_name} contain colliding generated identifiers",
         )
     validate_sg2002_timers(contract)
+    validate_picoclaw_lcd(contract)
     return contract, semantic
 
 
@@ -298,6 +345,19 @@ def c_value(value: int, *, kernel: bool = False, bits: int = 32) -> str:
         return f"{hex_literal(value, width)}{suffix}"
     constructor = "UINT64_C" if bits == 64 else "UINT32_C"
     return f"{constructor}({hex_literal(value, width)})"
+
+
+def lcd_constants(peripheral: dict[str, Any]) -> dict[str, int]:
+    """Flatten the board-specific contract without interpreting its MMIO."""
+    constants = {macro(name): value for name, value in peripheral["constants"].items()}
+    constants["SERVICE_ADDRESS"] = peripheral["service"]["address"]
+    constants["PROTOCOL_VERSION"] = peripheral["service"]["protocolVersion"]
+    for name, precondition in peripheral["sharedPreconditions"].items():
+        for field in ("address", "mask", "expected"):
+            constants[f"PRECONDITION_{macro(name)}_{macro(field)}"] = precondition[
+                field
+            ]
+    return constants
 
 
 def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[str]:
@@ -531,6 +591,13 @@ def emit_macros(contract: dict[str, Any], digest: str, *, kernel: bool) -> list[
     )
 
     for peripheral_name, timer in contract["peripheralLeases"].items():
+        if timer["kind"] == "picoclaw-st7789":
+            stem = prefix + macro(peripheral_name)
+            lines.append(f"#define {prefix}HAVE_{macro(peripheral_name)} 1")
+            lines.append(f'#define {stem}_SERVICE_NAME "{timer["service"]["name"]}"')
+            for name, value in lcd_constants(timer).items():
+                lines.append(f"#define {stem}_{name} {c_value(value, kernel=kernel)}")
+            continue
         require(
             timer["kind"] == "dw-apb-timer-channel",
             f"unsupported peripheral kind: {timer['kind']}",
@@ -991,6 +1058,32 @@ def render_rust(contract: dict[str, Any], digest: str) -> str:
                 f"[(); core::mem::offset_of!({type_name}, {snake(field['name'])})];"
             )
     for peripheral_name, timer in contract["peripheralLeases"].items():
+        if timer["kind"] == "picoclaw-st7789":
+            stem = macro(peripheral_name)
+            lines.append(f"pub const HAVE_{stem}: bool = true;")
+            lines.append(
+                f'pub const {stem}_SERVICE_NAME: &str = "{timer["service"]["name"]}";'
+            )
+            for name, value in lcd_constants(timer).items():
+                value_type = "usize" if name.endswith(("ADDRESS", "SIZE")) else "u32"
+                lines.append(
+                    f"pub const {stem}_{name}: {value_type} = {hex_literal(value)};"
+                )
+            conditions = timer["sharedPreconditions"].values()
+            lines.append(
+                f"pub const {stem}_SHARED_PRECONDITIONS: &[(usize, u32, u32)] = &["
+            )
+            for condition in conditions:
+                lines.append(
+                    "    ("
+                    + ", ".join(
+                        hex_literal(condition[field])
+                        for field in ("address", "mask", "expected")
+                    )
+                    + "),"
+                )
+            lines.append("];")
+            continue
         require(
             timer["kind"] == "dw-apb-timer-channel",
             f"unsupported peripheral kind: {timer['kind']}",
@@ -1145,6 +1238,11 @@ def render_python(contract: dict[str, Any], digest: str) -> str:
     for peripheral_name, peripheral in contract["peripheralLeases"].items():
         stem = macro(peripheral_name)
         lines.append(f"HAVE_{stem} = True")
+        if peripheral["kind"] == "picoclaw-st7789":
+            lines.append(f'{stem}_SERVICE_NAME = "{peripheral["service"]["name"]}"')
+            for name, value in lcd_constants(peripheral).items():
+                lines.append(f"{stem}_{name} = {hex_literal(value)}")
+            continue
         lines.append(f"{stem}_IRQ = {peripheral['irq']}")
         lines.append(
             f"{stem}_BANK_ADDRESS = {hex_literal(peripheral['bank']['address'])}"
@@ -1200,7 +1298,9 @@ def linux_dt_lease_resources(
         linux_lease = peripheral["linuxLease"]
         explicit_ranges = linux_lease.get("mmioRanges")
         if explicit_ranges is not None:
-            require(isinstance(explicit_ranges, list), f"{name} MMIO ranges are not a list")
+            require(
+                isinstance(explicit_ranges, list), f"{name} MMIO ranges are not a list"
+            )
             resource_ranges = [
                 (entry["address"], entry["size"]) for entry in explicit_ranges
             ]
@@ -1229,14 +1329,21 @@ def linux_dt_lease_resources(
             require(address + size <= 1 << 64, f"{name} MMIO range exceeds u64")
             ranges.append((name, address, size))
 
-        irq = peripheral["irq"]
-        require(isinstance(irq, int) and 0 <= irq < 1 << 32, f"{name} C906L IRQ is invalid")
-        irqs.append((name, irq))
+        local_irqs = linux_lease.get("localIrqs")
+        if local_irqs is None:
+            local_irqs = [peripheral["irq"]]
+        for irq in local_irqs:
+            require(
+                isinstance(irq, int) and 0 <= irq < 1 << 32,
+                f"{name} C906L IRQ is invalid",
+            )
+            irqs.append((name, irq))
 
     for index, (_name, address, size) in enumerate(ranges):
         for other_name, other_address, other_size in ranges[index + 1 :]:
             require(
-                address + size <= other_address or other_address + other_size <= address,
+                address + size <= other_address
+                or other_address + other_size <= address,
                 f"C906L MMIO leases overlap near {other_name}",
             )
     return ranges, irqs
@@ -1263,7 +1370,9 @@ def render_dts(contract: dict[str, Any], digest: str) -> str:
         irq_owners = ", ".join(f'"{owner}"' for owner, _irq in c906l_irqs)
         lease_resource_properties = f"""
 \t\tsophgo,c906l-leased-mmio-ranges = /bits/ 64 <{range_cells}>;
-\t\tsophgo,c906l-leased-mmio-range-owners = {range_owners};
+\t\tsophgo,c906l-leased-mmio-range-owners = {range_owners};"""
+        if c906l_irqs:
+            lease_resource_properties += f"""
 \t\tsophgo,c906l-local-irqs = <{irq_cells}>;
 \t\tsophgo,c906l-local-irq-owners = {irq_owners};"""
     activation_property = (

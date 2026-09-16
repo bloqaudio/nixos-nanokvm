@@ -112,6 +112,10 @@
     },
     "capabilityWireWidth": 64,
     "capabilities": {
+      "picoclawLcd": {
+        "bit": 7,
+        "description": "PicoClaw ST7789 shared-framebuffer scanout lease is active"
+      },
       "mailbox": {
         "bit": 0,
         "description": "Eight-byte mailbox control protocol"
@@ -142,6 +146,10 @@
       }
     },
     "flags": {
+      "picoclawLcdFailed": {
+        "bit": 11,
+        "description": "PicoClaw LCD lease validation, initialization or scanout failed"
+      },
       "responseTimeout": {
         "bit": 0,
         "description": "Mailbox response could not be submitted in time"
@@ -401,6 +409,240 @@
     }
   },
   "peripherals": {
+    "picoclawLcd": {
+      "kind": "picoclaw-st7789",
+      "leaseBit": 4,
+      "cargoFeature": "picoclaw-lcd",
+      "capability": "picoclawLcd",
+      "failureFlag": "picoclawLcdFailed",
+      "constants": {
+        "spiAddress": 68747264,
+        "spiSize": 65536,
+        "gpioAddress": 50462720,
+        "gpioSize": 4096,
+        "spiClockHz": 187500000,
+        "spiDivider": 188,
+        "dcPin": 28,
+        "resetPin": 27,
+        "backlightPin": 19,
+        "backlightActiveLow": 1,
+        "width": 240,
+        "height": 240,
+        "yOffset": 80,
+        "rowStride": 480,
+        "pixelFormat": 1,
+        "frameSize": 115200,
+        "frameSlotStride": 118784,
+        "frameSlot0Address": 2415202304,
+        "frameSlot1Address": 2415321088,
+        "ownership0Address": 2415198208,
+        "ownership1Address": 2415198336,
+        "ownershipSize": 128,
+        "requestSize": 64,
+        "completionSize": 64,
+        "completionOffset": 64,
+        "requestMagic": 826688076,
+        "completionMagic": 826688067,
+        "recordMagicOffset": 0,
+        "recordGenerationOffset": 4,
+        "recordSequenceOffset": 8,
+        "recordResultOffset": 12,
+        "recordReservedOffset": 16,
+        "recordReservedSize": 44,
+        "recordCommitOffset": 60,
+        "errorSuccess": 0,
+        "errorLcdFault": 1,
+        "errorInvalidFrame": 2
+      },
+      "service": {
+        "name": "rpmsg_chrdev",
+        "address": 1025,
+        "protocolVersion": 1
+      },
+      "framebuffer": {
+        "version": 1,
+        "region": "bulk",
+        "pixelFormat": "RGB565BE",
+        "slotCount": 2,
+        "request": {
+          "writer": "linux",
+          "fields": [
+            {
+              "name": "magic",
+              "offset": 0,
+              "width": 4
+            },
+            {
+              "name": "generation",
+              "offset": 4,
+              "width": 4
+            },
+            {
+              "name": "sequence",
+              "offset": 8,
+              "width": 4
+            },
+            {
+              "name": "frameBytes",
+              "offset": 12,
+              "width": 4
+            },
+            {
+              "name": "reserved",
+              "offset": 16,
+              "width": 44
+            },
+            {
+              "name": "commitSequence",
+              "offset": 60,
+              "width": 4
+            }
+          ]
+        },
+        "completion": {
+          "writer": "c906l",
+          "fields": [
+            {
+              "name": "magic",
+              "offset": 0,
+              "width": 4
+            },
+            {
+              "name": "generation",
+              "offset": 4,
+              "width": 4
+            },
+            {
+              "name": "sequence",
+              "offset": 8,
+              "width": 4
+            },
+            {
+              "name": "error",
+              "offset": 12,
+              "width": 4
+            },
+            {
+              "name": "reserved",
+              "offset": 16,
+              "width": 44
+            },
+            {
+              "name": "commitSequence",
+              "offset": 60,
+              "width": 4
+            }
+          ]
+        },
+        "ownership": "request-commit-last;immutable-until-matching-completion;completion-after-spi-idle",
+        "sequence": "nonzero-u32-per-slot;generation-must-match-active",
+        "reserved": "zero",
+        "coherency": "linux-noncached;c906l-invalidate-request-twice-and-frame-before-read;clean-completion-before-commit"
+      },
+      "sharedPreconditions": {
+        "ephyPower": {
+          "address": 50370564,
+          "mask": 1,
+          "expected": 1,
+          "access": "read-only"
+        },
+        "ephyReset": {
+          "address": 50370568,
+          "mask": 31,
+          "expected": 1,
+          "access": "read-only"
+        },
+        "ephyRoute": {
+          "address": 50370560,
+          "mask": 4,
+          "expected": 4,
+          "access": "read-only"
+        },
+        "ephyBias": {
+          "address": 50368636,
+          "mask": 7936,
+          "expected": 1280,
+          "access": "read-only"
+        },
+        "ephyIo": {
+          "address": 50368632,
+          "mask": 4095,
+          "expected": 3840,
+          "access": "read-only"
+        },
+        "ephyRx": {
+          "address": 50368628,
+          "mask": 4294967295,
+          "expected": 1542,
+          "access": "read-only"
+        },
+        "ephyTx": {
+          "address": 50368624,
+          "mask": 4294967295,
+          "expected": 1542,
+          "access": "read-only"
+        },
+        "spiMosiMux": {
+          "address": 50336036,
+          "mask": 7,
+          "expected": 6,
+          "access": "read-only"
+        },
+        "spiMisoMux": {
+          "address": 50336040,
+          "mask": 7,
+          "expected": 6,
+          "access": "read-only"
+        },
+        "spiClockMux": {
+          "address": 50336044,
+          "mask": 7,
+          "expected": 6,
+          "access": "read-only"
+        },
+        "spiSelectMux": {
+          "address": 50336048,
+          "mask": 7,
+          "expected": 6,
+          "access": "read-only"
+        },
+        "backlightMux": {
+          "address": 50335844,
+          "mask": 7,
+          "expected": 3,
+          "access": "read-only"
+        },
+        "resetMux": {
+          "address": 50335832,
+          "mask": 7,
+          "expected": 3,
+          "access": "read-only"
+        },
+        "dcMux": {
+          "address": 50335856,
+          "mask": 7,
+          "expected": 3,
+          "access": "read-only"
+        }
+      },
+      "linuxLease": {
+        "policy": "static-exclusive-composite",
+        "mmioRanges": [
+          {
+            "address": 68747264,
+            "size": 65536
+          },
+          {
+            "address": 50462720,
+            "size": 4096
+          }
+        ],
+        "localIrqs": [],
+        "sharedGlobalRegisters": "read-only",
+        "clockOwner": "linux-held-for-lease",
+        "pinOwner": "linux-established-before-activation"
+      }
+    },
     "timer4": {
       "kind": "dw-apb-timer-channel",
       "leaseBit": 0,
@@ -723,6 +965,10 @@
     }
   },
   "profiles": {
+    "picoclaw-lcd": {
+      "peripherals": ["picoclawLcd"],
+      "capabilities": ["mailbox", "shmemHeartbeat", "rpmsg", "picoclawLcd"]
+    },
     "base": {
       "peripherals": [],
       "capabilities": [

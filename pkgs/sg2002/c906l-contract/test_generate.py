@@ -384,9 +384,7 @@ class ContractGenerationTests(unittest.TestCase):
                 "<0x00000000030a0050 0x0000000000000014>;",
                 dts,
             )
-            self.assertIn(
-                'sophgo,c906l-leased-mmio-range-owners = "timer4";', dts
-            )
+            self.assertIn('sophgo,c906l-leased-mmio-range-owners = "timer4";', dts)
             self.assertIn("sophgo,c906l-local-irqs = <55>;", dts)
             self.assertIn('sophgo,c906l-local-irq-owners = "timer4";', dts)
 
@@ -500,6 +498,111 @@ class ContractGenerationTests(unittest.TestCase):
                 self.assertNotIn("030a00a4", python.lower())
                 self.assertIn(f"HAVE_{stem} = True", python)
                 self.assertIn(f'"{name}"', dts)
+
+    def test_lcd_layout_and_generated_bindings(self) -> None:
+        path, digest, contract, _semantic = self.profiles["picoclaw-lcd"]
+        lcd = contract["peripheralLeases"]["picoclawLcd"]
+        constants = lcd["constants"]
+        self.assertEqual(contract["profile"]["expectedCapabilities"], 0x8B)
+        self.assertEqual(contract["profile"]["leaseMask"], 16)
+        self.assertEqual(contract["profile"]["profileId"], 17)
+        self.assertEqual(constants["frameSize"], 240 * 240 * 2)
+        self.assertEqual(
+            constants["frameSlot1Address"] - constants["frameSlot0Address"], 0x1D000
+        )
+        self.assertEqual(
+            constants["ownership1Address"] - constants["ownership0Address"], 128
+        )
+        self.assertEqual(
+            constants["frameSlot0Address"] - constants["ownership0Address"], 4096
+        )
+        self.assertEqual(constants["frameSlot0Address"] % 4096, 0)
+        self.assertLess(
+            constants["ownership1Address"] + 128, constants["frameSlot0Address"]
+        )
+        self.assertEqual(lcd["framebuffer"]["pixelFormat"], "RGB565BE")
+        for name in ("request", "completion"):
+            fields = lcd["framebuffer"][name]["fields"]
+            self.assertEqual(sum(field["width"] for field in fields), 64)
+            self.assertEqual(
+                fields[-1], {"name": "commitSequence", "offset": 60, "width": 4}
+            )
+        self.assertEqual(lcd["linuxLease"]["localIrqs"], [])
+        self.assertEqual(len(lcd["sharedPreconditions"]), 14)
+        self.assertTrue(
+            all(
+                value["access"] == "read-only"
+                for value in lcd["sharedPreconditions"].values()
+            )
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "out"
+            self.generate(path, digest, output)
+            generated = self.tree_bytes(output)
+            header = generated["include/sg2002-c906l-contract.h"].decode()
+            rust = generated["rust/generated_contract.rs"].decode()
+            dts = generated["dts/sg2002-c906l-contract.dtsi"].decode()
+            self.assertIn(
+                "SG2002_C906L_PICOCLAW_LCD_FRAME_SLOT0_ADDRESS UINT32_C(0x8ff51000)",
+                header,
+            )
+            self.assertIn(
+                "SG2002_C906L_PICOCLAW_LCD_REQUEST_MAGIC UINT32_C(0x3146424c)", header
+            )
+            self.assertIn(
+                "pub const PICOCLAW_LCD_SHARED_PRECONDITIONS: &[(usize, u32, u32)]",
+                rust,
+            )
+            self.assertIn(
+                "pub const PICOCLAW_LCD_FRAME_SLOT1_ADDRESS: usize = 0x8ff6e000;", rust
+            )
+            self.assertIn(
+                'sophgo,c906l-leased-mmio-range-owners = "picoclawLcd", "picoclawLcd";',
+                dts,
+            )
+            self.assertNotIn("sophgo,c906l-local-irqs", dts)
+            self.assertIn("0x0000000004190000 0x0000000000010000", dts)
+            self.assertIn("0x0000000003020000 0x0000000000001000", dts)
+            self.assertIn("SG2002_C906L_RPMSG_ECHO_ADDRESS", header)
+
+    def test_lcd_weakened_contract_is_rejected(self) -> None:
+        mutations = [
+            lambda lcd: lcd["constants"].update(frameSlot0Address=0x8FF00000),
+            lambda lcd: lcd["constants"].update(spiAddress=0x04180000),
+            lambda lcd: lcd["constants"].update(dcPin=29),
+            lambda lcd: lcd["constants"].update(requestMagic=0),
+            lambda lcd: lcd["sharedPreconditions"]["spiMosiMux"].update(
+                access="read-write"
+            ),
+            lambda lcd: lcd["sharedPreconditions"].pop("ephyRoute"),
+            lambda lcd: lcd["linuxLease"]["mmioRanges"].pop(),
+            lambda lcd: lcd["framebuffer"]["request"]["fields"][-1].update(offset=56),
+            lambda lcd: lcd["service"].update(address=0x400),
+        ]
+        for mutation in mutations:
+            contract = copy.deepcopy(self.profiles["picoclaw-lcd"][2])
+            mutation(contract["peripheralLeases"]["picoclawLcd"])
+            with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+                ValueError, "frozen board and framebuffer contract"
+            ):
+                self.load_modified(contract, Path(temporary))
+
+    def test_lcd_mixed_lease_and_out_of_bounds_bulk_are_rejected(self) -> None:
+        contract = copy.deepcopy(self.profiles["picoclaw-lcd"][2])
+        contract["peripheralLeases"]["timer4"] = copy.deepcopy(
+            self.timer4["peripheralLeases"]["timer4"]
+        )
+        contract["profile"]["peripherals"].append("timer4")
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            ValueError, "must be selected alone"
+        ):
+            self.load_modified(contract, Path(temporary))
+        contract = copy.deepcopy(self.profiles["picoclaw-lcd"][2])
+        contract["memory"]["shared"]["regions"]["bulk"]["size"] = 4096
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            ValueError, "does not fit"
+        ):
+            self.load_modified(contract, Path(temporary))
 
     def test_wrong_sg2002_timer_mapping_is_rejected(self) -> None:
         contract = copy.deepcopy(self.profiles["timer5"][2])
