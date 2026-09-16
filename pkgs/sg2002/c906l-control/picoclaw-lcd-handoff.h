@@ -86,6 +86,22 @@ static int sg2002_picoclaw_update(struct device *dev, void __iomem *ephy,
 	return 0;
 }
 
+static int sg2002_picoclaw_write_verify(struct device *dev,
+					void __iomem *ephy, u32 offset,
+					u32 value, u32 verify_mask)
+{
+	/* The vendor sequence replaces the complete register, while the SG2002
+	 * pinout only defines the configuration fields selected by verify_mask.
+	 * Preserve that write and do not mistake undocumented readback bits for
+	 * part of the Linux-to-C906L handoff contract. */
+	writel(value, ephy + offset);
+	if ((readl(ephy + offset) & verify_mask) != (value & verify_mask))
+		return dev_err_probe(dev, -EIO,
+			"PicoClaw handoff readback failed at EPHY+0x%x\n",
+			offset);
+	return 0;
+}
+
 static int sg2002_picoclaw_expect(struct device *dev, void __iomem *registers,
 				  u32 offset, u32 mask, u32 expected)
 {
@@ -203,10 +219,12 @@ static int sg2002_picoclaw_lcd_prepare(struct device *dev,
 	ret = sg2002_picoclaw_update(dev, lcd->ephy, 0x078, 0xfff, 0xf00);
 	if (ret)
 		return ret;
-	ret = sg2002_picoclaw_update(dev, lcd->ephy, 0x074, ~0U, 0x606);
+	ret = sg2002_picoclaw_write_verify(dev, lcd->ephy, 0x074,
+					   0x606, 0x606);
 	if (ret)
 		return ret;
-	ret = sg2002_picoclaw_update(dev, lcd->ephy, 0x070, ~0U, 0x606);
+	ret = sg2002_picoclaw_write_verify(dev, lcd->ephy, 0x070,
+					   0x606, 0x606);
 	if (ret)
 		return ret;
 

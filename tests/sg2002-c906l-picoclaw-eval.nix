@@ -19,9 +19,20 @@ assert config.sg2002.usbGadget.network.enable;
 assert config.nanokvm.usbControl.initrd.enable;
 assert config.nanokvm.usbControl.stage2.enable;
 assert artifactArgs.usbConsole == false;
+assert artifactArgs.extraBootargs == [
+  "systemd.getty_auto=no"
+  "udev.children_max=2"
+];
 assert !config.sg2002.wifi.enable;
 assert !config.services.nanokvm.enable;
 assert !config.services.openssh.enable;
+assert config.services.userborn.static;
+assert !config.zramSwap.enable;
+assert !config.nanokvm.usbControl.kexec.enable;
+assert !config.systemd.oomd.enable;
+assert !config.systemd.network.wait-online.enable;
+assert builtins.elem "systemd.getty_auto=no" config.boot.kernelParams;
+assert builtins.elem "udev.children_max=2" config.boot.kernelParams;
 assert builtins.length packageNames == 5;
 assert builtins.elem "sg2002-c906l-ctl-picoclaw-lcd" packageNames;
 assert builtins.elem "sg2002-c906l-drm-test" packageNames;

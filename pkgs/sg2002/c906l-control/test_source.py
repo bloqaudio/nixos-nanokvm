@@ -203,10 +203,27 @@ def main() -> None:
         "0x800, 0x4, 0x4",
         "0x07c, 0x1f00, 0x500",
         "0x078, 0xfff, 0xf00",
-        "0x074, ~0U, 0x606",
-        "0x070, ~0U, 0x606",
     ):
         require(token in handoff, f"missing PicoClaw handoff invariant: {token}")
+
+    for offset in ("074", "070"):
+        require(
+            re.search(
+                rf"sg2002_picoclaw_write_verify\(dev, lcd->ephy, 0x{offset},"
+                rf"\s*0x606, 0x606\)",
+                handoff,
+            )
+            is not None,
+            f"EPHY+0x{offset} must receive the complete vendor value while "
+            "only documented configuration fields are verified",
+        )
+
+    require(
+        "writel(value, ephy + offset)" in handoff
+        and "readl(ephy + offset) & verify_mask" in handoff,
+        "PicoClaw EPHY configuration must preserve the full vendor write "
+        "while verifying only documented fields",
+    )
 
     for field in (
         "profile=",

@@ -914,7 +914,15 @@ in
     profile = "usb-nbd-live";
     artifact = "live";
     tag = "live-picoclaw-c906l-lcd";
-    artifactArgs.usbConsole = false;
+    artifactArgs = {
+      usbConsole = false;
+      # Direct USB runners construct the command line independently of
+      # boot.kernelParams, so repeat the low-memory stage-2 limits here.
+      extraBootargs = [
+        "systemd.getty_auto=no"
+        "udev.children_max=2"
+      ];
+    };
     modules = [
       ({ config, lib, pkgs, ... }: {
         sg2002 = {
@@ -936,6 +944,15 @@ in
 
         services.nanokvm.enable = lib.mkForce false;
         services.openssh.enable = lib.mkForce false;
+        services.userborn.static = true;
+        zramSwap.enable = lib.mkForce false;
+        nanokvm.usbControl.kexec.enable = lib.mkForce false;
+        systemd.oomd.enable = false;
+        systemd.network.wait-online.enable = false;
+        boot.kernelParams = [
+          "systemd.getty_auto=no"
+          "udev.children_max=2"
+        ];
         environment.systemPackages = lib.mkForce [
           pkgs.bashInteractive
           pkgs.coreutils
