@@ -22,6 +22,8 @@ from usb_boot_mainline import (
     C906L_VECTOR_HIGH_REG,
     C906L_VECTOR_LOW_REG,
     apply_c906l_reset_sequence,
+    arm_uboot_watchdog,
+    SG2002_WDT_BASE,
     decode_c906l_manifest,
     decode_c906l_snapshot,
     decode_c906l_status,
@@ -85,6 +87,31 @@ def valid_snapshot(generation=7, heartbeat=0x1122334455667788):
             commit=contract.MANIFEST_COMMIT,
         ),
     )
+
+
+class WatchdogTests(unittest.TestCase):
+    def test_arm_order_and_readback(self):
+        registers = {}
+        writes = []
+
+        def write(address, value):
+            writes.append((address, value))
+            registers[address] = value
+
+        arm_uboot_watchdog(registers.__getitem__, write)
+        self.assertEqual(writes, [
+            (SG2002_WDT_BASE + 4, 0xff),
+            (SG2002_WDT_BASE + 12, 0x76),
+            (SG2002_WDT_BASE, 3),
+        ])
+
+    def test_fail_closed_if_either_register_does_not_confirm(self):
+        for control, timeout in [(0, 0xff), (1, 0xff), (3, 0x7f)]:
+            registers = {SG2002_WDT_BASE: control,
+                         SG2002_WDT_BASE + 4: timeout}
+            with self.subTest(control=control, timeout=timeout):
+                with self.assertRaises(C906LBringupError):
+                    arm_uboot_watchdog(registers.__getitem__, lambda *_: None)
 
 
 class UBootOutputTests(unittest.TestCase):
