@@ -6,4 +6,5 @@ license = "MIT"
 publish = false
 
 [dependencies]
+embedded-hal = "1.0.0"
 safe-mmio = { version = "=0.3.1", default-features = false }

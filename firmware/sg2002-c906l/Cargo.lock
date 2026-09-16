@@ -54,6 +54,7 @@ dependencies = [
 name = "sg2002-pac"
 version = "0.1.0"
 dependencies = [
+ "embedded-hal",
  "safe-mmio",
 ]
 
