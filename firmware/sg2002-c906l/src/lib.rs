@@ -23,6 +23,10 @@ mod activation;
     feature = "timer7"
 ))]
 mod dw_apb_timer;
+#[cfg(feature = "picoclaw-lcd")]
+mod lcd;
+#[cfg(feature = "picoclaw-lcd")]
+mod lcd_service;
 mod rpmsg;
 
 use contract::{
@@ -312,6 +316,10 @@ extern "C" fn control_task(_argument: *mut c_void) {
             unsafe { c906l_mailbox_lock_failures() },
             unsafe { c906l_unexpected_mailbox_events() },
         );
+        #[cfg(feature = "picoclaw-lcd")]
+        if lcd_service::faulted() {
+            status.flags |= contract::FLAG_PICOCLAW_LCD_FAILED;
+        }
         publish(&status);
     }
 }
@@ -343,6 +351,8 @@ pub extern "C" fn c906l_rust_main() -> ! {
     // profiles deliberately initialize and serve RPMsg while still dormant.
     rpmsg::initialize();
     let mut status = initial_status();
+    #[cfg(feature = "picoclaw-lcd")]
+    lcd_service::initialize_generation(status.generation);
     publish(&status);
 
     if !activation::publish_manifest(status.generation) {

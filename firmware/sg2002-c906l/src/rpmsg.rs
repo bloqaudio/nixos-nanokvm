@@ -302,6 +302,10 @@ fn decode_header(input: &[u8; RPMSG_HEADER_BYTES]) -> RpmsgHeader {
 }
 
 struct Transport {
+    #[cfg(feature = "picoclaw-lcd")]
+    lcd: crate::lcd_service::Service,
+    #[cfg(feature = "picoclaw-lcd")]
+    lcd_announced: bool,
     online: bool,
     announced: bool,
     rx_available: u16,
@@ -315,6 +319,10 @@ struct Transport {
 impl Transport {
     const fn new() -> Self {
         Self {
+            #[cfg(feature = "picoclaw-lcd")]
+            lcd: crate::lcd_service::Service::new(),
+            #[cfg(feature = "picoclaw-lcd")]
+            lcd_announced: false,
             online: false,
             announced: false,
             rx_available: 0,
@@ -327,6 +335,10 @@ impl Transport {
     }
 
     fn reset_for_attach(&mut self) {
+        #[cfg(feature = "picoclaw-lcd")]
+        {
+            self.lcd_announced = false;
+        }
         self.online = true;
         self.announced = false;
         self.rx_available = 0;
@@ -460,6 +472,23 @@ impl Transport {
                 sent = true;
             }
 
+            #[cfg(feature = "picoclaw-lcd")]
+            if valid && header.destination == crate::contract::PICOCLAW_LCD_SERVICE_ADDRESS as u32 {
+                let mut payload = [0_u8; RPMSG_PAYLOAD_BYTES];
+                read_bytes(buffer + RPMSG_HEADER_BYTES, &mut payload[..payload_len]);
+                // Read-only status request: retrying when no RX descriptor is
+                // available cannot submit or duplicate display work.
+                let response = self.lcd.reply(&payload[..payload_len]);
+                if !self.send(
+                    crate::contract::PICOCLAW_LCD_SERVICE_ADDRESS as u32,
+                    header.source,
+                    &response,
+                ) {
+                    break;
+                }
+                sent = true;
+            }
+
             publish_used(VRING1_BASE, self.tx_used, descriptor_id, 0);
             self.tx_available = self.tx_available.wrapping_add(1);
             self.tx_used = self.tx_used.wrapping_add(1);
@@ -470,6 +499,9 @@ impl Transport {
     }
 
     fn service(&mut self) {
+        #[cfg(feature = "picoclaw-lcd")]
+        // SAFETY: this function runs only inside the live FreeRTOS task.
+        self.lcd.step(unsafe { crate::c906l_ticks() });
         let online = vdev_online();
         if !online {
             self.online = false;
@@ -483,6 +515,20 @@ impl Transport {
         if !self.announced && self.announce() {
             self.announced = true;
             rx_changed = true;
+        }
+        #[cfg(feature = "picoclaw-lcd")]
+        if self.announced && !self.lcd_announced {
+            let mut announcement = [0_u8; 40];
+            let name = crate::contract::PICOCLAW_LCD_SERVICE_NAME;
+            announcement[..name.len()].copy_from_slice(name.as_bytes());
+            announcement[32..36].copy_from_slice(
+                &(crate::contract::PICOCLAW_LCD_SERVICE_ADDRESS as u32).to_le_bytes(),
+            );
+            announcement[36..40].copy_from_slice(&RPMSG_NS_CREATE.to_le_bytes());
+            if self.send(RPMSG_NS_ADDRESS, RPMSG_NS_ADDRESS, &announcement) {
+                self.lcd_announced = true;
+                rx_changed = true;
+            }
         }
         let (sent, completed) = self.drain_host_messages();
         rx_changed |= sent;

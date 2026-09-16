@@ -4,10 +4,10 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use sg2002_c906l_ctl::{
-    ABI_MAJOR, ABI_MINOR, CAP_MAILBOX, CAP_RPMSG, CAP_SHMEM_HEARTBEAT, CAP_TIMER4_SELF_TEST,
-    CAP_TIMER5_SELF_TEST, CAP_TIMER6_SELF_TEST, CAP_TIMER7_SELF_TEST, Client, DeviceTransport,
-    EXPECTED_CAPABILITIES_U32, LatencyStats, RpmsgEcho, read_activation, read_contract,
-    read_control_state, validate_control_state,
+    ABI_MAJOR, ABI_MINOR, CAP_MAILBOX, CAP_PICOCLAW_LCD, CAP_RPMSG, CAP_SHMEM_HEARTBEAT,
+    CAP_TIMER4_SELF_TEST, CAP_TIMER5_SELF_TEST, CAP_TIMER6_SELF_TEST, CAP_TIMER7_SELF_TEST, Client,
+    DeviceTransport, EXPECTED_CAPABILITIES_U32, LatencyStats, RpmsgEcho, read_activation,
+    read_contract, read_control_state, validate_control_state,
 };
 
 const DEFAULT_DEVICE: &str = "/dev/sg2002-c906l-control";
@@ -231,6 +231,7 @@ fn capability_names(bits: u32) -> String {
         (CAP_TIMER5_SELF_TEST, "timer5-self-test"),
         (CAP_TIMER6_SELF_TEST, "timer6-self-test"),
         (CAP_TIMER7_SELF_TEST, "timer7-self-test"),
+        (CAP_PICOCLAW_LCD, "picoclaw-lcd"),
     ] {
         known |= mask;
         if bits & mask != 0 {

@@ -14,6 +14,7 @@ timer4 = ["sg2002-c906l-firmware/timer4"]
 timer5 = ["sg2002-c906l-firmware/timer5"]
 timer6 = ["sg2002-c906l-firmware/timer6"]
 timer7 = ["sg2002-c906l-firmware/timer7"]
+picoclaw-lcd = ["sg2002-c906l-firmware/picoclaw-lcd"]
 
 [dependencies]
 sg2002-c906l-firmware = { path = ".." }

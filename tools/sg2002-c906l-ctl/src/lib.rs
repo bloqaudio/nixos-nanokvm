@@ -33,6 +33,7 @@ pub const CAP_TIMER4_SELF_TEST: u32 = contract::CAP_TIMER4_SELF_TEST as u32;
 pub const CAP_TIMER5_SELF_TEST: u32 = contract::CAP_TIMER5_SELF_TEST as u32;
 pub const CAP_TIMER6_SELF_TEST: u32 = contract::CAP_TIMER6_SELF_TEST as u32;
 pub const CAP_TIMER7_SELF_TEST: u32 = contract::CAP_TIMER7_SELF_TEST as u32;
+pub const CAP_PICOCLAW_LCD: u32 = contract::CAP_PICOCLAW_LCD as u32;
 pub const CAP_RPMSG: u32 = contract::CAP_RPMSG as u32;
 pub const EXPECTED_CAPABILITIES: u64 = contract::EXPECTED_CAPABILITIES;
 pub const PROFILE_NAME: &str = contract::PROFILE_NAME;

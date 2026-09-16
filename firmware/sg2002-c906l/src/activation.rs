@@ -26,6 +26,7 @@ use crate::contract::{
 };
 use crate::{clean, invalidate, io_fence};
 
+#[cfg(not(feature = "picoclaw-lcd"))]
 use crate::contract::ACTIVATION_RESULT_INTERNAL_FAILURE;
 
 const ABI_VERSION: u32 = ((ABI_MAJOR as u32) << 16) | ABI_MINOR as u32;
@@ -129,6 +130,13 @@ fn activate_selected_timers(
 
 impl LeaseActivator for HardwareLeases {
     fn activate(&mut self) -> Result<(), LeaseFailure> {
+        #[cfg(feature = "picoclaw-lcd")]
+        {
+            return crate::lcd_service::authorize().map_err(|()| LeaseFailure {
+                result: crate::contract::ACTIVATION_RESULT_PRECONDITION_FAILED,
+                flag: crate::contract::FLAG_PICOCLAW_LCD_FAILED,
+            });
+        }
         #[cfg(any(
             feature = "timer4",
             feature = "timer5",
@@ -140,6 +148,7 @@ impl LeaseActivator for HardwareLeases {
         }
 
         #[cfg(not(any(
+            feature = "picoclaw-lcd",
             feature = "timer4",
             feature = "timer5",
             feature = "timer6",
