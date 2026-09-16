@@ -94,8 +94,64 @@ previous display mode. It refuses unrelated graphics devices.
 
 Host tests cover the exact contract, invalid ownership records, frame bounds,
 cacheline layout, panel command sequencing, bounded SPI work, terminal errors,
-and production Linux transport functions. Hardware evidence will be recorded
-separately; passing these tests alone does not establish visible LCD output.
+and production Linux transport functions. Passing these tests alone does not
+establish visible LCD output.
+
+## Hardware validation: 2026-09-16
+
+The PicoClaw on workstation `fuckup`, USB port `3-4`, RAM-booted the dedicated
+Linux 7.2-rc5 image. No flash operation or workstation reboot was performed.
+The tested runner was
+`/nix/store/8zk8qq4vydy5k8ilmd82a6pm78c0ph73-usb-boot`, built from the implementation
+through commit `9e60f77`. The exact LCD contract digest was
+`0c2d81d5523800863533be8dc1424b8b8ff5a5665a258674a06bd70a1bdebbb0`.
+
+Observed results:
+
+- Activation completed in one attempt, generation 2, capabilities `0x8b`,
+  firmware flags zero. The mailbox identity/ping check passed before and after
+  the first display test.
+- `/dev/dri/card0` and `/dev/fb0` registered as `sg2002-c906l` /
+  `sg2002-c906ldrm`. The normal fbdev console also submitted acknowledged frames.
+- Standard dumb-buffer/modeset/page-flip tests passed for 4 frames and then
+  32 frames, both exiting zero and restoring the previous display mode.
+- Concurrent 496-byte RPMsg tests passed for 1,000 and 10,000 messages. The
+  latter measured median 2,497.240 us, p99 2,680.520 us, maximum 5,168.600 us.
+  These are observations under this workload, not real-time latency guarantees.
+- A direct `LCQ1` diagnostic query returned 101 completed frames, per-slot
+  completed sequences 51 and 50, panel state BUSY, zero fault and zero malformed
+  request status. The busy state and one outstanding Linux sequence reflect
+  continuing fbdev updates, not a lost acknowledgement.
+- U-Boot's reset-only watchdog was armed and read back; Linux reported an
+  active 85-second watchdog in both initrd and stage 2.
+- Recovery was fault-injected by administratively disabling only the host's
+  USB network interface at 19:29:10 UTC. Without a software reboot command,
+  the board disconnected at 19:31:06 and re-enumerated as `3346:1000` ROM at
+  19:31:08. The 116-second reset interval is consistent with six failed
+  five-second health probes followed by the hardware watchdog countdown.
+  The workstation's normal loader caught the reset.
+
+The first restoration attempt stalled waiting for Wi-Fi and reset again. The
+normal loader retried, and the original `claw` image recovered Wi-Fi and SSH at
+19:38:34 UTC; its host boot service then exited successfully. The temporary boot
+inhibition was removed, and all test-owned NBD/boot processes and the port 12502
+listener were absent at final cleanup. The workstation was not rebooted. SSH
+authentication was unavailable to this session, so the original image's stage-2
+LCD service was not independently rechecked after restoration.
+
+These measurements establish acknowledged SPI transfers, shared-memory reuse,
+and simultaneous IPC on the real board. They do not independently establish
+correct visible colours/orientation or tear-free presentation. The user was
+not near the board, so visual confirmation remains pending.
+
+Two cold-boot findings were fixed before the successful test: the over-strict
+EPHY comparison described below, and the NBD initramfs accidentally depending
+on optional kexec packaging for its real client. The no-kexec image now includes
+that executable and its runtime libraries explicitly and calls it by absolute
+path, preventing fallback to BusyBox's incompatible applet.
+
+Console, loader and recovery logs are retained on the development host in
+`/mnt/Home/src/nixos-nanokvm-picoclaw-evidence-20260916.mmhC01`.
 
 ## EPHY handoff register validation
 
