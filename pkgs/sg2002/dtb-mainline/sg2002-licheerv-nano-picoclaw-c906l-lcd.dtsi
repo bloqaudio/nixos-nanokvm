@@ -1,0 +1,84 @@
+/* Exclusive PicoClaw LCD handoff to the FSBL-started C906L.
+ *
+ * Unlike sg2002-licheerv-nano-picoclaw-lcd.dtsi, this overlay never exposes
+ * spidev or GPIOA to Linux.  The C906L lease covers the whole SPI1 controller
+ * and whole GPIOA bank.  Linux's exact-contract control driver owns only the
+ * shared clock/reset/pin configuration and applies it after validating the
+ * immutable firmware manifest, immediately before activation.
+ */
+
+#include <dt-bindings/clock/sophgo,cv1800.h>
+
+/ {
+	model = "Sipeed LicheeRV Nano PicoClaw (C906L LCD)";
+	compatible = "sipeed,licheerv-nano-picoclaw",
+		     "sipeed,licheerv-nano-bw",
+		     "sipeed,licheerv-nano-b",
+		     "sipeed,licheerv-nano",
+		     "sophgo,sg2002";
+
+	/* This node is completed by the generated contract overlay.  Do not call
+	 * this state "default": the driver core would select a default pinctrl
+	 * state before sg2002-c906l-control has validated the manifest. */
+	c906l-control {
+		sophgo,picoclaw-lcd-handoff;
+		clocks = <&clk CLK_SPI>, <&clk CLK_APB_SPI1>;
+		clock-names = "spi", "pclk";
+		resets = <&rst 41>, <&rst 44>;
+		reset-names = "spi", "gpio";
+		pinctrl-names = "picoclaw-lcd-handoff";
+		pinctrl-0 = <&picoclaw_c906l_lcd_cfg>;
+		sophgo,picoclaw-ephy-reg = <0x03009000 0x1000>;
+		sophgo,picoclaw-pinmux-reg = <0x03001000 0x1000>;
+		sophgo,spi-clock-hz = <187500000>;
+		sophgo,pclk-hz = <300000000>;
+	};
+};
+
+&pinctrl {
+	/* Applied explicitly by sg2002-c906l-control after manifest validation. */
+	picoclaw_c906l_lcd_cfg: picoclaw-c906l-lcd-cfg {
+		spi1-pins {
+			pinmux = <PINMUX(PIN_ETH_TXP, 6)>,
+				 <PINMUX(PIN_ETH_TXM, 6)>,
+				 <PINMUX(PIN_ETH_RXP, 6)>,
+				 <PINMUX(PIN_ETH_RXM, 6)>;
+			power-source = <1800>;
+		};
+
+		control-pins {
+			/* GPIOA19 = backlight, A27 = reset, A28 = D/C. */
+			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 3)>,
+				 <PINMUX(PIN_EMMC_DAT3, 3)>,
+				 <PINMUX(PIN_IIC0_SCL, 3)>;
+			power-source = <3300>;
+		};
+	};
+};
+
+/* These controllers and every child/consumer remain unavailable to Linux for
+ * the entire boot.  In particular, disabling only the three LCD GPIO lines
+ * would be insufficient: the PAC intentionally leases GPIOA as one bank. */
+&spi1 {
+	status = "disabled";
+};
+
+&gpio0 {
+	status = "disabled";
+};
+
+&i2c0 {
+	status = "disabled";
+};
+
+&gmac0 {
+	status = "disabled";
+};
+
+&sdhci1 {
+	status = "disabled";
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-names;
+	/delete-property/ wifi-power-gpios;
+	/delete-property/ sophgo,wifi-power-pinmux-reg;
+};

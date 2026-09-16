@@ -9,6 +9,9 @@ let
   contract = pkgs.sg2002-c906l-contract-for cfg.peripherals;
   controlModule =
     pkgs.sg2002-c906l-control-for config.boot.kernelPackages.kernel contract;
+  lcdEnabled = builtins.elem "picoclawLcd" cfg.peripherals;
+  framebufferModule =
+    pkgs.sg2002-c906l-framebuffer-for config.boot.kernelPackages.kernel contract;
   remoteprocModule =
     pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel contract;
   memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix { inherit lib; };
@@ -93,6 +96,7 @@ in
         "timer5"
         "timer6"
         "timer7"
+        "picoclawLcd"
       ]);
       default = [ ];
       example = [ "timer4" ];
@@ -154,6 +158,18 @@ in
         message = "sg2002.auxCore.peripherals must not contain duplicates";
       }
       {
+        assertion = !lcdEnabled || cfg.peripherals == [ "picoclawLcd" ];
+        message = "the board-specific picoclawLcd lease must be selected alone";
+      }
+      {
+        assertion = !lcdEnabled
+          || (cfg.fdt.boardProfile or null) == "picoclaw-c906l-lcd";
+        message = ''
+          the picoclawLcd lease requires the dedicated PicoClaw DT, which
+          disables Linux SPI1, the entire GPIOA bank, I2C0, Ethernet and WiFi
+        '';
+      }
+      {
         assertion = firmwareHasContract;
         message = ''
           sg2002.auxCore.firmware must expose firmwareAddress, firmwareFile,
@@ -199,11 +215,11 @@ in
     boot.extraModulePackages = [
       controlModule
       remoteprocModule
-    ];
+    ] ++ lib.optional lcdEnabled framebufferModule;
     boot.kernelModules = [
       "sg2002-c906l-control"
       "sg2002-c906l-remoteproc"
-    ];
+    ] ++ lib.optional lcdEnabled "sg2002-c906l-framebuffer";
     environment.systemPackages = [ (pkgs.sg2002-c906l-ctl-for contract) ];
   };
 }

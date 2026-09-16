@@ -273,6 +273,8 @@ in
       (c906lPeripheralsForProfile "all-timers");
   sg2002-c906l-control-for = kernel: contract:
     cross.callPackage ./sg2002/c906l-control { inherit contract kernel; };
+  sg2002-c906l-framebuffer-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-framebuffer { inherit contract kernel; };
   sg2002-c906l-remoteproc-for = kernel: contract:
     cross.callPackage ./sg2002/c906l-remoteproc { inherit contract kernel; };
   sg2002-c906l-ctl-for = contract:
@@ -649,6 +651,8 @@ in
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
   sg2002-dtb-mainline-picoclaw-lcd-wifi = dtbMainline.picoclaw-lcd-wifi;
   sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
+  sg2002-dtb-mainline-picoclaw-c906l-lcd-for = contract:
+    dtbMainline.picoclaw-c906l-lcd-for contract;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
   sg2002-dtb-mainline-pcie-nowifi-c906l-for = contract:
@@ -679,6 +683,7 @@ in
   sg2002-boot-fit = final.callPackage ./sg2002/boot-fit { };
 
   picoclaw-lcd-test = final.callPackage ./sg2002/picoclaw-lcd-test { };
+  sg2002-c906l-drm-test = final.callPackage ./sg2002/c906l-drm-test { };
   sg2002-h264-bridge = final.callPackage ./sg2002/h264-bridge { };
   # Separate test derivation: the shared source enables ALSA/PCMA only here;
   # the normal bridge has neither an ALSA header nor a library dependency.

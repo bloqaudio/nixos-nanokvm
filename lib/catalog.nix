@@ -906,6 +906,49 @@ in
     ];
   })
 
+  # Board-exclusive C906L display lab.  The generic C906L fastboot FIP has no
+  # pre-Linux splash, so every visible pixel is attributable to the activated
+  # Rust service.  Keep this RAM/NBD recovery image deliberately small and
+  # watchdog-backed; Linux owns neither SPI1 nor any GPIOA line in its DT.
+  (picoclaw "mainline" [ "live" "usb-c906l-lcd" ] {
+    profile = "usb-nbd-live";
+    artifact = "live";
+    tag = "live-picoclaw-c906l-lcd";
+    artifactArgs.usbConsole = false;
+    modules = [
+      ({ config, lib, pkgs, ... }: {
+        sg2002 = {
+          auxCore = {
+            enable = true;
+            peripherals =
+              pkgs.sg2002-c906l-profile-manifest.picoclaw-lcd.peripherals;
+            fdt = pkgs.sg2002-dtb-mainline-picoclaw-c906l-lcd-for
+              (pkgs.sg2002-c906l-contract-for-profile "picoclaw-lcd");
+          };
+          watchdogKeeper = {
+            initrd.enable = true;
+            stage2.enable = true;
+            healthHost = protocol.hostIp;
+          };
+          usbGadget.console.enable = false;
+          wifi.enable = false;
+        };
+
+        services.nanokvm.enable = lib.mkForce false;
+        services.openssh.enable = lib.mkForce false;
+        environment.systemPackages = lib.mkForce [
+          pkgs.bashInteractive
+          pkgs.coreutils
+          pkgs.kmod
+          pkgs.sg2002-c906l-drm-test
+          (pkgs.sg2002-c906l-ctl-for
+            (pkgs.sg2002-c906l-contract-for
+              config.sg2002.auxCore.peripherals))
+        ];
+      })
+    ];
+  })
+
   # Dedicated onboard-LCD sibling of the proven headless USB/NFS boot.
   # It preserves the no-WiFi base and low-memory limits, but swaps in the
   # PicoClaw SPI1/GPIO DTB and runs a persistent ST7789 visible self-test.

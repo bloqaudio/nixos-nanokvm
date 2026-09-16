@@ -16,6 +16,7 @@ stdenv.mkDerivation {
     fileset = lib.fileset.unions [
       ./Makefile
       ./sg2002-c906l-control.c
+      ./picoclaw-lcd-handoff.h
       ./test_source.py
       ./test_read.c
     ];
@@ -37,7 +38,8 @@ stdenv.mkDerivation {
   postBuild = ''
     HOST_CC=${buildPackages.stdenv.cc}/bin/cc \
       python3 test_source.py sg2002-c906l-control.c \
-      ${contract}/share/sg2002-c906l/contract.json
+      ${contract}/share/sg2002-c906l/contract.json \
+      picoclaw-lcd-handoff.h
   '';
 
   installPhase = ''

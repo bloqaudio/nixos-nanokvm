@@ -17,6 +17,7 @@
 , gcc
 , linuxSrc
 , python3
+, writeText
 ,
 }:
 let
@@ -224,6 +225,109 @@ let
     ./sg2002-usb-high-speed.dtsi
   ];
 
+  # Dedicated auxiliary-core LCD image.  This deliberately does not compose
+  # the Linux spidev LCD overlay: SPI1 and the complete GPIOA bank belong to
+  # the C906L, while the Linux control endpoint retains the shared pad/clock
+  # preparation resources for the lifetime of the activated lease.
+  dtbPicoClawC906LLcdFor = contract:
+    assert lib.assertMsg (contract.profileName == "picoclaw-lcd")
+      "the PicoClaw C906L LCD DT requires the picoclaw-lcd contract profile";
+    let
+      digestCells = lib.concatStringsSep " " (lib.genList
+        (index: builtins.substring (index * 2) 2 contract.contractSha256)
+        32);
+      framebufferContractOverlay = writeText
+        "sg2002-c906l-picoclaw-framebuffer-contract.dtsi" ''
+        / {
+          c906l-framebuffer {
+            compatible = "sophgo,sg2002-c906l-framebuffer";
+            memory-region = <&c906l_shmem>;
+            sophgo,contract-sha256 = [${digestCells}];
+            sophgo,contract-epoch = <${toString contract.contractEpoch}>;
+            sophgo,abi-version = <0x${lib.toHexString (contract.protocolVersion.major * 65536 + contract.protocolVersion.minor)}>;
+            sophgo,expected-capabilities = /bits/ 64 <0x${lib.toHexString contract.requiredCapabilities}>;
+            sophgo,dormant-capabilities = /bits/ 64 <0x${lib.toHexString contract.dormantCapabilities}>;
+            sophgo,lease-mask = /bits/ 64 <0x${lib.toHexString contract.leaseMask}>;
+            sophgo,profile-id = <0x${lib.toHexString contract.profileId}>;
+            sophgo,manifest-flags = <0x${lib.toHexString contract.manifestFlags}>;
+            sophgo,profile = "${contract.profileName}";
+            sophgo,activation-required;
+          };
+        };
+      '';
+      composed = buildC906LDtb
+        "sg2002-licheerv-nano-picoclaw-c906l-lcd"
+        [
+          ./sg2002-licheerv-nano-bw.dtsi
+          ./sg2002-licheerv-nano-bw-nowifi.dtsi
+          ./sg2002-licheerv-nano-picoclaw-c906l-lcd.dtsi
+          framebufferContractOverlay
+        ]
+        contract;
+    in
+    runCommand "sg2002-licheerv-nano-picoclaw-c906l-lcd-verified.dtb"
+      {
+        nativeBuildInputs = [ dtc python3 ];
+        passthru = c906lMemoryMap // {
+          boardProfile = "picoclaw-c906l-lcd";
+          inherit
+            (contract)
+            contractEpoch
+            contractSha256
+            dormantCapabilities
+            enabledPeripherals
+            leaseMask
+            manifestFlags
+            profileId
+            profileName
+            protocolVersion
+            requiredCapabilities
+            ;
+          tests.leaseGuard = leaseGuardTests;
+        };
+      } ''
+      cp ${composed} "$out"
+      test "$(fdtget -t s "$out" / model)" = \
+        "Sipeed LicheeRV Nano PicoClaw (C906L LCD)"
+      for node in \
+        /soc/spi@4190000 \
+        /soc/gpio@3020000 \
+        /soc/i2c@4000000 \
+        /soc/ethernet@4070000 \
+        /soc/mmc@4320000; do
+        test "$(fdtget -t s "$out" "$node" status)" = disabled
+      done
+      fdtget "$out" /c906l-control sophgo,picoclaw-lcd-handoff >/dev/null
+      test "$(fdtget -t s "$out" /c906l-framebuffer compatible)" = \
+        sophgo,sg2002-c906l-framebuffer
+      test "$(fdtget -t x "$out" /c906l-framebuffer memory-region)" = \
+        "$(fdtget -t x "$out" /c906l-control memory-region)"
+      framebuffer_digest="$(for byte in $(fdtget -t bx "$out" \
+        /c906l-framebuffer sophgo,contract-sha256); do
+        printf '%02x' "0x$byte"
+      done)"
+      test "$framebuffer_digest" = ${contract.contractSha256}
+      test "$(fdtget -t s "$out" /c906l-framebuffer sophgo,profile)" = \
+        picoclaw-lcd
+      test "$(fdtget -t s "$out" /c906l-control pinctrl-names)" = \
+        picoclaw-lcd-handoff
+      test "$(fdtget -t s "$out" /c906l-control clock-names)" = "spi pclk"
+      test "$(fdtget -t s "$out" /c906l-control reset-names)" = "spi gpio"
+      test "$(fdtget -t u "$out" /c906l-control sophgo,spi-clock-hz)" = \
+        187500000
+      test "$(fdtget -t u "$out" /c906l-control sophgo,pclk-hz)" = \
+        300000000
+      if fdtget "$out" /soc/mmc@4320000 wifi-power-gpios >/dev/null 2>&1; then
+        echo "disabled WiFi node still claims GPIOA26" >&2
+        exit 1
+      fi
+      ${dtc}/bin/dtc -q -I dtb -O dts "$out" > "$TMPDIR/final.dts"
+      if grep -F 'picoclaw-lcd-status' "$TMPDIR/final.dts"; then
+        echo "Linux PicoClaw LCD consumer leaked into the C906L DT" >&2
+        exit 1
+      fi
+    '';
+
   # NanoKVM-PCIe: bw.dtsi (WiFi/SDIO1 on) + ethernet enable overlay.
   dtbPcie = buildDtb "sg2002-nanokvm-pcie" [
     ./sg2002-licheerv-nano-bw.dtsi
@@ -314,6 +418,7 @@ in
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
+  picoclaw-c906l-lcd-for = dtbPicoClawC906LLcdFor;
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
   pcie-nowifi-c906l-for = dtbPcieNoWifiC906LFor;

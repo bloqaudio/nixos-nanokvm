@@ -710,6 +710,13 @@
             catalog;
           allTimersConfig =
             boardSystems.licheerv.mainline.live.usb-c906l-all-timers.config;
+          picoclawLcdEntry = lib.findFirst
+            (entry: entry.path
+              == [ "picoclaw" "mainline" "live" "usb-c906l-lcd" ])
+            (throw "C906L PicoClaw LCD catalog entry is missing")
+            catalog;
+          picoclawLcdConfig =
+            boardSystems.picoclaw.mainline.live.usb-c906l-lcd.config;
           failedAuxCoreEval = module:
             builtins.tryEval ((mkBoard {
               board = "licheerv-nano-w";
@@ -746,6 +753,28 @@
               wifi.enable = false;
             };
           });
+          picoclawFdtMismatch = builtins.tryEval (
+            (mkBoard {
+              board = "licheerv-nano-picoclaw";
+              kernel = "mainline";
+              profile = "usb-nbd-live";
+              extraModules = [
+                ({ lib, pkgs, ... }: {
+                  sg2002 = {
+                    auxCore = {
+                      enable = true;
+                      peripherals = [ "picoclawLcd" ];
+                      fdt = lib.mkForce
+                        (pkgs.sg2002-dtb-mainline-nowifi-c906l-for
+                          (pkgs.sg2002-c906l-contract-for-profile
+                            "picoclaw-lcd"));
+                    };
+                    wifi.enable = false;
+                  };
+                })
+              ];
+            }).config.system.build.toplevel.drvPath
+          );
         in
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           sg2002-h264-bridge-colour =
@@ -763,6 +792,22 @@
             config = allTimersConfig;
             artifactArgs = allTimersEntry.artifactArgs or { };
           };
+          sg2002-c906l-picoclaw-module-eval =
+            import ./tests/sg2002-c906l-picoclaw-eval.nix {
+              inherit pkgs;
+              inherit picoclawFdtMismatch;
+              config = picoclawLcdConfig;
+              artifactArgs = picoclawLcdEntry.artifactArgs or { };
+            };
+          sg2002-c906l-picoclaw-dtb = picoclawLcdConfig.sg2002.auxCore.fdt;
+          sg2002-c906l-picoclaw-control =
+            pkgs.sg2002-c906l-control-for
+              picoclawLcdConfig.boot.kernelPackages.kernel
+              (pkgs.sg2002-c906l-contract-for-profile "picoclaw-lcd");
+          sg2002-c906l-picoclaw-framebuffer =
+            pkgs.sg2002-c906l-framebuffer-for
+              picoclawLcdConfig.boot.kernelPackages.kernel
+              (pkgs.sg2002-c906l-contract-for-profile "picoclaw-lcd");
           sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
           sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;
           sg2002-c906l-contract-timer5 = pkgs.sg2002-c906l-contract-timer5;

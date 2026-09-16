@@ -29,6 +29,7 @@
 #include <linux/wait.h>
 
 #include "sg2002-c906l-kernel-contract.h"
+#include "picoclaw-lcd-handoff.h"
 
 #define SG2002_C906L_CLOSE_MS	100U
 #define SG2002_C906L_ACTIVATE_RESPONSE	\
@@ -39,6 +40,7 @@ enum sg2002_activation_outcome {
 	SG2002_ACTIVATION_ALREADY_ACTIVE,
 	SG2002_ACTIVATION_COMPLETED,
 	SG2002_ACTIVATION_RECOVERED,
+	SG2002_ACTIVATION_FAILED_RETAINED,
 };
 
 struct sg2002_contract_snapshot {
@@ -67,6 +69,9 @@ struct sg2002_c906l {
 	bool request_pending;
 	bool response_ready;
 	bool tx_pending;
+	bool misc_registered;
+	bool sysfs_registered;
+	struct sg2002_picoclaw_lcd_handoff picoclaw_lcd;
 	enum sg2002_activation_outcome activation_outcome;
 };
 
@@ -85,6 +90,8 @@ static const char *sg2002_activation_outcome_name(
 		return "completed";
 	case SG2002_ACTIVATION_RECOVERED:
 		return "recovered-lost-response";
+	case SG2002_ACTIVATION_FAILED_RETAINED:
+		return "failed-resources-retained";
 	default:
 		return "unknown";
 	}
@@ -835,6 +842,15 @@ static int sg2002_c906l_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(ctl->channel),
 				     "failed to request control mailbox\n");
 
+	/* Board MMIO must remain untouched until both DT identity and the live,
+	 * immutable firmware manifest have matched.  The optional PicoClaw hook
+	 * acquires shared preparation resources here, immediately before the
+	 * activation request can transfer SPI1/GPIOA ownership to the C906L. */
+	ret = sg2002_picoclaw_lcd_prepare(&pdev->dev, &ctl->picoclaw_lcd);
+	if (ret)
+		goto free_channel;
+	platform_set_drvdata(pdev, ctl);
+
 	if (SG2002_C906L_ACTIVATION_REQUIRED) {
 		if (!sg2002_validate_active(&snapshot)) {
 			ctl->activation_outcome = SG2002_ACTIVATION_ALREADY_ACTIVE;
@@ -848,6 +864,21 @@ static int sg2002_c906l_probe(struct platform_device *pdev)
 						snapshot.status.activation_error,
 						le16_to_cpu(snapshot.status.activation_attempts),
 						le32_to_cpu(snapshot.status.activation_request_id));
+				/* Once the board handoff has changed shared pin state, do
+				 * not release clocks or allow another Linux driver to race
+				 * the uncertain lease state.  Bind a diagnostics-only
+				 * endpoint until the hardware watchdog resets the machine. */
+				if (ctl->picoclaw_lcd.prepared) {
+					ctl->activation_outcome =
+						SG2002_ACTIVATION_FAILED_RETAINED;
+					if (!sysfs_create_group(&pdev->dev.kobj,
+							&sg2002_c906l_attribute_group))
+						ctl->sysfs_registered = true;
+					__module_get(THIS_MODULE);
+					dev_err(&pdev->dev,
+						"activation failed; board resources retained until reset\n");
+					return 0;
+				}
 				goto free_channel;
 			}
 		}
@@ -862,24 +893,43 @@ static int sg2002_c906l_probe(struct platform_device *pdev)
 	ctl->misc.name = "sg2002-c906l-control";
 	ctl->misc.fops = &sg2002_c906l_fops;
 	ctl->misc.parent = &pdev->dev;
-	platform_set_drvdata(pdev, ctl);
 
 	ret = misc_register(&ctl->misc);
+	if (ret && ctl->picoclaw_lcd.prepared) {
+		if (!sysfs_create_group(&pdev->dev.kobj,
+					&sg2002_c906l_attribute_group))
+			ctl->sysfs_registered = true;
+		__module_get(THIS_MODULE);
+		dev_err(&pdev->dev,
+			"endpoint registration failed; active board resources retained until reset\n");
+		return 0;
+	}
 	if (ret)
 		goto free_channel;
+	ctl->misc_registered = true;
 	ret = sysfs_create_group(&pdev->dev.kobj,
 				 &sg2002_c906l_attribute_group);
+	if (ret && ctl->picoclaw_lcd.prepared) {
+		__module_get(THIS_MODULE);
+		dev_err(&pdev->dev,
+			"sysfs registration failed; active board resources retained until reset\n");
+		return 0;
+	}
 	if (ret)
 		goto deregister_misc;
+	ctl->sysfs_registered = true;
 
 	dev_info(&pdev->dev,
 		 "validated C906L %s contract (%s), activation %s\n",
 		 SG2002_C906L_PROFILE_NAME, SG2002_C906L_CONTRACT_SHA256,
 		 sg2002_activation_outcome_name(ctl->activation_outcome));
+	if (ctl->picoclaw_lcd.prepared)
+		__module_get(THIS_MODULE);
 	return 0;
 
 deregister_misc:
 	misc_deregister(&ctl->misc);
+	ctl->misc_registered = false;
 free_channel:
 	mbox_free_channel(ctl->channel);
 	return dev_err_probe(&pdev->dev, ret,
@@ -890,8 +940,11 @@ static void sg2002_c906l_remove(struct platform_device *pdev)
 {
 	struct sg2002_c906l *ctl = platform_get_drvdata(pdev);
 
-	sysfs_remove_group(&pdev->dev.kobj, &sg2002_c906l_attribute_group);
-	misc_deregister(&ctl->misc);
+	if (ctl->sysfs_registered)
+		sysfs_remove_group(&pdev->dev.kobj,
+				   &sg2002_c906l_attribute_group);
+	if (ctl->misc_registered)
+		misc_deregister(&ctl->misc);
 	mbox_free_channel(ctl->channel);
 }
 

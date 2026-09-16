@@ -27,6 +27,7 @@ def c_strings(source: str) -> str:
 
 def main() -> None:
     source = Path(sys.argv[1]).read_text(encoding="utf-8")
+    handoff = Path(sys.argv[3]).read_text(encoding="utf-8")
     read_function = function_text(source, "static ssize_t sg2002_c906l_read(",
                                   "static __poll_t sg2002_c906l_poll(")
     harness = Path(__file__).with_name("test_read.c").read_text(encoding="utf-8")
@@ -54,6 +55,7 @@ def main() -> None:
 
     required = (
         '#include "sg2002-c906l-kernel-contract.h"',
+        '#include "picoclaw-lcd-handoff.h"',
         '"sophgo,contract-sha256"',
         '"sophgo,contract-epoch"',
         '"sophgo,abi-version"',
@@ -167,8 +169,42 @@ def main() -> None:
         set(handwritten) <= {"CLOSE_MS", "ACTIVATE_RESPONSE"},
         f"handwritten protocol constants found: {handwritten}",
     )
-    for forbidden in ("reset_control_", "writel.*RESET", "rproc_boot"):
+    for forbidden in ("writel.*RESET", "rproc_boot"):
         require(re.search(forbidden, source) is None, f"unsafe operation: {forbidden}")
+
+    # The board hook is opt-in through the dedicated DT and is called only
+    # after the exact live manifest read.  A non-default pinctrl state prevents
+    # the driver core from touching pads before probe performs that check.
+    probe = function_text(source, "static int sg2002_c906l_probe", "static void sg2002_c906l_remove")
+    require(
+        probe.index("sg2002_read_contract_snapshot")
+        < probe.index("sg2002_picoclaw_lcd_prepare")
+        < probe.index("sg2002_activate_leases"),
+        "PicoClaw board MMIO is not bracketed by validation and activation",
+    )
+    require(
+        probe.count("__module_get(THIS_MODULE)") >= 3,
+        "an activated PicoClaw lease can release retained board resources",
+    )
+    for token in (
+        '"sophgo,picoclaw-lcd-handoff"',
+        '"picoclaw-lcd-handoff"',
+        '"sophgo,picoclaw-ephy-reg"',
+        '"sophgo,picoclaw-pinmux-reg"',
+        "devm_clk_get(dev, \"spi\")",
+        "devm_clk_get(dev, \"pclk\")",
+        "devm_reset_control_get_exclusive(dev, \"spi\")",
+        "devm_reset_control_get_exclusive(dev, \"gpio\")",
+        "pinctrl_select_state",
+        "0x804, 0x1, 0x1",
+        "0x808, 0x1f, 0x1",
+        "0x800, 0x4, 0x4",
+        "0x07c, 0x1f00, 0x500",
+        "0x078, 0xfff, 0xf00",
+        "0x074, ~0U, 0x606",
+        "0x070, ~0U, 0x606",
+    ):
+        require(token in handoff, f"missing PicoClaw handoff invariant: {token}")
 
     for field in (
         "profile=",
