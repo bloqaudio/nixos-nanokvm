@@ -21,12 +21,9 @@ let
   # Keep initrd helper binaries on the same systemd package as PID 1. This
   # matters when a platform supplies a patched switch-root implementation.
   systemdPackage = config.systemd.package;
+  nbdClient = "${pkgs.nbd-client-minimal}/bin/nbd-client";
 
-  # nbd-client-minimal first so its `nbd-client` shadows busybox's stub.
-  targetTools = with pkgs; [
-    nbd-client-minimal
-    busybox
-  ];
+  targetTools = [ pkgs.busybox ];
 
   # When a static-iface bring-up is configured, the script honors the
   # configured mac/ip/prefix rather than always taking them from
@@ -177,7 +174,7 @@ let
       rm -f "$pid_file"
     fi
 
-    if nbd-client -c ${nbdDevice} >/dev/null 2>&1; then
+    if ${nbdClient} -c ${nbdDevice} >/dev/null 2>&1; then
       if live_pid="$(read_live_nbd_pid)"; then
         echo "$live_pid" > "$pid_file"
         echo "nbd-root: adopted existing ${nbdDevice} client pid $live_pid"
@@ -200,12 +197,12 @@ let
     # used: with the kernel patch we don't need kernel-side
     # reconnect, and `-p` interacts badly with NBD_DO_IT cleanup
     # on this kernel (Device or resource busy storm).
-    ( trap "" TERM HUP; exec nbd-client -n --systemd-mark -N rootfs "$nanokvm_host_ip" "$nanokvm_port_nbd_rootfs" ${nbdDevice} ) &
+    ( trap "" TERM HUP; exec ${nbdClient} -n --systemd-mark -N rootfs "$nanokvm_host_ip" "$nanokvm_port_nbd_rootfs" ${nbdDevice} ) &
     client=$!
     echo "$client" > "$pid_file"
 
     for try in $(seq 1 300); do
-      if nbd-client -c ${nbdDevice} >/dev/null 2>&1; then
+      if ${nbdClient} -c ${nbdDevice} >/dev/null 2>&1; then
         echo "nbd-root: ${nbdDevice} connected"
         publish_nbd_device
         exit 0
@@ -533,6 +530,9 @@ in
       storePaths = [
         runRootNbd
         pushDebugStatus
+        # runRootNbd must never fall through to BusyBox's incompatible
+        # nbd-client applet when the optional kexec control plane is off.
+        pkgs.nbd-client-minimal
       ];
     };
 

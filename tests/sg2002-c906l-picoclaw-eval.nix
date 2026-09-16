@@ -3,6 +3,14 @@
 let
   packageNames = map pkgs.lib.getName config.environment.systemPackages;
   extraModuleNames = map pkgs.lib.getName config.boot.extraModulePackages;
+  initrdStorePaths =
+    map (entry: toString entry.source) config.boot.initrd.systemd.storePaths;
+  initrdNbdPackages = builtins.filter
+    (path: pkgs.lib.hasInfix "-nbd-client-minimal-" path)
+    initrdStorePaths;
+  nbdClient = "${builtins.head initrdNbdPackages}/bin/nbd-client";
+  rootNbdScript =
+    config.boot.initrd.systemd.services.nanokvm-root-nbd.serviceConfig.ExecStart;
 in
 assert config.sg2002.auxCore.enable;
 assert config.sg2002.auxCore.peripherals == [ "picoclawLcd" ];
@@ -29,6 +37,7 @@ assert !config.services.openssh.enable;
 assert config.services.userborn.static;
 assert !config.zramSwap.enable;
 assert !config.nanokvm.usbControl.kexec.enable;
+assert builtins.length initrdNbdPackages == 1;
 assert !config.systemd.oomd.enable;
 assert !config.systemd.network.wait-online.enable;
 assert builtins.elem "systemd.getty_auto=no" config.boot.kernelParams;
@@ -42,5 +51,12 @@ assert builtins.elem "sg2002-c906l-framebuffer" extraModuleNames;
 assert builtins.elem "sg2002-c906l-framebuffer" config.boot.kernelModules;
 assert !picoclawFdtMismatch.success;
 pkgs.runCommand "sg2002-c906l-picoclaw-module-eval" { } ''
+  grep -F '${nbdClient} -c /dev/nbd0' ${rootNbdScript} >/dev/null
+  grep -F 'exec ${nbdClient} -n --systemd-mark' ${rootNbdScript} >/dev/null
+  if grep -F 'if nbd-client ' ${rootNbdScript} >/dev/null \
+      || grep -F 'exec nbd-client ' ${rootNbdScript} >/dev/null; then
+    echo "root NBD helper retains a PATH-resolved nbd-client fallback" >&2
+    exit 1
+  fi
   touch "$out"
 ''
