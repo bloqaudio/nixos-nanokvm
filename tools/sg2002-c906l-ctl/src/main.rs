@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use sg2002_c906l_ctl::{
     ABI_MAJOR, ABI_MINOR, CAP_MAILBOX, CAP_RPMSG, CAP_SHMEM_HEARTBEAT, CAP_TIMER4_SELF_TEST,
-    Client, DeviceTransport, EXPECTED_CAPABILITIES_U32, LatencyStats, RpmsgEcho, read_activation,
-    read_contract, read_control_state, validate_control_state,
+    CAP_TIMER5_SELF_TEST, CAP_TIMER6_SELF_TEST, CAP_TIMER7_SELF_TEST, Client, DeviceTransport,
+    EXPECTED_CAPABILITIES_U32, LatencyStats, RpmsgEcho, read_activation, read_contract,
+    read_control_state, validate_control_state,
 };
 
 const DEFAULT_DEVICE: &str = "/dev/sg2002-c906l-control";
@@ -221,19 +222,21 @@ fn parse_config() -> Result<Option<Config>, String> {
 
 fn capability_names(bits: u32) -> String {
     let mut names = Vec::new();
-    if bits & CAP_MAILBOX != 0 {
-        names.push("mailbox");
+    let mut known = 0;
+    for (mask, name) in [
+        (CAP_MAILBOX, "mailbox"),
+        (CAP_SHMEM_HEARTBEAT, "shmem-heartbeat"),
+        (CAP_TIMER4_SELF_TEST, "timer4-self-test"),
+        (CAP_RPMSG, "rpmsg"),
+        (CAP_TIMER5_SELF_TEST, "timer5-self-test"),
+        (CAP_TIMER6_SELF_TEST, "timer6-self-test"),
+        (CAP_TIMER7_SELF_TEST, "timer7-self-test"),
+    ] {
+        known |= mask;
+        if bits & mask != 0 {
+            names.push(name);
+        }
     }
-    if bits & CAP_SHMEM_HEARTBEAT != 0 {
-        names.push("shmem-heartbeat");
-    }
-    if bits & CAP_TIMER4_SELF_TEST != 0 {
-        names.push("timer4-self-test");
-    }
-    if bits & CAP_RPMSG != 0 {
-        names.push("rpmsg");
-    }
-    let known = CAP_MAILBOX | CAP_SHMEM_HEARTBEAT | CAP_TIMER4_SELF_TEST | CAP_RPMSG;
     let unknown = bits & !known;
     if unknown != 0 {
         names.push("unknown");
@@ -401,6 +404,32 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_names_decode_each_timer_and_combined_live_mask() {
+        for (mask, expected) in [
+            (CAP_TIMER4_SELF_TEST, "timer4-self-test"),
+            (CAP_TIMER5_SELF_TEST, "timer5-self-test"),
+            (CAP_TIMER6_SELF_TEST, "timer6-self-test"),
+            (CAP_TIMER7_SELF_TEST, "timer7-self-test"),
+        ] {
+            assert_eq!(capability_names(mask), expected);
+        }
+        assert_eq!(
+            capability_names(0x7f),
+            "mailbox,shmem-heartbeat,timer4-self-test,rpmsg,timer5-self-test,timer6-self-test,timer7-self-test"
+        );
+    }
+
+    #[test]
+    fn capability_names_preserve_unknown_bits_without_mislabeling_timers() {
+        assert_eq!(capability_names(0), "");
+        assert_eq!(capability_names(1 << 31), "unknown");
+        assert_eq!(
+            capability_names(CAP_TIMER7_SELF_TEST | (1 << 31)),
+            "timer7-self-test,unknown"
+        );
+    }
 
     fn strings(arguments: &[&str]) -> Vec<String> {
         arguments
