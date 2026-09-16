@@ -427,7 +427,7 @@
                   extra = extraBootargs;
                   uartConsole = entryUartConsole entry;
                 };
-                waitForSsh = true;
+                waitForSsh = cfg.config.services.openssh.enable;
               } // lib.optionalAttrs includeKexec {
                 onShellDetachCommand = "${kexec}/bin/kexec";
               });
@@ -548,7 +548,7 @@
                 };
                 nfsServer = cfg.config.nanokvm.nfsLive.server;
                 nfsExport = cfg.config.nanokvm.nfsLive.storeExport;
-                waitForSsh = true;
+                waitForSsh = cfg.config.services.openssh.enable;
                 onShellDetachCommand = "${kexec}/bin/kexec";
               };
             in
