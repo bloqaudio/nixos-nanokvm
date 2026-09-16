@@ -813,6 +813,18 @@ pub struct RpmsgEcho {
     fd: OwnedFd,
 }
 
+// Change every cacheline on every exchange, including after the 16-bit ring
+// indices wrap. Repeating a sequence-dependent word also exercises short tails.
+fn stress_payload(payload: &mut [u8], iteration: usize) {
+    let mut marker = (iteration as u64).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    marker = (marker ^ (marker >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    marker = (marker ^ (marker >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    let marker = (marker ^ (marker >> 31)).to_le_bytes();
+    for (offset, byte) in payload.iter_mut().enumerate() {
+        *byte = marker[offset % marker.len()] ^ (offset as u8).wrapping_mul(0x5b);
+    }
+}
+
 impl RpmsgEcho {
     pub fn open(path: &Path) -> Result<Self, Error> {
         let fd = open(
@@ -887,10 +899,13 @@ impl RpmsgEcho {
 
         loop {
             self.wait_for(PollFlags::IN, deadline, "RPMsg echo")?;
-            let mut response = vec![0_u8; payload.len()];
+            // rpmsg_char truncates a datagram to the read buffer and discards
+            // the rest. Read beyond the maximum valid payload so an oversized
+            // reply with the correct prefix can never pass the length check.
+            let mut response = [0_u8; 497];
             match read(&self.fd, &mut response) {
                 Ok(count) if count == payload.len() => {
-                    if let Some(offset) = response
+                    if let Some(offset) = response[..count]
                         .iter()
                         .zip(payload)
                         .position(|(actual, expected)| actual != expected)
@@ -926,17 +941,31 @@ impl RpmsgEcho {
             ));
         }
 
-        let mut payload = (0..payload_size)
-            .map(|offset| (offset as u8).wrapping_mul(0x5b).wrapping_add(0xa7))
-            .collect::<Vec<_>>();
+        self.benchmark_sizes(count, |_| payload_size, timeout)
+    }
+
+    /// Cycle through every supported non-empty length with changing data.
+    pub fn stress(&mut self, count: usize, timeout: Duration) -> Result<LatencyStats, Error> {
+        if count == 0 {
+            return Err(Error::InvalidArgument("sample count must be non-zero"));
+        }
+        self.benchmark_sizes(count, |iteration| 1 + iteration % 496, timeout)
+    }
+
+    fn benchmark_sizes(
+        &mut self,
+        count: usize,
+        size: impl Fn(usize) -> usize,
+        timeout: Duration,
+    ) -> Result<LatencyStats, Error> {
+        let mut payload = [0_u8; 496];
         let mut samples = Vec::with_capacity(count);
         for iteration in 0..count {
-            let marker = (iteration as u64).to_le_bytes();
-            let marker_length = marker.len().min(payload.len());
-            payload[..marker_length].copy_from_slice(&marker[..marker_length]);
+            let payload = &mut payload[..size(iteration)];
+            stress_payload(payload, iteration);
 
             let started = Instant::now();
-            self.echo(&payload, timeout)?;
+            self.echo(payload, timeout)?;
             samples.push(started.elapsed());
         }
         LatencyStats::from_samples(&mut samples)
@@ -1042,6 +1071,86 @@ impl<T: Transport> Client<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::net::UnixDatagram;
+
+    fn echo_pair() -> (RpmsgEcho, UnixDatagram) {
+        let (client, peer) = UnixDatagram::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        (RpmsgEcho { fd: client.into() }, peer)
+    }
+
+    #[test]
+    fn rpmsg_rejects_oversized_matching_prefix_including_maximum_payload() {
+        for size in [1, 48, 496] {
+            let (mut echo, peer) = echo_pair();
+            let worker = std::thread::spawn(move || {
+                let mut request = [0_u8; 497];
+                let count = peer.recv(&mut request).unwrap();
+                peer.send(&request[..count + 1]).unwrap();
+            });
+            assert_eq!(
+                echo.echo(&vec![0xa5; size], Duration::from_secs(1)),
+                Err(Error::DataPlaneLength {
+                    actual: size + 1,
+                    expected: size
+                })
+            );
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn rpmsg_rejects_corruption_and_has_a_finite_response_deadline() {
+        let (mut echo, peer) = echo_pair();
+        let worker = std::thread::spawn(move || {
+            let mut request = [0_u8; 496];
+            let count = peer.recv(&mut request).unwrap();
+            request[count - 1] ^= 1;
+            peer.send(&request[..count]).unwrap();
+        });
+        assert_eq!(
+            echo.echo(&[0xa5; 496], Duration::from_secs(1)),
+            Err(Error::DataPlaneMismatch(495))
+        );
+        worker.join().unwrap();
+        let (mut echo, _peer) = echo_pair();
+        assert_eq!(
+            echo.echo(&[1], Duration::from_millis(10)),
+            Err(Error::Timeout("RPMsg echo"))
+        );
+    }
+
+    #[test]
+    fn rpmsg_stress_exercises_every_length_and_reuses_buffers_with_new_data() {
+        let (mut echo, peer) = echo_pair();
+        let worker = std::thread::spawn(move || {
+            let mut request = [0_u8; 496];
+            for iteration in 0..992 {
+                let count = peer.recv(&mut request).unwrap();
+                assert_eq!(count, 1 + iteration % 496);
+                let mut expected = vec![0; count];
+                stress_payload(&mut expected, iteration);
+                assert_eq!(&request[..count], expected);
+                peer.send(&request[..count]).unwrap();
+            }
+        });
+        assert_eq!(echo.stress(992, Duration::from_secs(1)).unwrap().count, 992);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn stress_patterns_change_every_cacheline_across_ring_wrap() {
+        for iteration in [0, 255, 65535, 65536] {
+            let mut before = [0; 496];
+            let mut after = [0; 496];
+            stress_payload(&mut before, iteration);
+            stress_payload(&mut after, iteration + 1);
+            for (before, after) in before.chunks(64).zip(after.chunks(64)) {
+                assert_ne!(before, after);
+            }
+        }
+    }
 
     fn valid_activation() -> ActivationStatus {
         if ACTIVATION_REQUIRED {
@@ -1271,6 +1380,42 @@ mod tests {
         );
         assert_eq!(transport.requests[0].encode().len(), 8);
         assert_eq!(transport.timeouts, [timeout, timeout, timeout]);
+    }
+
+    #[test]
+    fn mailbox_benchmark_validates_an_entire_sequence_wrap() {
+        let mut client = Client::new(EchoTransport::default());
+        let timeout = Duration::from_millis(20);
+        assert_eq!(client.benchmark(65537, timeout).unwrap().count, 65537);
+        let transport = client.into_inner();
+        for (iteration, request) in transport.requests.iter().enumerate() {
+            assert_eq!(request.sequence, (iteration as u16).wrapping_add(1));
+            assert_eq!(request.value, iteration as u32);
+            assert_eq!(transport.timeouts[iteration], timeout);
+        }
+    }
+
+    #[test]
+    fn mailbox_poll_path_rejects_short_replies_and_times_out() {
+        let (echo, peer) = echo_pair();
+        let mut transport = DeviceTransport { fd: echo.fd };
+        let worker = std::thread::spawn(move || {
+            let mut request = [0_u8; 8];
+            assert_eq!(peer.recv(&mut request).unwrap(), 8);
+            peer.send(&request[..7]).unwrap();
+        });
+        assert_eq!(
+            transport.exchange([0; 8], Duration::from_secs(1)),
+            Err(Error::ShortRead(7))
+        );
+        worker.join().unwrap();
+
+        let (echo, _peer) = echo_pair();
+        let mut transport = DeviceTransport { fd: echo.fd };
+        assert_eq!(
+            transport.exchange([0; 8], Duration::from_millis(10)),
+            Err(Error::Timeout("response"))
+        );
     }
 
     #[test]

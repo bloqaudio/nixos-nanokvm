@@ -42,7 +42,8 @@ Commands:\n\
   stress [COUNT]      Alias for bench\n\
   rpmsg-check [SIZE]  Verify one RPMsg echo, 1..496 bytes (default: 496)\n\
   rpmsg-bench [COUNT] [SIZE]\n\
-                      Sequential RPMsg echo benchmark (defaults: 1000 496)\n";
+                      Sequential RPMsg echo benchmark (defaults: 1000 496)\n\
+  rpmsg-stress [COUNT] Cycle all 1..496-byte lengths with changing data\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Command {
@@ -55,6 +56,7 @@ enum Command {
     Benchmark(usize),
     RpmsgCheck(usize),
     RpmsgBenchmark { count: usize, payload_size: usize },
+    RpmsgStress(usize),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -163,10 +165,13 @@ fn parse_arguments(arguments: &[String]) -> Result<Option<Config>, String> {
                 payload_size,
             }
         }
+        "rpmsg-stress" if second_value_argument.is_none() => {
+            Command::RpmsgStress(parse_benchmark_count(value_argument)?)
+        }
         "check" | "contract" | "activation" | "abi" | "capabilities" | "caps" => {
             return Err(format!("unexpected argument: {}", positional[1]));
         }
-        "ping" | "bench" | "stress" | "rpmsg-check" => {
+        "ping" | "bench" | "stress" | "rpmsg-check" | "rpmsg-stress" => {
             return Err(format!("unexpected argument: {}", positional[2]));
         }
         unknown => return Err(format!("unknown command: {unknown}")),
@@ -285,6 +290,15 @@ fn run(config: Config) -> Result<(), String> {
         print_latency(stats);
         return Ok(());
     }
+    if let Command::RpmsgStress(count) = config.command {
+        let mut echo = RpmsgEcho::open(&config.rpmsg_device).map_err(|error| error.to_string())?;
+        let stats = echo
+            .stress(count, config.timeout)
+            .map_err(|error| error.to_string())?;
+        print!("payload_bytes=1..496 ");
+        print_latency(stats);
+        return Ok(());
+    }
 
     if config.command == Command::Check {
         let state = read_control_state(&config.sysfs).map_err(|error| error.to_string())?;
@@ -358,6 +372,7 @@ fn run(config: Config) -> Result<(), String> {
         Command::Contract
         | Command::Activation
         | Command::RpmsgCheck(_)
+        | Command::RpmsgStress(_)
         | Command::RpmsgBenchmark { .. } => unreachable!(),
     }
     Ok(())
@@ -464,5 +479,23 @@ mod tests {
     fn rpmsg_payload_bounds_are_enforced() {
         assert!(parse_arguments(&strings(&["rpmsg-check", "0"])).is_err());
         assert!(parse_arguments(&strings(&["rpmsg-check", "497"])).is_err());
+    }
+
+    #[test]
+    fn rpmsg_stress_count_is_bounded_and_has_no_size_argument() {
+        assert_eq!(
+            parse_arguments(&strings(&["rpmsg-stress", "65537"]))
+                .unwrap()
+                .unwrap()
+                .command,
+            Command::RpmsgStress(65537)
+        );
+        for arguments in [
+            vec!["rpmsg-stress", "0"],
+            vec!["rpmsg-stress", "1000001"],
+            vec!["rpmsg-stress", "1", "496"],
+        ] {
+            assert!(parse_arguments(&strings(&arguments)).is_err());
+        }
     }
 }

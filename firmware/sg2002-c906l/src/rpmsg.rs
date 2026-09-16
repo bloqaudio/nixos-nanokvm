@@ -249,7 +249,13 @@ fn descriptor_buffer(descriptor: Descriptor, write: bool, minimum: usize) -> Opt
     let address = usize::try_from(descriptor.address).ok()?;
     let end = address.checked_add(descriptor.length as usize)?;
     let pool_end = RPMSG_BUFFER_BASE.checked_add(RPMSG_BUFFER_SIZE)?;
-    if address < RPMSG_BUFFER_BASE || end > pool_end {
+    // Linux allocates this pool as fixed, cacheline-isolated 512-byte slots.
+    // A range check alone permits a descriptor to straddle two owners' slots;
+    // cleaning or invalidating its edge cachelines could corrupt their data.
+    if address < RPMSG_BUFFER_BASE
+        || end > pool_end
+        || (address - RPMSG_BUFFER_BASE) % RPMSG_BUFFER_BYTES != 0
+    {
         return None;
     }
     Some(address)
@@ -584,5 +590,53 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn buffer_validation_requires_fixed_slots_and_checks_pool_end() {
+        let descriptor = Descriptor {
+            address: RPMSG_BUFFER_BASE as u64,
+            length: RPMSG_BUFFER_BYTES as u32,
+            flags: VRING_DESC_F_WRITE,
+            next: 0,
+        };
+        for offset in [1, 16, 64, RPMSG_BUFFER_BYTES - 1] {
+            assert_eq!(
+                descriptor_buffer(
+                    Descriptor {
+                        address: (RPMSG_BUFFER_BASE + offset) as u64,
+                        ..descriptor
+                    },
+                    true,
+                    16
+                ),
+                None
+            );
+        }
+        let last = RPMSG_BUFFER_BASE + RPMSG_BUFFER_SIZE - RPMSG_BUFFER_BYTES;
+        assert_eq!(
+            descriptor_buffer(
+                Descriptor {
+                    address: last as u64,
+                    ..descriptor
+                },
+                true,
+                RPMSG_BUFFER_BYTES
+            ),
+            Some(last)
+        );
+        for address in [(last + RPMSG_BUFFER_BYTES) as u64, u64::MAX] {
+            assert_eq!(
+                descriptor_buffer(
+                    Descriptor {
+                        address,
+                        ..descriptor
+                    },
+                    true,
+                    16
+                ),
+                None
+            );
+        }
     }
 }
