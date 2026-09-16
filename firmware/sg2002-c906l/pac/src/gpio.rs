@@ -83,6 +83,21 @@ impl Bank<'static> {
 }
 
 impl<'mmio> Bank<'mmio> {
+    /// Consume the exclusive bank into a fixed set of output lines. Preloads
+    /// their latches before setting direction and preserves every other bit.
+    /// The group retains ownership of the whole bank, not just `mask`.
+    pub fn outputs(mut self, mask: u32, initial: u32) -> OutputGroup<'mmio> {
+        let enabled = crate::ordered_read(|| field_shared!(self.registers, enable).read()) & !mask;
+        crate::ordered_write(|| field!(self.registers, enable).write(enabled));
+        let data = crate::ordered_read(|| field_shared!(self.registers, data).read());
+        crate::ordered_write(|| {
+            field!(self.registers, data).write((data & !mask) | (initial & mask))
+        });
+        let direction =
+            crate::ordered_read(|| field_shared!(self.registers, direction).read()) | mask;
+        crate::ordered_write(|| field!(self.registers, direction).write(direction));
+        OutputGroup { bank: self, mask }
+    }
     /// Disable and mask all bank interrupts before installing a polled service.
     /// Does not alter any pin direction, output latch or pending status.
     pub fn mask_interrupts(&mut self) {
@@ -123,6 +138,34 @@ impl<'mmio> Bank<'mmio> {
     /// Write-one-to-clear exactly these events. Never reads the EOI register.
     pub fn acknowledge(&mut self, pins: u32) {
         crate::ordered_write(|| field!(self.registers, eoi).write(pins));
+    }
+}
+
+/// Multiple outputs with one owner of the whole bank. No split handles or
+/// shared read/modify/write access are created.
+pub struct OutputGroup<'mmio> {
+    bank: Bank<'mmio>,
+    mask: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutsideOutputGroup;
+
+impl OutputGroup<'_> {
+    /// Change only selected group lines. Rejects an invalid mask before MMIO;
+    /// bits in `values` outside `mask` do not affect the output latch.
+    pub fn set(&mut self, mask: u32, values: u32) -> Result<(), OutsideOutputGroup> {
+        if mask & !self.mask != 0 {
+            return Err(OutsideOutputGroup);
+        }
+        if mask == 0 {
+            return Ok(());
+        }
+        let old = crate::ordered_read(|| field_shared!(self.bank.registers, data).read());
+        crate::ordered_write(|| {
+            field!(self.bank.registers, data).write((old & !mask) | (values & mask))
+        });
+        Ok(())
     }
 }
 
@@ -272,5 +315,25 @@ mod tests {
         assert!(Pin::new(31).is_some());
         assert!(Pin::new(32).is_none());
         assert!(Pin::new(255).is_none());
+    }
+
+    #[test]
+    fn output_group_preserves_other_lines_and_rejects_outside_mask() {
+        let mut regs = registers();
+        regs.data.0 = 0xa5a5_0000;
+        regs.direction.0 = 0x8000_0000;
+        regs.enable.0 = u32::MAX;
+        {
+            let bank = Bank {
+                registers: UniqueMmioPointer::from(&mut regs),
+            };
+            let mut outputs = bank.outputs(0x81, 0x80);
+            outputs.set(1, 1).unwrap();
+            assert_eq!(outputs.set(0x100, 0x100), Err(OutsideOutputGroup));
+            outputs.set(0x80, 0).unwrap();
+        }
+        assert_eq!(regs.data.0, 0xa5a5_0001);
+        assert_eq!(regs.direction.0, 0x8000_0081);
+        assert_eq!(regs.enable.0, !0x81);
     }
 }
