@@ -41,6 +41,21 @@ static int sg2002_picoclaw_enable_clock(struct device *dev, struct clk *clk)
 	return devm_add_action_or_reset(dev, sg2002_picoclaw_disable_clock, clk);
 }
 
+static void sg2002_picoclaw_release_rate(void *data)
+{
+	clk_rate_exclusive_put(data);
+}
+
+static int sg2002_picoclaw_hold_rate(struct device *dev, struct clk *clk)
+{
+	int ret;
+
+	ret = clk_rate_exclusive_get(clk);
+	if (ret)
+		return ret;
+	return devm_add_action_or_reset(dev, sg2002_picoclaw_release_rate, clk);
+}
+
 static int sg2002_picoclaw_expect_rate(struct device *dev, struct clk *clk,
 				       const char *property)
 {
@@ -150,6 +165,12 @@ static int sg2002_picoclaw_lcd_prepare(struct device *dev,
 	ret = sg2002_picoclaw_enable_clock(dev, lcd->pclk);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to enable SPI APB clock\n");
+	ret = sg2002_picoclaw_hold_rate(dev, lcd->spi_clk);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to hold SPI source rate\n");
+	ret = sg2002_picoclaw_hold_rate(dev, lcd->pclk);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to hold SPI APB rate\n");
 	ret = sg2002_picoclaw_expect_rate(dev, lcd->spi_clk,
 					  "sophgo,spi-clock-hz");
 	if (ret)

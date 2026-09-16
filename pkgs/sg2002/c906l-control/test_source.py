@@ -193,6 +193,8 @@ def main() -> None:
         '"sophgo,picoclaw-pinmux-reg"',
         "devm_clk_get(dev, \"spi\")",
         "devm_clk_get(dev, \"pclk\")",
+        "clk_rate_exclusive_get(clk)",
+        "clk_rate_exclusive_put(data)",
         "devm_reset_control_get_exclusive(dev, \"spi\")",
         "devm_reset_control_get_exclusive(dev, \"gpio\")",
         "pinctrl_select_state",
