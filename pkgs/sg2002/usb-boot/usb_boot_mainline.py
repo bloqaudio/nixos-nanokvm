@@ -89,7 +89,7 @@ def arm_uboot_watchdog(read_u32, write_u32):
     write_u32(SG2002_WDT_BASE, 1)
     control = read_u32(SG2002_WDT_BASE)
     timeout = read_u32(SG2002_WDT_BASE + 4)
-    if control & 3 != 1 or timeout & 0xff != 0xff:
+    if control & 0xc3 != 1 or timeout & 0xff != 0xff:
         raise C906LBringupError(
             f"WDT0 did not confirm reset-only armed state: control={control:#x}, "
             f"timeout={timeout:#x}; refusing handoff"

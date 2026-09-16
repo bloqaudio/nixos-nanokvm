@@ -106,7 +106,8 @@ class WatchdogTests(unittest.TestCase):
         ])
 
     def test_fail_closed_if_either_register_does_not_confirm(self):
-        for control, timeout in [(0, 0xff), (2, 0xff), (3, 0xff), (1, 0x7f)]:
+        for control, timeout in [(0, 0xff), (2, 0xff), (3, 0xff),
+                                 (0x41, 0xff), (0x81, 0xff), (1, 0x7f)]:
             registers = {SG2002_WDT_BASE: control,
                          SG2002_WDT_BASE + 4: timeout}
             with self.subTest(control=control, timeout=timeout):
