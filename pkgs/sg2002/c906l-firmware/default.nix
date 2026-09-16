@@ -84,7 +84,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cp sg2002-c906l-contract.h task/comm/include/sg2002-c906l-contract.h
     python3 ${./test_source.py} \
       task/comm/src/riscv64/comm_main.c \
-      ${contract}/share/sg2002-c906l/contract.json
+      ${contract}/share/sg2002-c906l/contract.json \
+      ${../../../firmware/sg2002-c906l/src/lib.rs} \
+      ${../../../firmware/sg2002-c906l/src/lcd_service.rs}
 
     # Reproducible firmware must not contain compiler wall-clock strings.
     substituteInPlace task/main/src/main.c \

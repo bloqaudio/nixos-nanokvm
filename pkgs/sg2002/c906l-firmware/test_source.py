@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side invariants for C906L mailbox hardware-spinlock coverage."""
+"""Host-side invariants for C906L mailbox and LCD task ownership."""
 
 from __future__ import annotations
 
@@ -71,7 +71,9 @@ def main() -> None:
         "Drain protocol-invalid channels without ever interpreting slots",
     ):
         require(token in source, f"missing mailbox-lock invariant: {token}")
-    require("taskENTER_CRITICAL" not in source, "scheduler-only critical section remains")
+    require(
+        "taskENTER_CRITICAL" not in source, "scheduler-only critical section remains"
+    )
     require(
         "SG2002_C906L_TIMER4\n" not in source,
         "legacy out-of-band Timer4 build define remains",
@@ -86,7 +88,57 @@ def main() -> None:
     )
 
     peripheral_leases = contract["peripheralLeases"]
+    if "picoclawLcd" in peripheral_leases:
+        require(
+            len(sys.argv) == 5, "LCD checks require Rust startup and service sources"
+        )
+        startup = Path(sys.argv[3]).read_text(encoding="utf-8")
+        lcd = Path(sys.argv[4]).read_text(encoding="utf-8")
+        main_body = startup[startup.index('pub extern "C" fn c906l_rust_main()') :]
+        require(
+            main_body.index("let mut status = initial_status();")
+            < main_body.index("lcd_service::initialize_generation(status.generation);")
+            < main_body.index("c906l_platform_start(control_task, rpmsg_task)"),
+            "LCD boot generation must be initialized before starting either task",
+        )
+        require(
+            startup.count("lcd_service::initialize_generation(") == 1,
+            "LCD generation is not an immutable startup-only handoff",
+        )
+        require(
+            "static GENERATION: AtomicU32 = AtomicU32::new(0);" in lcd
+            and "GENERATION.store(generation, Ordering::Release);" in lcd
+            and "self.generation = GENERATION.load(Ordering::Acquire);" in lcd,
+            "LCD generation is not passed through a release/acquire atomic",
+        )
+        require(
+            re.search(r"\bload_status\s*\(", lcd) is None
+            and "STATUS_REGION_ADDRESS" not in lcd,
+            "LCD task must not invalidate the control task's locally-written status cacheline",
+        )
+        require(
+            lcd.count("GENERATION.store(") == 1
+            and lcd.index("if GENERATION.load(Ordering::Acquire) == 0")
+            < lcd.index("AUTHORIZED.store(true, Ordering::Release)"),
+            "LCD authorization must reject an uninitialized generation",
+        )
+        step = lcd[
+            lcd.index("pub(crate) fn step(") : lcd.index("/// Tiny diagnostic reply")
+        ]
+        require(
+            step.index("FAULTED.load(Ordering::Acquire)")
+            < step.index("AUTHORIZED.load(Ordering::Acquire)")
+            < step.index("Panel::new("),
+            "LCD must remain inert before authorization and after terminal faults",
+        )
     for peripheral_name, lease in peripheral_leases.items():
+        if peripheral_name == "picoclawLcd":
+            require(
+                lease["kind"] == "picoclaw-st7789"
+                and lease["linuxLease"]["localIrqs"] == [],
+                "LCD must remain a polled, interrupt-free Rust service",
+            )
+            continue
         match = re.fullmatch(r"timer([4-7])", peripheral_name)
         require(match is not None, f"unsupported C IRQ lease: {peripheral_name}")
         channel = int(match.group(1))
@@ -111,9 +163,16 @@ def main() -> None:
             f"return request_irq({macro}, {trampoline}, 0,",
             f"disable_irq({macro});",
         ):
-            require(token in source, f"missing {peripheral_name} IRQ invariant: {token}")
+            require(
+                token in source, f"missing {peripheral_name} IRQ invariant: {token}"
+            )
 
-    if peripheral_leases:
+    timer_leases = {
+        name: lease
+        for name, lease in peripheral_leases.items()
+        if lease["kind"] == "dw-apb-timer-channel"
+    }
+    if timer_leases:
         for token in (
             "c906l_timer_interrupt(uint32_t channel, uint32_t irq)",
             "c906l_timer_irq_install(uint32_t channel, uint32_t irq)",
@@ -141,7 +200,7 @@ def main() -> None:
             and re.search(r"default:\s*return;", disable) is not None,
             "generic timer IRQ operations do not reject unselected channels",
         )
-        for peripheral_name, lease in peripheral_leases.items():
+        for peripheral_name, lease in timer_leases.items():
             channel = lease["bank"]["channel"]
             macro = f"SG2002_C906L_TIMER{channel}_IRQ"
             for operation, body, rejection in (
@@ -164,8 +223,12 @@ def main() -> None:
     }
     for name, (start, end) in protected.items():
         body = source[start:end]
-        require(body.count("mailbox_lock_acquire(") == 1, f"{name} has no single acquire")
-        require(body.count("mailbox_lock_release(") == 1, f"{name} has no single release")
+        require(
+            body.count("mailbox_lock_acquire(") == 1, f"{name} has no single acquire"
+        )
+        require(
+            body.count("mailbox_lock_release(") == 1, f"{name} has no single release"
+        )
 
     operations = (
         r"\bslots\s*\[",
@@ -185,7 +248,10 @@ def main() -> None:
                 ),
                 None,
             )
-            require(owner is not None, f"unlocked mailbox MMIO operation: {operation.group()}")
+            require(
+                owner is not None,
+                f"unlocked mailbox MMIO operation: {operation.group()}",
+            )
             name, start, end = owner
             body_before = source[start : operation.start()]
             body_after = source[operation.end() : end]
@@ -210,9 +276,11 @@ def main() -> None:
         < irq.index("disable_irq(SG2002_C906L_MAILBOX_C906L_IRQ)"),
         "terminal IRQ lock failure is not published before masking",
     )
-    unexpected = irq[irq.index("if (unexpected != 0U)") : irq.index(
-        "lock_result = mailbox_lock_release"
-    )]
+    unexpected = irq[
+        irq.index("if (unexpected != 0U)") : irq.index(
+            "lock_result = mailbox_lock_release"
+        )
+    ]
     require("slots[" not in unexpected, "unexpected channel payload was interpreted")
     require(
         len(re.findall(r"\.cpu_mbox_int_clr\.mbox_int_clr\s*=", unexpected)) == 1
