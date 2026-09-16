@@ -774,6 +774,23 @@
         "timer7SelfTest",
         "rpmsg"
       ]
+    },
+    "all-timers": {
+      "peripherals": [
+        "timer4",
+        "timer5",
+        "timer6",
+        "timer7"
+      ],
+      "capabilities": [
+        "mailbox",
+        "shmemHeartbeat",
+        "timer4SelfTest",
+        "timer5SelfTest",
+        "timer6SelfTest",
+        "timer7SelfTest",
+        "rpmsg"
+      ]
     }
   }
 }

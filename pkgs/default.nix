@@ -41,6 +41,23 @@ let
     final.buildPackages.callPackage ./sg2002/c906l-contract {
       inherit peripherals;
     };
+  c906lContractLib = import ./sg2002/c906l-contract/lib.nix { inherit lib; };
+  # Named profiles live in contract.json.  Consumers which need a complete
+  # package family resolve through this manifest instead of copying lease
+  # lists into every alias and check.
+  c906lProfileManifest = lib.mapAttrs
+    (name: profile: {
+      inherit name;
+      peripherals = profile.sortedPeripherals;
+      contractSha256 = profile.sha256;
+      inherit (profile) profileId leaseMask;
+    })
+    c906lContractLib.profiles;
+  c906lPeripheralsForProfile = name:
+    if builtins.hasAttr name c906lProfileManifest then
+      c906lProfileManifest.${name}.peripherals
+    else
+      throw "unknown SG2002 C906L profile `${name}`";
   c906lMemoryMap = import ./sg2002/c906l-memory-map.nix { inherit lib; };
 
 in
@@ -203,6 +220,9 @@ in
   # The C906L is a bare-metal target, so it needs the newlib/ELF toolchain,
   # not the riscv64-linux cross compiler used by the kernel and userspace.
   sg2002-c906l-contract-for = c906lContractFor;
+  sg2002-c906l-profile-manifest = c906lProfileManifest;
+  sg2002-c906l-contract-for-profile = name:
+    final.sg2002-c906l-contract-for (c906lPeripheralsForProfile name);
   sg2002-c906l-contract = final.sg2002-c906l-contract-for [ ];
   sg2002-c906l-contract-timer4 =
     final.sg2002-c906l-contract-for [ "timer4" ];
@@ -212,6 +232,8 @@ in
     final.sg2002-c906l-contract-for [ "timer6" ];
   sg2002-c906l-contract-timer7 =
     final.sg2002-c906l-contract-for [ "timer7" ];
+  sg2002-c906l-contract-all-timers =
+    final.sg2002-c906l-contract-for-profile "all-timers";
   sg2002-c906l-rust-for = peripherals:
     let
       contract = final.sg2002-c906l-contract-for peripherals;
@@ -230,6 +252,9 @@ in
   sg2002-c906l-rust-timer5 = final.sg2002-c906l-rust-for [ "timer5" ];
   sg2002-c906l-rust-timer6 = final.sg2002-c906l-rust-for [ "timer6" ];
   sg2002-c906l-rust-timer7 = final.sg2002-c906l-rust-for [ "timer7" ];
+  sg2002-c906l-rust-all-timers =
+    final.sg2002-c906l-rust-for
+      (c906lPeripheralsForProfile "all-timers");
   sg2002-c906l-rust-tests-for = peripherals:
     final.buildPackages.callPackage ./sg2002/c906l-firmware/rust-tests.nix {
       contract = final.sg2002-c906l-contract-for peripherals;
@@ -243,6 +268,9 @@ in
     final.sg2002-c906l-rust-tests-for [ "timer6" ];
   sg2002-c906l-rust-tests-timer7 =
     final.sg2002-c906l-rust-tests-for [ "timer7" ];
+  sg2002-c906l-rust-tests-all-timers =
+    final.sg2002-c906l-rust-tests-for
+      (c906lPeripheralsForProfile "all-timers");
   sg2002-c906l-control-for = kernel: contract:
     cross.callPackage ./sg2002/c906l-control { inherit contract kernel; };
   sg2002-c906l-remoteproc-for = kernel: contract:
@@ -261,6 +289,8 @@ in
     final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer6;
   sg2002-c906l-ctl-timer7 =
     final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-timer7;
+  sg2002-c906l-ctl-all-timers =
+    final.sg2002-c906l-ctl-for final.sg2002-c906l-contract-all-timers;
   sg2002-c906l-firmware-for = peripherals:
     let
       contract = final.sg2002-c906l-contract-for peripherals;
@@ -278,6 +308,36 @@ in
     final.sg2002-c906l-firmware-for [ "timer6" ];
   sg2002-c906l-firmware-timer7 =
     final.sg2002-c906l-firmware-for [ "timer7" ];
+  sg2002-c906l-firmware-all-timers =
+    final.sg2002-c906l-firmware-for
+      (c906lPeripheralsForProfile "all-timers");
+
+  # One resolver for every artifact which must carry the same immutable
+  # contract.  Compatibility aliases above and below remain available, while
+  # new profiles need only one contract.json entry plus any desired catalog
+  # leaf.
+  sg2002-c906l-package-set-for-profile = name:
+    let
+      profile = c906lProfileManifest.${name}
+        or (throw "unknown SG2002 C906L profile `${name}`");
+      inherit (profile) peripherals;
+      contract = final.sg2002-c906l-contract-for-profile name;
+      firmware = final.sg2002-c906l-firmware-for peripherals;
+      fipUboot = final.sg2002-fip-mainline-uboot-for firmware;
+      fipFastboot = final.sg2002-fip-mainline-fastboot-for firmware;
+    in
+    {
+      inherit profile peripherals contract firmware fipUboot fipFastboot;
+      rust = final.sg2002-c906l-rust-for peripherals;
+      rustTests = final.sg2002-c906l-rust-tests-for peripherals;
+      ctl = final.sg2002-c906l-ctl-for contract;
+      controlFor = kernel: final.sg2002-c906l-control-for kernel contract;
+      remoteprocFor = kernel:
+        final.sg2002-c906l-remoteproc-for kernel contract;
+      dtb = final.sg2002-dtb-mainline-nowifi-c906l-for contract;
+      pcieDtb = final.sg2002-dtb-mainline-pcie-nowifi-c906l-for contract;
+      usbBoot = final.sg2002-usb-boot-for fipFastboot;
+    };
 
   # Vendor FIP (FSBL + vendor OpenSBI + vendor U-Boot) extracted from
   # a known-good Sipeed SD image. ROM loads fip.bin from FAT partition;
@@ -329,6 +389,9 @@ in
     final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer6;
   sg2002-fip-mainline-uboot-c906l-timer7 =
     final.sg2002-fip-mainline-uboot-for final.sg2002-c906l-firmware-timer7;
+  sg2002-fip-mainline-uboot-c906l-all-timers =
+    final.sg2002-fip-mainline-uboot-for
+      final.sg2002-c906l-firmware-all-timers;
   sg2002-fip-mainline-fastboot = final.callPackage ./sg2002/fip-mainline-uboot {
     sg2002-fip = final.sg2002-fip;
     sg2002-opensbi-mainline = cross.sg2002-opensbi-mainline;
@@ -354,6 +417,9 @@ in
     final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer6;
   sg2002-fip-mainline-fastboot-c906l-timer7 =
     final.sg2002-fip-mainline-fastboot-for final.sg2002-c906l-firmware-timer7;
+  sg2002-fip-mainline-fastboot-c906l-all-timers =
+    final.sg2002-fip-mainline-fastboot-for
+      final.sg2002-c906l-firmware-all-timers;
   # PicoClaw's ST7789 needs the Ethernet-pad handoff before fastboot starts.
   # Keep this complete U-Boot/OpenSBI/FIP chain separate from every generic
   # SG2002 image so those images cannot write the panel's pins.
@@ -489,6 +555,10 @@ in
     final.sg2002-c906l-control-for
       final.sg2002-kernel-mainline
       final.sg2002-c906l-contract-timer7;
+  sg2002-c906l-control-all-timers =
+    final.sg2002-c906l-control-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-all-timers;
   sg2002-c906l-remoteproc-timer4 =
     final.sg2002-c906l-remoteproc-for
       final.sg2002-kernel-mainline
@@ -505,6 +575,10 @@ in
     final.sg2002-c906l-remoteproc-for
       final.sg2002-kernel-mainline
       final.sg2002-c906l-contract-timer7;
+  sg2002-c906l-remoteproc-all-timers =
+    final.sg2002-c906l-remoteproc-for
+      final.sg2002-kernel-mainline
+      final.sg2002-c906l-contract-all-timers;
   # Keep the normal mainline kernel's Bluetooth stack disabled.  The AIC
   # HCI transport is experimental on this board, so only its explicit
   # consumer pays for bluetooth.ko and its protocol dependencies.
@@ -567,6 +641,9 @@ in
   sg2002-dtb-mainline-nowifi-c906l-timer7 =
     final.sg2002-dtb-mainline-nowifi-c906l-for
       final.sg2002-c906l-contract-timer7;
+  sg2002-dtb-mainline-nowifi-c906l-all-timers =
+    final.sg2002-dtb-mainline-nowifi-c906l-for
+      final.sg2002-c906l-contract-all-timers;
   sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
@@ -591,6 +668,9 @@ in
   sg2002-dtb-mainline-pcie-nowifi-c906l-timer7 =
     final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
       final.sg2002-c906l-contract-timer7;
+  sg2002-dtb-mainline-pcie-nowifi-c906l-all-timers =
+    final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
+      final.sg2002-c906l-contract-all-timers;
   sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
   sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;
@@ -634,6 +714,9 @@ in
     final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer6;
   sg2002-usb-boot-c906l-timer7 =
     final.sg2002-usb-boot-for final.sg2002-fip-mainline-fastboot-c906l-timer7;
+  sg2002-usb-boot-c906l-all-timers =
+    final.sg2002-usb-boot-for
+      final.sg2002-fip-mainline-fastboot-c906l-all-timers;
   # This runner differs only in the FIP sent after ROM USB-DL.  It makes
   # PicoClaw's board-private U-Boot splash reachable without changing any
   # other SG2002 USB boot path.

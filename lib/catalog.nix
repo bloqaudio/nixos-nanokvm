@@ -288,6 +288,40 @@ in
       })
     ];
   })
+  # Combined timer validation image.  This remains a reversible RAM/NBD boot,
+  # keeps the independent watchdog alive across switch-root, and deliberately
+  # omits the NanoKVM service and benchmark-heavy live-profile packages.  No
+  # peripheral test runs automatically; Linux performs only the contract-
+  # gated bounded activation sequence before the operator uses the CLI.
+  (live "mainline" "usb-c906l-all-timers" "live-mainline-c906l-all-timers" {
+    modules = [
+      ({ config, lib, pkgs, ... }: {
+        sg2002 = {
+          auxCore = {
+            enable = true;
+            peripherals =
+              pkgs.sg2002-c906l-profile-manifest.all-timers.peripherals;
+          };
+          watchdogKeeper = {
+            initrd.enable = true;
+            stage2.enable = true;
+            healthHost = protocol.hostIp;
+          };
+          wifi.enable = false;
+        };
+
+        services.nanokvm.enable = lib.mkForce false;
+        services.openssh.enable = lib.mkForce false;
+        environment.systemPackages = lib.mkForce [
+          pkgs.bashInteractive
+          pkgs.coreutils
+          pkgs.kmod
+          (pkgs.sg2002-c906l-ctl-for
+            (pkgs.sg2002-c906l-contract-for config.sg2002.auxCore.peripherals))
+        ];
+      })
+    ];
+  })
   (live "mainline" "usb-rndis" "live-mainline-rndis" (usbTransport "rndis"))
   (live "mainline" "usb-ncm" "live-mainline-ncm" (usbTransport "ncm"))
   # High-speed gadget + NCM: the FS/ECM path through a usbip forwarder
