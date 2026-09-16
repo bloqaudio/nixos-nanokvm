@@ -247,7 +247,7 @@ def validate_picoclaw_lcd(contract: dict[str, Any]) -> None:
     # MMIO or weaker ownership contract is accepted merely because it hashes.
     require(
         hashlib.sha256(canonical_json(strip_documentation(lcd))).hexdigest()
-        == "645f6b64a222f7ae13e646f4cdf96ad233be09e8991080a41e9578ec24c78c19",
+        == "0f02596d5cbd22d683d1bb759d2df81bcb4b6f811186418802ae9678b289d6c0",
         "PicoClaw LCD does not match the frozen board and framebuffer contract",
     )
     constants = lcd["constants"]

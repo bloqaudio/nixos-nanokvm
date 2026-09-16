@@ -565,6 +565,47 @@ class ContractGenerationTests(unittest.TestCase):
             self.assertIn("0x0000000003020000 0x0000000000001000", dts)
             self.assertIn("SG2002_C906L_RPMSG_ECHO_ADDRESS", header)
 
+    def test_lcd_ephy_preconditions_cover_documented_control_bits_only(self) -> None:
+        # Official SG2002_PINOUT.xlsx, sheet "6. 如何把 MIPI Audio ETH 切入GPIO",
+        # cell B27 specifies [10:9 2:1] for BOTH ETH RX/TX input/output enables:
+        # https://github.com/sophgo/sophgo-hardware/blob/12d2bc6976400e6d40389f3faaff40f4326b63c2/SG200X/04_SG2002/04_SG2002_PINOUT.xlsx
+        # Workbook SHA256: a20e1d2f02b0350a333ff16538cc59c13372b88c8a96f9737a3ef4f5ff57c148
+        # Other bits are outside that instruction; do not infer RO/status
+        # semantics for them from the observed live values alone.
+        contract = self.profiles["picoclaw-lcd"][2]
+        conditions = contract["peripheralLeases"]["picoclawLcd"]["sharedPreconditions"]
+        for name, address in (("ephyRx", 0x03009074), ("ephyTx", 0x03009070)):
+            with self.subTest(precondition=name):
+                condition = conditions[name]
+                self.assertEqual(
+                    condition,
+                    {
+                        "address": address,
+                        "mask": 0x606,
+                        "expected": 0x606,
+                        "access": "read-only",
+                    },
+                )
+                mask, expected = condition["mask"], condition["expected"]
+                for observed in (0x606, 0x1606, 0x1616, 0xFFFFFFFF):
+                    self.assertEqual(observed & mask, expected)
+                for bit in range(32):
+                    observed = expected ^ (1 << bit)
+                    if bit in (1, 2, 9, 10):
+                        self.assertNotEqual(observed & mask, expected)
+                    else:
+                        self.assertEqual(observed & mask, expected)
+                # Check the emitted firmware and Linux validators see this mask.
+                macros = "\n".join(
+                    self.generator.emit_macros(
+                        contract, self.profiles["picoclaw-lcd"][1], kernel=False
+                    )
+                )
+                self.assertIn(
+                    f"PICOCLAW_LCD_PRECONDITION_{self.generator.macro(name)}_MASK UINT32_C(0x00000606)",
+                    macros,
+                )
+
     def test_lcd_weakened_contract_is_rejected(self) -> None:
         mutations = [
             lambda lcd: lcd["constants"].update(frameSlot0Address=0x8FF00000),
@@ -575,6 +616,8 @@ class ContractGenerationTests(unittest.TestCase):
                 access="read-write"
             ),
             lambda lcd: lcd["sharedPreconditions"].pop("ephyRoute"),
+            lambda lcd: lcd["sharedPreconditions"]["ephyRx"].update(mask=0x206),
+            lambda lcd: lcd["sharedPreconditions"]["ephyTx"].update(expected=0x602),
             lambda lcd: lcd["linuxLease"]["mmioRanges"].pop(),
             lambda lcd: lcd["framebuffer"]["request"]["fields"][-1].update(offset=56),
             lambda lcd: lcd["service"].update(address=0x400),

@@ -572,13 +572,13 @@
         },
         "ephyRx": {
           "address": 50368628,
-          "mask": 4294967295,
+          "mask": 1542,
           "expected": 1542,
           "access": "read-only"
         },
         "ephyTx": {
           "address": 50368624,
-          "mask": 4294967295,
+          "mask": 1542,
           "expected": 1542,
           "access": "read-only"
         },
