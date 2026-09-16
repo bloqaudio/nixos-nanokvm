@@ -17,6 +17,7 @@ stdenv.mkDerivation {
       ./Makefile
       ./sg2002-c906l-control.c
       ./test_source.py
+      ./test_read.c
     ];
   };
 
@@ -34,7 +35,8 @@ stdenv.mkDerivation {
   ];
 
   postBuild = ''
-    python3 test_source.py sg2002-c906l-control.c \
+    HOST_CC=${buildPackages.stdenv.cc}/bin/cc \
+      python3 test_source.py sg2002-c906l-control.c \
       ${contract}/share/sg2002-c906l/contract.json
   '';
 

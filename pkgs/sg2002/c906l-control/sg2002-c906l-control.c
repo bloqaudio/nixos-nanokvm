@@ -635,22 +635,17 @@ static ssize_t sg2002_c906l_read(struct file *file, char __user *buffer,
 	(void)offset;
 	if (length < sizeof(response))
 		return -EMSGSIZE;
-	if (file->f_flags & O_NONBLOCK) {
-		spin_lock_irqsave(&ctl->state_lock, flags);
-		if (!ctl->response_ready) {
-			ret = !ctl->tx_pending && ctl->tx_status < 0 ?
-				ctl->tx_status : -EAGAIN;
-			spin_unlock_irqrestore(&ctl->state_lock, flags);
+	/* An fd may be shared by several threads despite single-open access.
+	 * Never enter the wait after a nonblocking readiness check: another
+	 * reader can consume that response between the check and the wait.
+	 */
+	if (!(file->f_flags & O_NONBLOCK)) {
+		ret = wait_event_interruptible(ctl->response_wait,
+			READ_ONCE(ctl->response_ready) ||
+			(!READ_ONCE(ctl->tx_pending) && READ_ONCE(ctl->tx_status) < 0));
+		if (ret)
 			return ret;
-		}
-		spin_unlock_irqrestore(&ctl->state_lock, flags);
 	}
-
-	ret = wait_event_interruptible(ctl->response_wait,
-		READ_ONCE(ctl->response_ready) ||
-		(!READ_ONCE(ctl->tx_pending) && READ_ONCE(ctl->tx_status) < 0));
-	if (ret)
-		return ret;
 
 	mutex_lock(&ctl->io_lock);
 	spin_lock_irqsave(&ctl->state_lock, flags);
@@ -662,12 +657,20 @@ static ssize_t sg2002_c906l_read(struct file *file, char __user *buffer,
 		return ret;
 	}
 	response = ctl->response;
+	spin_unlock_irqrestore(&ctl->state_lock, flags);
+
+	/* Keep writers/readers serialized, but never hold a spinlock across a
+	 * userspace fault. Leave the response available if the copy fails.
+	 */
+	if (copy_to_user(buffer, &response, sizeof(response))) {
+		mutex_unlock(&ctl->io_lock);
+		return -EFAULT;
+	}
+	spin_lock_irqsave(&ctl->state_lock, flags);
 	ctl->response_ready = false;
 	spin_unlock_irqrestore(&ctl->state_lock, flags);
 	mutex_unlock(&ctl->io_lock);
-
-	if (copy_to_user(buffer, &response, sizeof(response)))
-		return -EFAULT;
+	wake_up_interruptible(&ctl->response_wait);
 	return sizeof(response);
 }
 

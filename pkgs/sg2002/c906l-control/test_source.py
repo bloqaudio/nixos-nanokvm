@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -24,6 +27,17 @@ def c_strings(source: str) -> str:
 
 def main() -> None:
     source = Path(sys.argv[1]).read_text(encoding="utf-8")
+    read_function = function_text(source, "static ssize_t sg2002_c906l_read(",
+                                  "static __poll_t sg2002_c906l_poll(")
+    harness = Path(__file__).with_name("test_read.c").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="c906l-read-test-") as temporary:
+        test_source = Path(temporary) / "test_read.c"
+        executable = Path(temporary) / "test_read"
+        test_source.write_text(harness.replace("/* @READ_FUNCTION@ */", read_function),
+                               encoding="utf-8")
+        subprocess.run([os.environ.get("HOST_CC", "cc"), "-std=c11", "-Wall", "-Wextra",
+                        "-Werror", str(test_source), "-o", str(executable)], check=True)
+        subprocess.run([str(executable)], check=True, timeout=10)
     contract = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     abi = contract["abi"]
     activation = contract["activation"]
