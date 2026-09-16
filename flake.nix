@@ -703,6 +703,11 @@
 
       checks = forAllSystems (pkgs:
         let
+          allTimersEntry = lib.findFirst
+            (entry: entry.path
+              == [ "licheerv" "mainline" "live" "usb-c906l-all-timers" ])
+            (throw "C906L all-timers catalog entry is missing")
+            catalog;
           allTimersConfig =
             boardSystems.licheerv.mainline.live.usb-c906l-all-timers.config;
           failedAuxCoreEval = module:
@@ -756,6 +761,7 @@
               duplicatePeripherals
               ;
             config = allTimersConfig;
+            artifactArgs = allTimersEntry.artifactArgs or { };
           };
           sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
           sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;

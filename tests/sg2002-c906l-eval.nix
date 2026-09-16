@@ -1,6 +1,7 @@
 { pkgs
 , lib
 , config
+, artifactArgs
 , firmwareMismatch
 , fdtMismatch
 , duplicatePeripherals
@@ -25,6 +26,14 @@ assert config.sg2002.auxCore.firmware.contractSha256
 assert config.sg2002.watchdogKeeper.initrd.enable;
 assert config.sg2002.watchdogKeeper.stage2.enable;
 assert config.sg2002.watchdogKeeper.healthHost == "10.55.0.2";
+assert !config.sg2002.usbGadget.console.enable;
+assert config.sg2002.usbGadget.network.enable;
+assert config.nanokvm.usbControl.initrd.enable;
+assert config.nanokvm.usbControl.stage2.enable;
+assert builtins.hasAttr "usb-debug-shell" config.boot.initrd.systemd.services;
+assert builtins.hasAttr "usb-debug-shell" config.systemd.services;
+assert artifactArgs.usbConsole == false;
+assert (artifactArgs.uartConsole or "ttyS0") == "ttyS0";
 assert !config.services.nanokvm.enable;
 assert !config.services.openssh.enable;
 assert builtins.length packageNames == 4;

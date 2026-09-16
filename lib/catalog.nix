@@ -294,6 +294,10 @@ in
   # peripheral test runs automatically; Linux performs only the contract-
   # gated bounded activation sequence before the operator uses the CLI.
   (live "mainline" "usb-c906l-all-timers" "live-mainline-c906l-all-timers" {
+    # Keep ttyS0 for physical rescue, but do not make an unread ttyGS0 the
+    # kernel console.  On this lab path there may be no host ACM reader, and
+    # gadget-console backpressure is an unrelated boot-progress confound.
+    artifactArgs.usbConsole = false;
     modules = [
       ({ config, lib, pkgs, ... }: {
         sg2002 = {
@@ -307,6 +311,7 @@ in
             stage2.enable = true;
             healthHost = protocol.hostIp;
           };
+          usbGadget.console.enable = false;
           wifi.enable = false;
         };
 
