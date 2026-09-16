@@ -24,6 +24,7 @@ rustPlatform.buildRustPackage {
 
   cargoHash = "sha256-69o6m4h7SPM9bPjfrJ9+bOms4pteNw/xlZwMErHT32Q=";
   strictDeps = true;
+  CARGO_NET_OFFLINE = "true";
   SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
 
   # safe-mmio's zerocopy dependency uses proc-macro/build-script crates, so

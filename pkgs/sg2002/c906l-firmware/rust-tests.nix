@@ -13,6 +13,7 @@ rustPlatform.buildRustPackage {
   version = "0.1.0";
   src = ../../../firmware/sg2002-c906l;
   cargoHash = "sha256-69o6m4h7SPM9bPjfrJ9+bOms4pteNw/xlZwMErHT32Q=";
+  CARGO_NET_OFFLINE = "true";
   nativeCheckInputs = [ rustfmt ];
   SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
   cargoTestFlags = lib.optionals (cargoFeatures != [ ]) [

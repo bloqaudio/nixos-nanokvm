@@ -702,11 +702,61 @@
         self.legacyPackages;
 
       checks = forAllSystems (pkgs:
+        let
+          allTimersConfig =
+            boardSystems.licheerv.mainline.live.usb-c906l-all-timers.config;
+          failedAuxCoreEval = module:
+            builtins.tryEval ((mkBoard {
+              board = "licheerv-nano-w";
+              kernel = "mainline";
+              profile = "usb-nbd-live";
+              extraModules = [ module ];
+            }).config.system.build.toplevel.drvPath);
+          firmwareMismatch = failedAuxCoreEval ({ lib, pkgs, ... }: {
+            sg2002 = {
+              auxCore = {
+                enable = true;
+                peripherals = [ "timer4" ];
+                firmware = lib.mkForce pkgs.sg2002-c906l-firmware;
+              };
+              wifi.enable = false;
+            };
+          });
+          fdtMismatch = failedAuxCoreEval ({ lib, pkgs, ... }: {
+            sg2002 = {
+              auxCore = {
+                enable = true;
+                peripherals = [ "timer4" ];
+                fdt = lib.mkForce pkgs.sg2002-dtb-mainline-nowifi-c906l;
+              };
+              wifi.enable = false;
+            };
+          });
+          duplicatePeripherals = failedAuxCoreEval ({ ... }: {
+            sg2002 = {
+              auxCore = {
+                enable = true;
+                peripherals = [ "timer4" "timer4" ];
+              };
+              wifi.enable = false;
+            };
+          });
+        in
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           sg2002-h264-bridge-colour =
             pkgs.callPackage ./pkgs/sg2002/h264-bridge/test-colour.nix { };
           sg2002-vpss-state =
             pkgs.callPackage ./pkgs/sg2002/linux-mainline/tests/vpss-state.nix { };
+          sg2002-c906l-module-eval = import ./tests/sg2002-c906l-eval.nix {
+            inherit
+              pkgs
+              lib
+              firmwareMismatch
+              fdtMismatch
+              duplicatePeripherals
+              ;
+            config = allTimersConfig;
+          };
           sg2002-c906l-contract = pkgs.sg2002-c906l-contract;
           sg2002-c906l-contract-timer4 = pkgs.sg2002-c906l-contract-timer4;
           sg2002-c906l-contract-timer5 = pkgs.sg2002-c906l-contract-timer5;

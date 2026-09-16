@@ -3,6 +3,7 @@
 , fetchFromGitHub
 , cmake
 , ninja
+, nix-update-script
 , python3
 , riscv64Embedded
 , sg2002-c906l-rust
@@ -11,7 +12,6 @@
 }:
 
 let
-  sourceRev = "10b86e308ca2305a464ae2bb3eb868a72295f7ab";
   enabledPeripherals = contract.enabledPeripherals;
   haveTimerLeases = lib.any (lib.hasPrefix "timer") contract.cargoFeatures;
   firmwareAddress = contract.contract.memory.firmware.address;
@@ -39,7 +39,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   src = fetchFromGitHub {
     owner = "milkv-duo";
     repo = "milkv-duo-smallcore-freertos";
-    rev = sourceRev;
+    rev = "10b86e308ca2305a464ae2bb3eb868a72295f7ab";
     hash = "sha256-3qL1+/YaAx7wTolt00qGFkSyiqBFjda+nkrZeCE4Ivk=";
   };
 
@@ -217,7 +217,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       requiredCapabilities
       ;
     firmwareFile = "lib/firmware/sophgo/sg2002-c906l.bin";
-    upstreamRev = sourceRev;
+    upstreamRev = finalAttrs.src.rev;
+    updateScript = nix-update-script { extraArgs = [ "--version=branch" ]; };
   };
 
   meta = {

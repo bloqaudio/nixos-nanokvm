@@ -50,6 +50,7 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../../../tools/sg2002-c906l-ctl/Cargo.lock;
   strictDeps = true;
+  CARGO_NET_OFFLINE = "true";
   SG2002_C906L_CONTRACT_RS = "${contract}/rust/generated_contract.rs";
 
   doCheck = canRunTests;
