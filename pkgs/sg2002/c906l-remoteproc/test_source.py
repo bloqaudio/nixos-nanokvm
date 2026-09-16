@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -16,6 +19,17 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> None:
     source = Path(sys.argv[1]).read_text(encoding="utf-8")
+    start = source.index("static void sg2002_mbox_receive(")
+    end = source.index("static int sg2002_attach(", start)
+    harness = Path(__file__).with_name("test_notify.c").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="c906l-notify-test-") as temporary:
+        test_source = Path(temporary) / "test_notify.c"
+        executable = Path(temporary) / "test_notify"
+        test_source.write_text(harness.replace("/* @NOTIFY_FUNCTION@ */", source[start:end]),
+                               encoding="utf-8")
+        subprocess.run([os.environ.get("HOST_CC", "cc"), "-std=c11", "-Wall", "-Wextra",
+                        "-Werror", str(test_source), "-o", str(executable)], check=True)
+        subprocess.run([str(executable)], check=True, timeout=10)
     contract = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     table = contract["rpmsg"]["resourceTable"]
 

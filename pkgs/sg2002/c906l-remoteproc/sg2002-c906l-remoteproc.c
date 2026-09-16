@@ -343,14 +343,24 @@ static void sg2002_mbox_receive(struct mbox_client *client, void *message)
 	notifyid = (u32)word;
 	atomic64_inc(&priv->notifications);
 	if (notifyid > 1 || !priv->rproc || priv->rproc->max_notifyid < 0 ||
-	    notifyid > priv->rproc->max_notifyid) {
+	    notifyid > (u32)priv->rproc->max_notifyid) {
 		dev_warn_ratelimited(priv->dev,
 			"ignoring invalid C906L virtqueue notification %u\n",
 			notifyid);
 		return;
 	}
 
-	rproc_vq_interrupt(priv->rproc, notifyid);
+	/*
+	 * Both fixed rings share one firmware-to-Linux mailbox slot. Firmware
+	 * publishes echo data and TX completion together, but can send only one
+	 * doorbell at a time. Drain both queues on either valid notification so
+	 * an RX reply never waits for a second doorbell's RTOS polling tick.
+	 * Empty/stale queue checks return IRQ_NONE. Service RX first, and avoid
+	 * looking beyond the notify IDs installed during a partial attach.
+	 */
+	rproc_vq_interrupt(priv->rproc, 0);
+	if (priv->rproc->max_notifyid >= 1)
+		rproc_vq_interrupt(priv->rproc, 1);
 }
 
 static int sg2002_attach(struct rproc *rproc)
