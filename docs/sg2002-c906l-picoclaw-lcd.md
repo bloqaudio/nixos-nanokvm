@@ -96,3 +96,27 @@ Host tests cover the exact contract, invalid ownership records, frame bounds,
 cacheline layout, panel command sequencing, bounded SPI work, terminal errors,
 and production Linux transport functions. Hardware evidence will be recorded
 separately; passing these tests alone does not establish visible LCD output.
+
+## EPHY handoff register validation
+
+The primary register-field reference is SOPHGO's
+[SG2002 PINOUT workbook at commit `12d2bc6976400e6d40389f3faaff40f4326b63c2`](https://github.com/sophgo/sophgo-hardware/blob/12d2bc6976400e6d40389f3faaff40f4326b63c2/SG200X/04_SG2002/04_SG2002_PINOUT.xlsx),
+worksheet `6. 如何把 MIPI Audio ETH 切入GPIO`, cell `B27`.
+The downloaded workbook's SHA-256 is
+`a20e1d2f02b0350a333ff16538cc59c13372b88c8a96f9737a3ef4f5ff57c148`.
+
+That cell identifies bits `[10:9]` and `[2:1]` at both `0x03009074` and
+`0x03009070` as the EPHY pad input/output enables and specifies `0x606`.
+Their enable-field readback condition is therefore `(value & 0x606) == 0x606`,
+not full-register equality to `0x606`. Linux retains the existing full vendor
+write of `0x606`; Linux's readback check and the firmware's activation contract
+check the documented enable fields. Page selection, top-level GPIO routing,
+power/reset prerequisites and pinmux checks remain separate and unchanged.
+
+The first RAM-boot activation attempt observed `0x1606` at `0x03009074` and
+`0x1616` at `0x03009070`, which satisfy those enable fields but failed the
+original full-register check. This is not a whitelist of observed values:
+clearing any of the four documented enable bits must still reject activation.
+The inspected primary sources do not classify bits 4 and 12 as read-only,
+status, or writable fields. Their differing values do not establish their
+meaning, and no fixed expected value is asserted for them.
