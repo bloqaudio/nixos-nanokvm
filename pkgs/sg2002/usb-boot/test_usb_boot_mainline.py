@@ -102,16 +102,30 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(writes, [
             (SG2002_WDT_BASE + 4, 0xff),
             (SG2002_WDT_BASE + 12, 0x76),
-            (SG2002_WDT_BASE, 3),
+            (SG2002_WDT_BASE, 1),
         ])
 
     def test_fail_closed_if_either_register_does_not_confirm(self):
-        for control, timeout in [(0, 0xff), (1, 0xff), (3, 0x7f)]:
+        for control, timeout in [(0, 0xff), (2, 0xff), (3, 0xff), (1, 0x7f)]:
             registers = {SG2002_WDT_BASE: control,
                          SG2002_WDT_BASE + 4: timeout}
             with self.subTest(control=control, timeout=timeout):
                 with self.assertRaises(C906LBringupError):
                     arm_uboot_watchdog(registers.__getitem__, lambda *_: None)
+
+    def test_register_failure_stops_without_further_writes(self):
+        for failing_write in range(3):
+            writes = []
+
+            def write(address, value):
+                writes.append((address, value))
+                if len(writes) == failing_write + 1:
+                    raise C906LBringupError('injected fastboot failure')
+
+            with self.subTest(failing_write=failing_write):
+                with self.assertRaises(C906LBringupError):
+                    arm_uboot_watchdog(lambda _: self.fail('read after failed write'), write)
+                self.assertEqual(len(writes), failing_write + 1)
 
 
 class UBootOutputTests(unittest.TestCase):

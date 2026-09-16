@@ -76,7 +76,8 @@ SG2002_DRAM_START = 0x80000000
 SG2002_DRAM_END = 0x90000000
 
 # Primary-core watchdog, independent of the auxiliary-core timer leases.
-# At the board's 25 MHz watchdog clock TOP=15 gives about 85.9 seconds.
+# At the board's 25 MHz watchdog clock TOP=15 gives about 85.9 seconds
+# in reset-only mode (CR[1]=0). Interrupt-first mode doubles reset latency.
 # This is deliberately opt-in: Linux must have a keeper ready at handoff.
 SG2002_WDT_BASE = 0x03010000
 
@@ -85,12 +86,12 @@ def arm_uboot_watchdog(read_u32, write_u32):
     """Arm WDT0 before diagnostics; never disable it or pet it in a loop."""
     write_u32(SG2002_WDT_BASE + 4, 0xff)
     write_u32(SG2002_WDT_BASE + 12, 0x76)
-    write_u32(SG2002_WDT_BASE, 3)
+    write_u32(SG2002_WDT_BASE, 1)
     control = read_u32(SG2002_WDT_BASE)
     timeout = read_u32(SG2002_WDT_BASE + 4)
-    if control & 3 != 3 or timeout & 0xff != 0xff:
+    if control & 3 != 1 or timeout & 0xff != 0xff:
         raise C906LBringupError(
-            f"WDT0 did not confirm armed state: control={control:#x}, "
+            f"WDT0 did not confirm reset-only armed state: control={control:#x}, "
             f"timeout={timeout:#x}; refusing handoff"
         )
 
@@ -580,7 +581,7 @@ def main():
                    help='stop after U-Boot fastboot enumerates, leaving the '
                         'board in U-Boot instead of staging/booting a FIT')
     p.add_argument('--uboot-watchdog', action='store_true',
-                   help='arm and verify SG2002 WDT0 for ~86s immediately '
+                   help='arm and verify SG2002 WDT0 reset-only mode for ~86s immediately '
                         'after fastboot appears, before C906L checks; Linux '
                         'must take over petting it (no host keepalive loop)')
     p.add_argument('--oem-console', action='store_true',
@@ -1073,7 +1074,7 @@ def main():
         except C906LBringupError as exc:
             log(f"ERROR: {exc}")
             sys.exit(1)
-        log("WDT0 armed and read back: ~86s recovery deadline; "
+        log("WDT0 reset-only mode armed and read back: ~86s recovery deadline; "
             "Linux watchdog keeper must take over")
 
     if a.c906l_firmware is not None:
