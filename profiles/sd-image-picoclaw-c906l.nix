@@ -4,9 +4,7 @@
 # power rail; see docs/sg2002-c906l-picoclaw-sd-image.md before changing that
 # boundary.
 {
-  config,
   lib,
-  rootAuthorizedKeys ? [],
   rootWpaConf ? null,
   ...
 }: {
@@ -15,17 +13,6 @@
     ../modules/picoclaw-c906l-lcd.nix
     ../modules/sg2002-watchdog-keeper.nix
     ../modules/wifi-aic8800.nix
-  ];
-
-  assertions = [
-    {
-      assertion = config.sg2002.authorizedKeys != [];
-      message = ''
-        The PicoClaw C906L SD image is key-only. Supply a public-key file with
-        NANOKVM_AUTHORIZED_KEYS=/absolute/path/authorized_keys and --impure,
-        or provide sg2002.authorizedKeys from a downstream configuration.
-      '';
-    }
   ];
 
   sg2002 = {
@@ -66,17 +53,16 @@
 
   networking.hostName = lib.mkOverride 900 "picoclaw-c906l-lcd";
 
-  # This image is intentionally usable only through an explicitly provided
-  # public key.  It must never inherit the generic SD profile's development
-  # password, particularly because the USB ECM link has no network firewall.
+  # Reproducible standalone/CI image: root / nixos-nanokvm, with no required
+  # developer key. Store only the hash; downstream configurations can replace
+  # it. Mutable users allow the administrator to change it after first boot.
   services.openssh.settings = {
-    PermitRootLogin = lib.mkForce "prohibit-password";
-    PasswordAuthentication = lib.mkForce false;
-    KbdInteractiveAuthentication = lib.mkForce false;
+    PermitRootLogin = "yes";
+    PasswordAuthentication = true;
+    KbdInteractiveAuthentication = false;
   };
-  users.mutableUsers = false;
   users.users.root = {
     initialPassword = lib.mkForce null;
-    hashedPassword = lib.mkForce "!";
+    hashedPassword = lib.mkDefault "$6$6KbHgA9r1ooAGY8q$EcuILFYS4.8fMiVYxp9RMRfUizv8sCaPKMxj/NfP/Xf33SE5iyyThesB/4m/D26C2il4DeqEfTqswXa966W5j1";
   };
 }

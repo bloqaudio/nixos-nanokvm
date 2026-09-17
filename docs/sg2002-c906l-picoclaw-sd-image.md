@@ -17,22 +17,18 @@ a successful build as that proof.
 
 ## Build with SSH access
 
-The image is key-only: it refuses to build without at least one public root
-key.  Keep the key file outside Git and point the build at its absolute path.
-For example, use an existing Ed25519 public key or create a dedicated one:
+The standalone image builds without a developer SSH key:
 
 ```sh
-ssh-keygen -t ed25519 -f "$HOME/.ssh/picoclaw-sd" -C picoclaw-sd
-NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/picoclaw-sd.pub" \
-  nix build --impure .#boards.picoclaw.mainline.sd.c906l-lcd
+nix build .#boards.picoclaw.mainline.sd.c906l-lcd
 ```
 
-Multiple public-key lines are accepted.  `authorized_keys` at the repository
-root remains a convenient ignored local fallback, but an explicit environment
-path is more reliable for a Git flake.  The resulting image is under
-`result/sd-image/`.
+The image is under `result/sd-image/`. Log in as `root` with password
+`nixos-nanokvm`, over SSH or the physical console. Only its salted password
+hash is stored in the profile. This is a shared default for the public image;
+change it with `passwd` after boot. Downstream configurations can override
+`users.users.root.hashedPassword` and the OpenSSH authentication settings.
 
-Root permits public-key authentication only.  No fixed password is present.
 The board generates a unique Ed25519 SSH host key on its writable SD card at
 first boot; do not copy a host key from a USB live image.
 
@@ -54,7 +50,6 @@ network={
 ```
 
 ```sh
-NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/picoclaw-sd.pub" \
 NANOKVM_WIFI_CONFIG="$PWD/wifi.conf" \
   nix build --impure .#boards.picoclaw.mainline.sd.c906l-lcd
 ```

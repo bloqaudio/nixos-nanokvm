@@ -22,7 +22,7 @@ The primary NanoKVM-PCIe path is mainline:
 
 - `boards.pcie.mainline.sd`: SD image using mainline U-Boot/extlinux and
   Linux 7.2-rc5
-- `boards.picoclaw.mainline.sd.c906l-lcd`: key-only SD image with Linux DRM
+- `boards.picoclaw.mainline.sd.c906l-lcd`: SD image with Linux DRM
   scanout through the C906L-owned PicoClaw LCD, plus AIC8800 Wi-Fi
 - Ethernet via `stmmac`
 - AIC8800 SDIO WiFi via the Radxa driver plus local SDIO compatibility
@@ -244,3 +244,26 @@ machine-specific configuration in the consuming NixOS flake.
 | `lib/protocol.nix` | USB-ECM MACs, IPs, and ports |
 | `pkgs/` | Overlay packages, kernels, firmware, U-Boot, FIP, DTBs |
 | `scripts/` | Host-side development utilities |
+
+## Continuous integration and binary cache
+
+Pushes to `master` and manual **Build and cache** runs use the `ax102-nanokvm`
+self-hosted runner. CI builds `nanokvm-server`, the PCIe mainline SD image,
+the PicoClaw C906L LCD SD image, and the checks listed in `scripts/ci-build.sh`.
+The runner uses pure evaluation without developer SSH keys or Wi-Fi secrets.
+The PicoClaw image supports root login with password `nixos-nanokvm`; change it
+with `passwd` after boot.
+
+ax102 imports successful build closures from the runner VM and publishes them
+through Harmonia. A green workflow includes verification that its output
+paths are available at `https://cache.hellas.ai`. Imported outputs are rooted
+for 30 days; the latest successful run stays rooted. To consume them, add:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://cache.hellas.ai" ];
+  extra-trusted-public-keys = [
+    "cache.hellas.ai-1:PYolh95U/Ms5fKE+NQTcNZUHyEv4QikaNocg9I9iy0g="
+  ];
+};
+```

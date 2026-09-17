@@ -730,22 +730,7 @@
             catalog;
           picoclawLcdConfig =
             boardSystems.picoclaw.mainline.live.usb-c906l-lcd.config;
-          # The published SD leaf deliberately requires a supplied key.  Use
-          # a non-secret test key here so its configuration can be evaluated
-          # by `nix flake check` regardless of a developer's local files.
-          picoclawLcdSdConfig =
-            (mkBoard {
-              board = "licheerv-nano-picoclaw";
-              kernel = "mainline";
-              profile = "sd-image-picoclaw-c906l";
-              extraModules = [
-                ({ lib, ... }: {
-                  sg2002.authorizedKeys = lib.mkForce [
-                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA nixos-nanokvm-test"
-                  ];
-                })
-              ];
-            }).config;
+          picoclawLcdSdConfig = boardSystems.picoclaw.mainline.sd.c906l-lcd.config;
           failedAuxCoreEval = module:
             builtins.tryEval ((mkBoard {
               board = "licheerv-nano-w";
