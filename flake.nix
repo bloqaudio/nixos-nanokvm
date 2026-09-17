@@ -105,9 +105,22 @@
             (builtins.attrNames (builtins.readDir patchDir)));
       nanokvmPatches = map (name: patchDir + "/${name}") patchNames;
 
+      # Public SSH keys for locally built standalone images.  An ignored file
+      # remains convenient for path flakes, while the explicit environment
+      # path also works for Git flakes, whose source filtering excludes it:
+      #   NANOKVM_AUTHORIZED_KEYS=/absolute/path/authorized_keys \\
+      #     nix build --impure ...
+      localAuthorizedKeys = builtins.getEnv "NANOKVM_AUTHORIZED_KEYS";
+      authorizedKeysFile =
+        if localAuthorizedKeys != ""
+        then localAuthorizedKeys
+        else if builtins.pathExists ./authorized_keys
+        then ./authorized_keys
+        else null;
       rootAuthorizedKeys =
-        lib.optionals (builtins.pathExists ./authorized_keys)
-          (lib.filter (key: key != "") (lib.splitString "\n" (builtins.readFile ./authorized_keys)));
+        lib.optionals (authorizedKeysFile != null)
+          (lib.filter (key: key != "")
+            (lib.splitString "\n" (builtins.readFile authorizedKeysFile)));
 
       # Local wpa_supplicant.conf for WiFi-booted live variants. Git flakes
       # exclude ignored files, so standalone secret injection is explicit:
@@ -717,6 +730,22 @@
             catalog;
           picoclawLcdConfig =
             boardSystems.picoclaw.mainline.live.usb-c906l-lcd.config;
+          # The published SD leaf deliberately requires a supplied key.  Use
+          # a non-secret test key here so its configuration can be evaluated
+          # by `nix flake check` regardless of a developer's local files.
+          picoclawLcdSdConfig =
+            (mkBoard {
+              board = "licheerv-nano-picoclaw";
+              kernel = "mainline";
+              profile = "sd-image-picoclaw-c906l";
+              extraModules = [
+                ({ lib, ... }: {
+                  sg2002.authorizedKeys = lib.mkForce [
+                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA nixos-nanokvm-test"
+                  ];
+                })
+              ];
+            }).config;
           failedAuxCoreEval = module:
             builtins.tryEval ((mkBoard {
               board = "licheerv-nano-w";
@@ -798,6 +827,11 @@
               inherit picoclawFdtMismatch;
               config = picoclawLcdConfig;
               artifactArgs = picoclawLcdEntry.artifactArgs or { };
+            };
+          sg2002-c906l-picoclaw-sd-module-eval =
+            import ./tests/sg2002-c906l-picoclaw-sd-eval.nix {
+              inherit pkgs;
+              config = picoclawLcdSdConfig;
             };
           sg2002-c906l-picoclaw-dtb = picoclawLcdConfig.sg2002.auxCore.fdt;
           sg2002-c906l-picoclaw-control =

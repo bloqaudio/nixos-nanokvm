@@ -49,6 +49,11 @@ in {
     unitConfig = {
       IgnoreOnIsolate = true;
       SurviveFinalKillSignal = true;
+    } // lib.optionalAttrs (config.sg2002.wifi.wpaConfRuntimePath != null) {
+      # A persistent target may be deliberately shipped without a Wi-Fi
+      # credential and provision it over USB first.  Do not turn that safe
+      # initial state into an endless wpa_supplicant restart loop.
+      ConditionPathExists = wpaConfPath;
     };
     serviceConfig = {
       ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c ${wpaConfPath} -D nl80211";

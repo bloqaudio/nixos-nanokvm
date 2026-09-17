@@ -528,7 +528,16 @@ class ContractGenerationTests(unittest.TestCase):
                 fields[-1], {"name": "commitSequence", "offset": 60, "width": 4}
             )
         self.assertEqual(lcd["linuxLease"]["localIrqs"], [])
-        self.assertEqual(len(lcd["sharedPreconditions"]), 14)
+        self.assertEqual(len(lcd["sharedPreconditions"]), 15)
+        self.assertEqual(constants["wifiPowerPin"], 26)
+        self.assertEqual(constants["wifiPowerOwnershipAddress"], 0x8FF50100)
+        self.assertEqual(constants["wifiPowerOwnershipAddress"] % 64, 0)
+        self.assertGreaterEqual(
+            constants["wifiPowerOwnershipAddress"], constants["ownership1Address"] + 128
+        )
+        self.assertLessEqual(
+            constants["wifiPowerOwnershipAddress"] + 128, constants["frameSlot0Address"]
+        )
         self.assertTrue(
             all(
                 value["access"] == "read-only"
@@ -611,6 +620,10 @@ class ContractGenerationTests(unittest.TestCase):
             lambda lcd: lcd["constants"].update(frameSlot0Address=0x8FF00000),
             lambda lcd: lcd["constants"].update(spiAddress=0x04180000),
             lambda lcd: lcd["constants"].update(dcPin=29),
+            lambda lcd: lcd["constants"].update(wifiPowerPin=27),
+            lambda lcd: lcd["constants"].update(wifiPowerOwnershipAddress=0x8FF50080),
+            lambda lcd: lcd["wifiPower"].update(runtimeRebind=True),
+            lambda lcd: lcd["sharedPreconditions"].pop("wifiPowerMux"),
             lambda lcd: lcd["constants"].update(requestMagic=0),
             lambda lcd: lcd["sharedPreconditions"]["spiMosiMux"].update(
                 access="read-write"

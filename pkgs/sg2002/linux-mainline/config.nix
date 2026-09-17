@@ -649,8 +649,10 @@ with lib.kernel; {
   USB_NET_DRIVERS = no;
   USB_STORAGE = no;
 
-  # No external PMICs / regulators / MFDs / battery / charger / power.
-  REGULATOR = no;
+  # The PicoClaw C906L owns GPIOA26 and exposes Wi-Fi power as a regulator.
+  # MMC must defer until this provider exists and use its acknowledged power
+  # sequence. No external PMIC drivers are required.
+  REGULATOR = yes;
   POWER_SUPPLY = no;
   MFD_AXP20X_I2C = no;
 

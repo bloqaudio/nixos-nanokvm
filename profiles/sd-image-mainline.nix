@@ -69,7 +69,9 @@
       # Do not create another serial getty for the early UART0 kernel console.
       "systemd.getty_auto=no"
     ]
-    ++ lib.optional (config.sg2002.consoleDevice != "ttyGS0") "console=ttyGS0,115200"
+    ++ lib.optional
+      (config.sg2002.consoleDevice != "ttyGS0" && config.sg2002.usbGadget.console.enable)
+      "console=ttyGS0,115200"
     ++ ["riscv.fwsz=0x80000"]
   );
 

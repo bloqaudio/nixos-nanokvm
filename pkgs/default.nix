@@ -275,6 +275,8 @@ in
     cross.callPackage ./sg2002/c906l-control { inherit contract kernel; };
   sg2002-c906l-framebuffer-for = kernel: contract:
     cross.callPackage ./sg2002/c906l-framebuffer { inherit contract kernel; };
+  sg2002-c906l-wifi-power-for = kernel: contract:
+    cross.callPackage ./sg2002/c906l-wifi-power { inherit contract kernel; };
   sg2002-c906l-remoteproc-for = kernel: contract:
     cross.callPackage ./sg2002/c906l-remoteproc { inherit contract kernel; };
   sg2002-c906l-ctl-for = contract:

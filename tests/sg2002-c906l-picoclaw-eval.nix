@@ -31,7 +31,8 @@ assert artifactArgs.extraBootargs == [
   "systemd.getty_auto=no"
   "udev.children_max=2"
 ];
-assert !config.sg2002.wifi.enable;
+assert config.sg2002.wifi.enable;
+assert config.sg2002.auxCore.fdt.wifiPowerProvider == "c906l-regulator";
 assert !config.services.nanokvm.enable;
 assert !config.services.openssh.enable;
 assert config.services.userborn.static;
@@ -48,6 +49,8 @@ assert builtins.elem "sg2002-c906l-drm-test" packageNames;
 assert builtins.elem "sg2002-c906l-control" extraModuleNames;
 assert builtins.elem "sg2002-c906l-remoteproc" extraModuleNames;
 assert builtins.elem "sg2002-c906l-framebuffer" extraModuleNames;
+assert builtins.elem "sg2002-c906l-wifi-power" extraModuleNames;
+assert builtins.elem "sg2002-c906l-wifi-power" config.boot.kernelModules;
 assert builtins.elem "sg2002-c906l-framebuffer" config.boot.kernelModules;
 assert !picoclawFdtMismatch.success;
 pkgs.runCommand "sg2002-c906l-picoclaw-module-eval" { } ''

@@ -47,10 +47,20 @@
 		};
 
 		control-pins {
-			/* GPIOA19 = backlight, A27 = reset, A28 = D/C. */
+			/* A19 = backlight, A27 = reset, A28 = D/C. */
 			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 3)>,
 				 <PINMUX(PIN_EMMC_DAT3, 3)>,
 				 <PINMUX(PIN_IIC0_SCL, 3)>;
+			power-source = <3300>;
+		};
+
+		/* A26 is Wi-Fi power.  It remains in the C906L's single GPIOA
+		 * output group, but use the electrically proven PicoClaw pull and
+		 * drive settings rather than borrowing the LCD controls' defaults. */
+		wifi-power-pin {
+			pinmux = <PINMUX(PIN_EMMC_DAT2, 3)>;
+			bias-pull-down;
+			drive-strength-microamp = <10800>;
 			power-source = <3300>;
 		};
 	};
@@ -76,9 +86,12 @@
 };
 
 &sdhci1 {
-	status = "disabled";
-	/delete-property/ pinctrl-0;
-	/delete-property/ pinctrl-names;
+	status = "okay";
+	/* Linux owns SDIO, while C906L exclusively changes its power GPIO.
+	 * The standard supply dependency defers MMC until the provider is ready. */
+	pinctrl-0 = <&sdhci1_cfg>;
+	pinctrl-names = "default";
+	vmmc-supply = <&c906l_wifi_power>;
 	/delete-property/ wifi-power-gpios;
 	/delete-property/ sophgo,wifi-power-pinmux-reg;
 };

@@ -14,7 +14,8 @@ const Y_OFFSET: u16 = 80;
 const DC: u32 = 1 << 28;
 const RESET: u32 = 1 << 27;
 const BACKLIGHT: u32 = 1 << 19;
-const CONTROL_LINES: u32 = DC | RESET | BACKLIGHT;
+const WIFI_POWER: u32 = 1 << 26;
+const CONTROL_LINES: u32 = DC | RESET | BACKLIGHT | WIFI_POWER;
 const MAX_CHUNKS: usize = 32;
 pub(crate) const FRAME_BYTES: usize = WIDTH as usize * HEIGHT as usize * 2;
 
@@ -614,7 +615,9 @@ impl Panel {
         // exact PicoClaw addresses and scalar configuration were checked above.
         let mut bank = unsafe { gpio::Bank::from_base(gpio_base) };
         bank.mask_interrupts();
-        // Backlight off first; reset high and DC low before any SPI operation.
+        // Backlight and Wi-Fi off first; reset high and DC low before SPI.
+        // One OutputGroup owns all four lines, so Wi-Fi and LCD operations
+        // cannot race a whole-bank read/modify/write.
         let outputs = bank.outputs(CONTROL_LINES, RESET | BACKLIGHT);
         let mut spi = unsafe { spi::Spi::from_base(spi_base) };
         spi.configure(divider, embedded_hal::spi::MODE_0);
@@ -640,6 +643,23 @@ impl Panel {
     }
     pub(crate) fn status(&self) -> Status {
         self.engine.status
+    }
+
+    /// Called only by the same task that advances LCD scanout. The Linux
+    /// regulator supplies power-cycle delays; acknowledgement follows latch
+    /// readback, not just queuing a future GPIO update.
+    pub(crate) fn wifi_power(&mut self, enabled: bool) -> Result<(), Error> {
+        self.engine.io.line(WIFI_POWER, enabled)?;
+        let actual = self
+            .engine
+            .io
+            .outputs
+            .get(WIFI_POWER)
+            .map_err(|_| Error::Gpio)?;
+        if actual != if enabled { WIFI_POWER } else { 0 } {
+            return Err(Error::Gpio);
+        }
+        Ok(())
     }
 }
 

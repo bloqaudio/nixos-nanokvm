@@ -253,6 +253,9 @@ static int sg2002_picoclaw_lcd_prepare(struct device *dev,
 	ret = sg2002_picoclaw_expect(dev, lcd->pinmux, 0x070, 0x7, 0x3);
 	if (ret)
 		return ret;
+	ret = sg2002_picoclaw_expect(dev, lcd->pinmux, 0x04c, 0x7, 0x3);
+	if (ret)
+		return ret;
 	lcd->prepared = true;
 	dev_info(dev, "prepared and retained PicoClaw LCD clock/pad handoff\n");
 	return 0;

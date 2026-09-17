@@ -914,6 +914,7 @@ in
     profile = "usb-nbd-live";
     artifact = "live";
     tag = "live-picoclaw-c906l-lcd";
+    mixins = [ ../modules/picoclaw-c906l-lcd.nix ];
     artifactArgs = {
       usbConsole = false;
       # Direct USB runners construct the command line independently of
@@ -926,23 +927,13 @@ in
     modules = [
       ({ config, lib, pkgs, ... }: {
         sg2002 = {
-          auxCore = {
-            enable = true;
-            peripherals =
-              pkgs.sg2002-c906l-profile-manifest.picoclaw-lcd.peripherals;
-            fdt = pkgs.sg2002-dtb-mainline-picoclaw-c906l-lcd-for
-              (pkgs.sg2002-c906l-contract-for-profile "picoclaw-lcd");
-          };
           watchdogKeeper = {
             initrd.enable = true;
             stage2.enable = true;
             healthHost = protocol.hostIp;
           };
-          usbGadget.console.enable = false;
-          wifi.enable = false;
         };
 
-        services.nanokvm.enable = lib.mkForce false;
         services.openssh.enable = lib.mkForce false;
         services.userborn.static = true;
         zramSwap.enable = lib.mkForce false;
@@ -964,6 +955,15 @@ in
         ];
       })
     ];
+  })
+
+  # Persistent counterpart to the RAM/NBD C906L LCD test.  It uses the same
+  # contract/FIP/DT and DRM driver, but its root lives on an SD card.  The
+  # profile requires an explicit SSH public key.  Wi-Fi power is mediated by
+  # the C906L because GPIOA26 is part of its exclusive GPIOA lease.
+  (picoclaw "mainline" [ "sd" "c906l-lcd" ] {
+    profile = "sd-image-picoclaw-c906l";
+    artifact = "sd";
   })
 
   # Dedicated onboard-LCD sibling of the proven headless USB/NFS boot.

@@ -28,6 +28,8 @@ mod lcd;
 #[cfg(feature = "picoclaw-lcd")]
 mod lcd_service;
 mod rpmsg;
+#[cfg(feature = "picoclaw-lcd")]
+mod wifi_power;
 
 use contract::{
     ABI_MAJOR, ABI_MINOR, ACTIVATION_REQUIRED, ACTIVATION_RESULT_INTERNAL_FAILURE,

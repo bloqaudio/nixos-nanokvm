@@ -1,0 +1,27 @@
+From: NanoKVM developers <nanokvm@localhost>
+Subject: [PATCH] mmc: sdhci-of-dwcmshc: retain CV18xx bus voltage with vmmc
+
+The PicoClaw auxiliary-core display configuration represents its remote
+GPIOA26 Wi-Fi power switch as an MMC vmmc regulator. The default SDHCI
+regulator path only writes SDHCI_POWER_ON, whereas the existing CV18xx
+bring-up programs the voltage-selection bits as well.
+
+Use the existing combined helper so a vmmc provider controls card power
+while the controller retains its bus-voltage programming. Boards without
+a vmmc supply keep the existing sdhci_set_power_noreg behavior.
+
+---
+ drivers/mmc/host/sdhci-of-dwcmshc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/mmc/host/sdhci-of-dwcmshc.c b/drivers/mmc/host/sdhci-of-dwcmshc.c
+--- a/drivers/mmc/host/sdhci-of-dwcmshc.c
++++ b/drivers/mmc/host/sdhci-of-dwcmshc.c
+@@ -2055,6 +2055,7 @@ static const struct sdhci_ops sdhci_dwcmshc_cv18xx_ops = {
+ 	.set_clock		= sdhci_set_clock,
+ 	.set_bus_width		= sdhci_set_bus_width,
+ 	.set_uhs_signaling	= dwcmshc_set_uhs_signaling,
++	.set_power		= sdhci_set_power_and_bus_voltage,
+ 	.get_max_clock		= dwcmshc_get_max_clock,
+ 	.reset			= cv18xx_sdhci_reset,
+ 	.adma_write_desc	= dwcmshc_adma_write_desc,

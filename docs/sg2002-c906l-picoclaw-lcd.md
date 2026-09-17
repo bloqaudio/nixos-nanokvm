@@ -36,11 +36,16 @@ The nominal DRM mode must not be interpreted as a guaranteed refresh rate.
 The generated `picoclaw-lcd` contract retains ABI 1.1 and assigns lease bit 4,
 profile ID 17, and final capabilities `0x8b`. Its immutable digest covers the
 physical resources, panel geometry, pin preconditions and framebuffer protocol.
+It also covers the firmware-mediated Wi-Fi power protocol. The combined
+configuration has digest
+`2ff551e54e51c569cc0539a4ab93e47438666288b861e248a5c77cc53ab92fd2`;
+older LCD-only firmware deliberately fails this identity check.
 
 | Resource | Address | Size |
 | --- | --- | --- |
 | Slot 0 ownership pair | `0x8ff50000` | 128 bytes |
 | Slot 1 ownership pair | `0x8ff50080` | 128 bytes |
+| Wi-Fi power request/completion pair | `0x8ff50100` | 128 bytes |
 | Slot 0 pixels | `0x8ff51000` | 115,200 bytes |
 | Slot 1 pixels | `0x8ff6e000` | 115,200 bytes |
 
@@ -63,11 +68,47 @@ EPHY-to-SPI pad handoff only after the firmware manifest matches, and authorizes
 the static lease. Firmware checks the generated read-only pad prerequisites.
 SPI1 and the whole GPIOA register bank then belong exclusively to C906L.
 
-The dedicated DT disables Linux SPI1/spidev, GPIOA, I2C0, Ethernet and the
-SDIO/Wi-Fi controller; the SD-card controller remains enabled. This is necessary
-because LCD D/C shares I2C0's clock pad and Wi-Fi power uses GPIOA26. It does not silently share GPIO read/modify/
-write registers between Linux and firmware. Other firmware GPIO bits are
-preserved. The normal U-Boot splash and Linux LCD service are not used.
+The dedicated DT disables Linux SPI1/spidev, GPIOA, I2C0 and Ethernet. Both
+the SD-card controller and SDIO/Wi-Fi remain enabled. LCD D/C shares I2C0's
+clock pad; Wi-Fi power uses GPIOA26. C906L owns A26 alongside the LCD's A19,
+A27 and A28 in one Rust `OutputGroup`, serviced by one task. Linux never
+maps the GPIOA bank or takes a separate GPIO handle. The normal U-Boot splash
+and Linux LCD service are not used.
+
+## Wi-Fi and LCD together
+
+Linux SDIO uses a standard `vmmc-supply` regulator named
+`picoclaw-wifi-power`. Its provider is `sg2002-c906l-wifi-power`, which maps
+only the contract's shared DDR. MMC defers probe until the provider has
+validated the immutable firmware identity, observed the active generation,
+and received an acknowledged power-off command. SDIO's pinctrl state owns
+only its bus pads; GPIOA26's pinmux belongs to the validated C906L handoff.
+
+Each 64-byte request contains a fixed magic, generation, strictly increasing
+sequence, enable value (0 or 1), 44 reserved zero bytes and a commit sequence
+written last. Firmware requires two identical invalidated snapshots. The
+same task that advances LCD scanout updates A26, verifies the output latch,
+and publishes a separate completion cacheline with the matching generation,
+sequence and enable value. This acknowledges the GPIO latch, not RF link
+readiness. Duplicate, stale, malformed and uncommitted commands do not change
+GPIOs. Wi-Fi commands run before each bounded LCD service step and do not
+depend on RPMsg attachment or a userspace process.
+
+An MMC power-on performs acknowledged off, at least 60 ms off time,
+acknowledged on, then at least 10 ms settling. Linux performs the delays so
+C906L can continue LCD and IPC work. Each acknowledgement has a 2-second
+deadline. A timeout, wrong generation or invalid completion latches an error
+and retains the request; later calls cannot overwrite uncertain ownership.
+Runtime provider unbind/unload and same-generation rebind are disabled.
+Recovery is a whole-board reset. Kernel patch 0069 uses the existing SDHCI
+combined regulator/bus-voltage helper so the controller's voltage bits are
+still programmed when an external `vmmc` provider is present.
+
+The common board module enables the Wi-Fi driver and firmware. Association
+and credentials remain the image's policy (`wifi-aic8800.nix`,
+`networking.wireless` or the existing `sg2002.wifi` configuration options).
+This standard supply relationship follows the Linux
+[regulator framework](https://docs.kernel.org/power/regulator/overview.html).
 
 The Rust panel driver sends at most 32 complete, eight-byte SPI transactions
 per service step, with scheduler-backed initialization deadlines. Mailbox and
@@ -94,10 +135,24 @@ previous display mode. It refuses unrelated graphics devices.
 
 Host tests cover the exact contract, invalid ownership records, frame bounds,
 cacheline layout, panel command sequencing, bounded SPI work, terminal errors,
-and production Linux transport functions. Passing these tests alone does not
-establish visible LCD output.
+and production Linux transport functions. Wi-Fi power tests execute the
+production C transport against a simulated firmware peer, covering power
+timings, torn/stale acknowledgements, rejected completions, sequence wrap and
+timeout ownership retention. Rust tests cover command validation, duplicate
+and stale suppression, latch failures and GPIO mask isolation. Passing these
+tests alone does not establish visible LCD output or Wi-Fi association.
+
+For a combined hardware test, inspect
+`/sys/bus/platform/devices/c906l-wifi-power/transport_status`, verify `wlan0`
+has associated, and run `sg2002-c906l-drm-test /dev/dri/card0 32` while carrying
+traffic over Wi-Fi. Check both the regulator and framebuffer
+`transport_status` files and `sg2002-c906l-ctl check` before and after.
 
 ## Hardware validation: 2026-09-16
+
+These measurements cover the earlier LCD-only contract, before the Wi-Fi
+power provider was added. They are not evidence of simultaneous Wi-Fi/LCD
+operation with the new contract.
 
 The PicoClaw on workstation `fuckup`, USB port `3-4`, RAM-booted the dedicated
 Linux 7.2-rc5 image. No flash operation or workstation reboot was performed.

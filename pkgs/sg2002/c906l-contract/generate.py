@@ -247,7 +247,7 @@ def validate_picoclaw_lcd(contract: dict[str, Any]) -> None:
     # MMIO or weaker ownership contract is accepted merely because it hashes.
     require(
         hashlib.sha256(canonical_json(strip_documentation(lcd))).hexdigest()
-        == "0f02596d5cbd22d683d1bb759d2df81bcb4b6f811186418802ae9678b289d6c0",
+        == "f3af491a02100e569347791461589624bd8b29d8293be1259307e91082490d9a",
         "PicoClaw LCD does not match the frozen board and framebuffer contract",
     )
     constants = lcd["constants"]
@@ -258,6 +258,13 @@ def validate_picoclaw_lcd(contract: dict[str, Any]) -> None:
         constants["ownership0Address"] == bulk_start
         and constants["frameSlot1Address"] + constants["frameSize"] <= bulk_end,
         "PicoClaw framebuffer does not fit the shared bulk region",
+    )
+    require(
+        constants["wifiPowerOwnershipAddress"] % 64 == 0
+        and constants["wifiPowerOwnershipAddress"]
+        >= constants["ownership1Address"] + constants["ownershipSize"]
+        and constants["wifiPowerOwnershipAddress"] + 128 <= constants["frameSlot0Address"],
+        "PicoClaw Wi-Fi power records overlap framebuffer ownership or pixels",
     )
     profile = contract["profile"]
     require(

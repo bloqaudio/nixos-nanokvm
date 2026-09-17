@@ -12,6 +12,8 @@ let
   lcdEnabled = builtins.elem "picoclawLcd" cfg.peripherals;
   framebufferModule =
     pkgs.sg2002-c906l-framebuffer-for config.boot.kernelPackages.kernel contract;
+  wifiPowerModule =
+    pkgs.sg2002-c906l-wifi-power-for config.boot.kernelPackages.kernel contract;
   remoteprocModule =
     pkgs.sg2002-c906l-remoteproc-for config.boot.kernelPackages.kernel contract;
   memoryMap = import ../pkgs/sg2002/c906l-memory-map.nix { inherit lib; };
@@ -147,10 +149,11 @@ in
         message = "sg2002.auxCore requires the verified mainline FIP composition path";
       }
       {
-        assertion = !config.sg2002.wifi.enable;
+        assertion = !config.sg2002.wifi.enable
+          || (lcdEnabled && (cfg.fdt.wifiPowerProvider or null) == "c906l-regulator");
         message = ''
-          sg2002.auxCore currently selects the validated no-WiFi DT variant;
-          disable sg2002.wifi until composable C906L DT overlays are packaged
+          sg2002.auxCore Wi-Fi requires the dedicated PicoClaw DT with the
+          C906L power regulator; other profiles still use the no-WiFi DT
         '';
       }
       {
@@ -166,7 +169,8 @@ in
           || (cfg.fdt.boardProfile or null) == "picoclaw-c906l-lcd";
         message = ''
           the picoclawLcd lease requires the dedicated PicoClaw DT, which
-          disables Linux SPI1, the entire GPIOA bank, I2C0, Ethernet and WiFi
+          disables Linux SPI1, the entire GPIOA bank, I2C0 and Ethernet, and
+          routes SDIO power through the C906L regulator
         '';
       }
       {
@@ -215,11 +219,11 @@ in
     boot.extraModulePackages = [
       controlModule
       remoteprocModule
-    ] ++ lib.optional lcdEnabled framebufferModule;
+    ] ++ lib.optionals lcdEnabled [ framebufferModule wifiPowerModule ];
     boot.kernelModules = [
       "sg2002-c906l-control"
       "sg2002-c906l-remoteproc"
-    ] ++ lib.optional lcdEnabled "sg2002-c906l-framebuffer";
+    ] ++ lib.optionals lcdEnabled [ "sg2002-c906l-wifi-power" "sg2002-c906l-framebuffer" ];
     environment.systemPackages = [ (pkgs.sg2002-c906l-ctl-for contract) ];
   };
 }

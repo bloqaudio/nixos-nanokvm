@@ -426,6 +426,13 @@
         "resetPin": 27,
         "backlightPin": 19,
         "backlightActiveLow": 1,
+        "wifiPowerPin": 26,
+        "wifiPowerOwnershipAddress": 2415198464,
+        "wifiPowerRequestMagic": 827347799,
+        "wifiPowerCompletionMagic": 827347779,
+        "wifiPowerOffMilliseconds": 60,
+        "wifiPowerOnMilliseconds": 10,
+        "wifiPowerTimeoutMilliseconds": 2000,
         "width": 240,
         "height": 240,
         "yOffset": 80,
@@ -458,6 +465,15 @@
         "name": "rpmsg_chrdev",
         "address": 1025,
         "protocolVersion": 1
+      },
+      "wifiPower": {
+        "version": 1,
+        "consumer": "linux-mmc-vmmc-regulator",
+        "owner": "same-c906l-task-and-output-group-as-lcd",
+        "request": "generation-bound-monotonic-sequence-enable-boolean-commit-last",
+        "completion": "same-generation-sequence-and-enable-after-output-latch-readback",
+        "initialState": "off",
+        "runtimeRebind": false
       },
       "framebuffer": {
         "version": 1,
@@ -620,6 +636,12 @@
         },
         "dcMux": {
           "address": 50335856,
+          "mask": 7,
+          "expected": 3,
+          "access": "read-only"
+        },
+        "wifiPowerMux": {
+          "address": 50335820,
           "mask": 7,
           "expected": 3,
           "access": "read-only"

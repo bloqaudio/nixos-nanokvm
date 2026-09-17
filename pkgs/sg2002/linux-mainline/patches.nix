@@ -50,6 +50,10 @@ let
       patch = ./patches/0002-mmc-sdhci-of-dwcmshc-SG2002-SDIO1-init-pinmux-readba.patch;
     })
     (patch {
+      name = "mmc-cv18xx-preserve-bus-voltage-with-vmmc";
+      patch = ./patches/0069-mmc-cv18xx-preserve-bus-voltage-with-vmmc.patch;
+    })
+    (patch {
       name = "dmaengine-cv1800b-dmamux-fix-channel-allocation-order";
       patch = ./patches/0003-dmaengine-cv1800b-dmamux-fix-channel-allocation-order.patch;
     })
@@ -292,6 +296,12 @@ let
   ];
 
   meta = {
+    "mmc-cv18xx-preserve-bus-voltage-with-vmmc" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx uses sdhci_set_power_and_bus_voltage upstream";
+      notes = "Preserve SDHCI voltage-selection bits when C906L mediates PicoClaw Wi-Fi power through vmmc.";
+    };
     "media-sophgo-align-vpss-format-enumeration" = {
       origin = "local";
       upstreamStatus = "draft";

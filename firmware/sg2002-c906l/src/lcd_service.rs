@@ -99,6 +99,7 @@ pub(crate) struct Service {
     job_sequence: u32,
     next_slot: usize,
     frames: u32,
+    wifi_completed: u32,
 }
 
 impl Service {
@@ -112,6 +113,7 @@ impl Service {
             job_sequence: 0,
             next_slot: 0,
             frames: 0,
+            wifi_completed: 0,
         }
     }
 
@@ -152,6 +154,10 @@ impl Service {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
+        // Run before bounded SPI work, through the same sole GPIOA owner.
+        crate::wifi_power::step(self.generation, &mut self.wifi_completed, |enabled| {
+            panel.wifi_power(enabled).map_err(|_| ())
+        });
         panel.step(now);
         let status = panel.status();
         if let Some((slot, sequence, job_sequence)) = self.active {

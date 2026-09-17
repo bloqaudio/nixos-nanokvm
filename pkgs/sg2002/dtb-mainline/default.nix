@@ -239,6 +239,14 @@ let
       framebufferContractOverlay = writeText
         "sg2002-c906l-picoclaw-framebuffer-contract.dtsi" ''
         / {
+          c906l_wifi_power: c906l-wifi-power {
+            compatible = "sophgo,sg2002-c906l-wifi-power";
+            memory-region = <&c906l_shmem>;
+            sophgo,contract-sha256 = [${digestCells}];
+            regulator-name = "picoclaw-wifi-power";
+            regulator-min-microvolt = <3300000>;
+            regulator-max-microvolt = <3300000>;
+          };
           c906l-framebuffer {
             compatible = "sophgo,sg2002-c906l-framebuffer";
             memory-region = <&c906l_shmem>;
@@ -270,6 +278,7 @@ let
         nativeBuildInputs = [ dtc python3 ];
         passthru = c906lMemoryMap // {
           boardProfile = "picoclaw-c906l-lcd";
+          wifiPowerProvider = "c906l-regulator";
           inherit
             (contract)
             contractEpoch
@@ -293,8 +302,7 @@ let
         /soc/spi@4190000 \
         /soc/gpio@3020000 \
         /soc/i2c@4000000 \
-        /soc/ethernet@4070000 \
-        /soc/mmc@4320000; do
+        /soc/ethernet@4070000; do
         test "$(fdtget -t s "$out" "$node" status)" = disabled
       done
       fdtget "$out" /c906l-control sophgo,picoclaw-lcd-handoff >/dev/null
@@ -318,9 +326,20 @@ let
       test "$(fdtget -t u "$out" /c906l-control sophgo,pclk-hz)" = \
         300000000
       if fdtget "$out" /soc/mmc@4320000 wifi-power-gpios >/dev/null 2>&1; then
-        echo "disabled WiFi node still claims GPIOA26" >&2
+        echo "Linux WiFi node still claims C906L-owned GPIOA26" >&2
         exit 1
       fi
+      if fdtget "$out" /soc/mmc@4320000 sophgo,wifi-power-pinmux-reg >/dev/null 2>&1; then
+        echo "Linux SDIO still overrides the C906L Wi-Fi power pinmux" >&2
+        exit 1
+      fi
+      test "$(fdtget -t s "$out" /soc/mmc@4320000 status)" = okay
+      test "$(fdtget -t x "$out" /soc/mmc@4320000 vmmc-supply)" = \
+        "$(fdtget -t x "$out" /c906l-wifi-power phandle)"
+      test "$(fdtget -t x "$out" /c906l-wifi-power memory-region)" = \
+        "$(fdtget -t x "$out" /c906l-control memory-region)"
+      test "$(fdtget -t bx "$out" /c906l-wifi-power sophgo,contract-sha256)" = \
+        "$(fdtget -t bx "$out" /c906l-framebuffer sophgo,contract-sha256)"
       ${dtc}/bin/dtc -q -I dtb -O dts "$out" > "$TMPDIR/final.dts"
       if grep -F 'picoclaw-lcd-status' "$TMPDIR/final.dts"; then
         echo "Linux PicoClaw LCD consumer leaked into the C906L DT" >&2

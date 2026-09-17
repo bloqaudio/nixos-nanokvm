@@ -22,6 +22,8 @@ The primary NanoKVM-PCIe path is mainline:
 
 - `boards.pcie.mainline.sd`: SD image using mainline U-Boot/extlinux and
   Linux 7.2-rc5
+- `boards.picoclaw.mainline.sd.c906l-lcd`: key-only SD image with Linux DRM
+  scanout through the C906L-owned PicoClaw LCD, plus AIC8800 Wi-Fi
 - Ethernet via `stmmac`
 - AIC8800 SDIO WiFi via the Radxa driver plus local SDIO compatibility
   patching
@@ -38,6 +40,7 @@ From this repository on an x86_64 Linux host:
 
 ```sh
 nix build .#boards.pcie.mainline.sd
+nix build .#boards.picoclaw.mainline.sd.c906l-lcd
 nix build .#nanokvm-server
 ```
 
@@ -200,7 +203,9 @@ features in the consuming configuration:
 
 These files are intentionally ignored and only affect local standalone builds:
 
-- `authorized_keys`: root SSH public keys baked into local images
+- `authorized_keys`: root SSH public keys baked into local images; Git-flake
+  builds instead use `NANOKVM_AUTHORIZED_KEYS=/absolute/path/authorized_keys`
+  together with `--impure`
 - `wifi.conf`: local `wpa_supplicant` configuration, injected into a standalone
   WiFi image with `NANOKVM_WIFI_CONFIG=$PWD/wifi.conf` and `--impure`
 - `.ssh_host_*_key`: cached per-developer SSH host keys injected by USB boot
@@ -208,6 +213,10 @@ These files are intentionally ignored and only affect local standalone builds:
 - `media/captures/`: local terminal recordings and rendered GIFs
 
 Use a downstream secrets system for WiFi credentials.
+
+The PicoClaw C906L SD image requires an explicit SSH public key and supports
+either pre-baked or USB-first Wi-Fi provisioning.  See [its build, write and
+credential instructions](docs/sg2002-c906l-picoclaw-sd-image.md).
 
 ## Patch Workflow
 

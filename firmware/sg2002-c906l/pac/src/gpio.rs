@@ -152,6 +152,15 @@ pub struct OutputGroup<'mmio> {
 pub struct OutsideOutputGroup;
 
 impl OutputGroup<'_> {
+    /// Read the output latch of group-owned lines. This does not claim that an
+    /// external device has reached its powered/ready state.
+    pub fn get(&self, mask: u32) -> Result<u32, OutsideOutputGroup> {
+        if mask & !self.mask != 0 {
+            return Err(OutsideOutputGroup);
+        }
+        Ok(crate::ordered_read(|| field_shared!(self.bank.registers, data).read()) & mask)
+    }
+
     /// Change only selected group lines. Rejects an invalid mask before MMIO;
     /// bits in `values` outside `mask` do not affect the output latch.
     pub fn set(&mut self, mask: u32, values: u32) -> Result<(), OutsideOutputGroup> {
@@ -328,8 +337,11 @@ mod tests {
                 registers: UniqueMmioPointer::from(&mut regs),
             };
             let mut outputs = bank.outputs(0x81, 0x80);
+            assert_eq!(outputs.get(0x81), Ok(0x80));
             outputs.set(1, 1).unwrap();
+            assert_eq!(outputs.get(0x81), Ok(0x81));
             assert_eq!(outputs.set(0x100, 0x100), Err(OutsideOutputGroup));
+            assert_eq!(outputs.get(0x100), Err(OutsideOutputGroup));
             outputs.set(0x80, 0).unwrap();
         }
         assert_eq!(regs.data.0, 0xa5a5_0001);
