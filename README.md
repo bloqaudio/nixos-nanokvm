@@ -245,19 +245,22 @@ machine-specific configuration in the consuming NixOS flake.
 | `pkgs/` | Overlay packages, kernels, firmware, U-Boot, FIP, DTBs |
 | `scripts/` | Host-side development utilities |
 
-## Continuous integration and binary cache
+## Hydra and binary cache
 
-Pushes to `master` and manual **Build and cache** runs use the `ax102-nanokvm`
-self-hosted runner. CI builds `nanokvm-server`, the PCIe mainline SD image,
-the PicoClaw C906L LCD SD image, and the checks listed in `scripts/ci-build.sh`.
-The runner uses pure evaluation without developer SSH keys or Wi-Fi secrets.
-The PicoClaw image supports root login with password `nixos-nanokvm`; change it
-with `passwd` after boot.
+The [NanoKVM Hydra project](https://hydra.hellas.ai/project/nixos-nanokvm)
+tracks `master` in its own jobset, polling every five minutes. Evaluations
+can also be triggered manually in Hydra. `hydraJobs.x86_64-linux` selects
+`nanokvm-server`, the PCIe mainline SD image, the PicoClaw C906L LCD SD image,
+and relevant checks. These alias the regular flake outputs, preserving their
+store paths for substitution. Builds use pure evaluation without developer
+SSH keys or Wi-Fi secrets.
 
-ax102 imports successful build closures from the runner VM and publishes them
-through Harmonia. A green workflow includes verification that its output
-paths are available at `https://cache.hellas.ai`. Imported outputs are rooted
-for 30 days; the latest successful run stays rooted. To consume them, add:
+Hydra returns completed builds to ax102's store, which Harmonia serves at
+`https://cache.hellas.ai`. The jobset retains the latest ten evaluations.
+The PicoClaw image supports root login with password `nixos-nanokvm`; change
+it with `passwd` after boot.
+
+To use the cache, add:
 
 ```nix
 nix.settings = {

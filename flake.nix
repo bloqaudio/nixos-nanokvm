@@ -714,6 +714,28 @@
         (_system: attrs: builtins.removeAttrs attrs [ "boards" ])
         self.legacyPackages;
 
+      # Hydra builds the canonical outputs, so downstream `nix build` calls
+      # use exactly the same store paths from cache.hellas.ai.
+      hydraJobs.x86_64-linux = {
+        packages = {
+          nanokvm-server = self.packages.x86_64-linux.nanokvm-server;
+          pcie-sd = self.legacyPackages.x86_64-linux.boards.pcie.mainline.sd;
+          picoclaw-c906l-lcd-sd = self.legacyPackages.x86_64-linux.boards.picoclaw.mainline.sd.c906l-lcd;
+        };
+        checks = lib.getAttrs [
+          "sg2002-h264-bridge-colour"
+          "sg2002-vpss-state"
+          "sg2002-c906l-module-eval"
+          "sg2002-c906l-picoclaw-module-eval"
+          "sg2002-c906l-picoclaw-sd-module-eval"
+          "sg2002-c906l-picoclaw-dtb"
+          "sg2002-c906l-picoclaw-control"
+          "sg2002-c906l-picoclaw-framebuffer"
+          "sg2002-c906l-contract-generator"
+          "sg2002-c906l-rust"
+        ] self.checks.x86_64-linux;
+      };
+
       checks = forAllSystems (pkgs:
         let
           allTimersEntry = lib.findFirst
