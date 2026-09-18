@@ -1,7 +1,7 @@
 {
   lib,
   stdenv,
-  buildGo125Module,
+  buildGoModule,
   nanokvm-factory-runtime,
   nanokvm-patched-src,
   nanokvm-web,
@@ -70,7 +70,7 @@
     .${system}
     or (throw "nanokvm-server: no GOARCH mapping for ${system}");
 in
-  buildGo125Module {
+  buildGoModule {
     pname = "nanokvm-server";
     version = "unstable";
 
