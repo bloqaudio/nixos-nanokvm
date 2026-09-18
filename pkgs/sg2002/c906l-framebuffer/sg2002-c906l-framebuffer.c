@@ -177,11 +177,11 @@ static int wait_slot(struct lcd_frames *fb, unsigned int slot,
 		}
 		if (nonblock)
 			return -EAGAIN;
-		if (signal_pending(current))
-			return -ERESTARTSYS;
 		if (time_after_eq(jiffies, deadline))
 			return -ETIMEDOUT;
-		msleep_interruptible(5);
+		/* Not interruptible: a pending signal in the committing task must
+		 * not abandon an acknowledged frame and latch a permanent fault. */
+		msleep(5);
 	}
 }
 
@@ -190,11 +190,9 @@ static int lock_until(struct lcd_frames *fb, unsigned long deadline, bool nonblo
 	while (!mutex_trylock(&fb->lock)) {
 		if (nonblock)
 			return -EAGAIN;
-		if (signal_pending(current))
-			return -ERESTARTSYS;
 		if (time_after_eq(jiffies, deadline))
 			return -ETIMEDOUT;
-		msleep_interruptible(5);
+		msleep(5);
 	}
 	return 0;
 }

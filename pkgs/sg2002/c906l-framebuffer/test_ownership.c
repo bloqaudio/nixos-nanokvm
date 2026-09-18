@@ -55,7 +55,7 @@ static bool mutex_trylock(struct mutex *lock)
 	lock->locked = true;
 	return true;
 }
-static void msleep_interruptible(unsigned int delay) { jiffies += delay; sleeps++; }
+static void msleep(unsigned int delay) { jiffies += delay; sleeps++; }
 
 /* Model only event ownership/refcounts; ordering is the production callback. */
 struct completion { unsigned int done, released; };
@@ -231,8 +231,9 @@ int main(void)
 	fb.sequence[0] = 1;
 	assert(wait_slot(&fb, 0, 10, false) == -ETIMEDOUT);
 	assert(jiffies == 10 && sleeps == 2);
+	/* A pending signal never abandons a committed frame: wait to the deadline. */
 	pending_signal = true;
-	assert(wait_slot(&fb, 0, 20, false) == -ERESTARTSYS);
+	assert(wait_slot(&fb, 0, 15, false) == -ETIMEDOUT && jiffies == 15 && sleeps == 3);
 	pending_signal = false; status->generation = 8;
 	assert(wait_slot(&fb, 0, 20, true) == -ESTALE);
 	status->generation = 7; status->flags = 1;
@@ -242,7 +243,7 @@ int main(void)
 	assert(lock_until(&fb, 10, true) == -EAGAIN && jiffies == 0);
 	assert(lock_until(&fb, 10, false) == -ETIMEDOUT && jiffies == 10);
 	pending_signal = true;
-	assert(lock_until(&fb, 20, false) == -ERESTARTSYS);
+	assert(lock_until(&fb, 20, false) == -ETIMEDOUT && jiffies == 20);
 	pending_signal = false; fb.lock.locked = false;
 	assert(lock_until(&fb, 20, false) == 0 && fb.lock.locked);
 
