@@ -1,9 +1,9 @@
 # SG2002 SD-card boot media, defined with disko.
 #
-# The SG2002 ROM is picky: the FAT firmware partition containing fip.bin
-# must start at LBA 1. Use disko's legacy MSDOS table backend so the disk
-# layout itself is declarative instead of patching a generic sd-image after
-# the fact.
+# Retain the vendor-compatible MBR layout, with fip.bin on a small FAT
+# firmware partition. LBA 1 is the vendor convention, not a demonstrated
+# ROM requirement: an aligned FAT partition at LBA 2048 also boots on
+# NanoKVM-PCIe. Keep the layout declarative through disko's table backend.
 {
   config,
   lib,
@@ -188,10 +188,9 @@ in {
     ];
 
     disko = {
-      # The legacy `table` backend is required here because the SG2002 ROM
-      # expects a FAT partition starting at LBA 1. It can create/format/mount
-      # that layout, but its generated NixOS fileSystems config is not reliable
-      # for this table type, so fileSystems are declared explicitly below.
+      # The legacy `table` backend preserves the vendor-compatible MBR
+      # layout. Its generated NixOS fileSystems config is not reliable for
+      # this table type, so fileSystems are declared explicitly below.
       enableConfig = false;
 
       imageBuilder = {

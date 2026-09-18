@@ -7,8 +7,13 @@ let
       services = stage1.systemd.services;
       lcd = builtins.elem "picoclawLcd" config.sg2002.auxCore.peripherals;
       consoles = builtins.filter (lib.hasPrefix "console=") config.boot.kernelParams;
+      uploader = pkgs.sg2002-usb-boot-for config.system.build.fipFastboot;
     in
     assert lib.all (a: a.assertion) config.assertions;
+    # Force native launcher evaluation for both plain and C906L FIPs; bundle
+    # builds copy the runner source and do not exercise this package factory.
+    assert builtins.isString uploader.drvPath;
+    assert (uploader.c906lContract != null) == config.sg2002.auxCore.enable;
     assert stage1.systemd.enable;
     assert stage1.systemd.root == null;
     assert stage1.network.ssh.enable;

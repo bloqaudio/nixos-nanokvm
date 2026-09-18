@@ -14,6 +14,8 @@ access to GPIOA.
 The image uses mainline U-Boot/extlinux, a FAT firmware partition beginning at
 LBA 1, and a Btrfs root partition.  It is a 4 GiB raw image; use an 8 GiB or
 larger card.  On first boot the root partition grows to fill the card.
+See [SD boot layout validation](sg2002-sd-boot-layout.md) for the MBR choice
+and the separate NanoKVM-PCIe GPT experiment.
 
 This composition has build and contract validation.  Simultaneous LCD and
 Wi-Fi behaviour still requires an on-hardware SD boot validation; do not treat

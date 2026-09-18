@@ -647,6 +647,9 @@
             import ./tests/sg2002-c906l-picoclaw-sd-eval.nix {
               inherit pkgs;
               config = picoclawSdConfig;
+              pcieConfig = checkedConfig (lib.findFirst
+                (entry: entry.path == [ "pcie" "mainline" "sd" ])
+                (throw "PCIe SD catalog entry is missing") catalog);
             };
           sg2002-initrd-boot = import ./tests/usb-initrd-boot.nix {
             inherit pkgs nixpkgs;

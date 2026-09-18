@@ -1,4 +1,4 @@
-{ pkgs, config }:
+{ pkgs, config, pcieConfig }:
 
 let
   requiredInitrdModules = [
@@ -20,6 +20,17 @@ assert config.sg2002.wifi.enable;
 assert config.sg2002.wifi.wpaConfRuntimePath
   == "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf";
 assert !config.sg2002.usbGadget.console.enable;
+assert config.sg2002.usbGadget.stage2.enable;
+assert config.sg2002.usbGadget.stage2.preserveInitrd;
+assert pcieConfig.sg2002.usbGadget.stage2.enable;
+assert !pcieConfig.sg2002.usbGadget.stage2.preserveInitrd;
+# Both handoff strategies run before sysinit; DefaultDependencies belongs
+# in [Unit], not [Service], or systemd ignores it and creates an order cycle.
+assert pkgs.lib.all (c:
+  !c.systemd.services.usb-gadget.unitConfig.DefaultDependencies
+  && !(c.systemd.services.usb-gadget.serviceConfig ? DefaultDependencies)
+  && builtins.elem "sysinit.target" c.systemd.services.usb-gadget.before
+) [ config pcieConfig ];
 assert !builtins.elem "console=ttyGS0,115200" config.boot.kernelParams;
 assert builtins.elem "console=tty0" config.boot.kernelParams;
 assert builtins.elem "fbcon=nodefer" config.boot.kernelParams;

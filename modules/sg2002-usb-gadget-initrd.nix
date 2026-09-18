@@ -381,9 +381,7 @@ in {
             requires = ["sys-kernel-config.mount"];
             restartIfChanged = false;
             stopIfChanged = false;
-            serviceConfig = stage2ServiceDef.serviceConfig // {
-              DefaultDependencies = false;
-            };
+            unitConfig.DefaultDependencies = false;
           };
           usb-rx-guard = lib.mkIf rxGuardCfg.enable {
             description = "Recover a stalled SG2002 USB gadget RX path";

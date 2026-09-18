@@ -667,7 +667,9 @@ in
 
   sg2002-usb-boot-for = mainlineFip:
     final.callPackage ./sg2002/usb-boot {
-      c906lContract = mainlineFip.c906lContract;
+      # The shared Python runner imports the ABI module even without C906L.
+      # FIPs carrying firmware still require their exact contract below.
+      c906lContract = mainlineFip.c906lContract or final.sg2002-c906l-contract;
       sg2002-cv181x-usb-dl = final.sg2002-cv181x-usb-dl;
       sg2002-fip = final.sg2002-fip;
       sg2002-fip-mainline-uboot = mainlineFip;
