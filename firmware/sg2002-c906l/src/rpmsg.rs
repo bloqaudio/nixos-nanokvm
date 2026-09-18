@@ -303,8 +303,6 @@ fn decode_header(input: &[u8; RPMSG_HEADER_BYTES]) -> RpmsgHeader {
 
 struct Transport {
     #[cfg(feature = "picoclaw-lcd")]
-    lcd: crate::lcd_service::Service,
-    #[cfg(feature = "picoclaw-lcd")]
     lcd_announced: bool,
     online: bool,
     announced: bool,
@@ -319,8 +317,6 @@ struct Transport {
 impl Transport {
     const fn new() -> Self {
         Self {
-            #[cfg(feature = "picoclaw-lcd")]
-            lcd: crate::lcd_service::Service::new(),
             #[cfg(feature = "picoclaw-lcd")]
             lcd_announced: false,
             online: false,
@@ -478,7 +474,7 @@ impl Transport {
                 read_bytes(buffer + RPMSG_HEADER_BYTES, &mut payload[..payload_len]);
                 // Read-only status request: retrying when no RX descriptor is
                 // available cannot submit or duplicate display work.
-                let response = self.lcd.reply(&payload[..payload_len]);
+                let response = crate::lcd_service::reply(&payload[..payload_len]);
                 if !self.send(
                     crate::contract::PICOCLAW_LCD_SERVICE_ADDRESS as u32,
                     header.source,
@@ -499,9 +495,6 @@ impl Transport {
     }
 
     fn service(&mut self) {
-        #[cfg(feature = "picoclaw-lcd")]
-        // SAFETY: this function runs only inside the live FreeRTOS task.
-        self.lcd.step(unsafe { crate::c906l_ticks() });
         let online = vdev_online();
         if !online {
             self.online = false;

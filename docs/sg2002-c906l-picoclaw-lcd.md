@@ -31,6 +31,13 @@ the SPI transfer has finished; without the panel's tearing-effect signal this
 does not establish tear-free presentation or a physical vertical-blank event.
 The nominal DRM mode must not be interpreted as a guaranteed refresh rate.
 
+Frame data leaves the C906L as one transmit-only 16-bit SPI stream per frame
+at 187.5 MHz / 4 = 46.875 MHz (Sipeed's released image drives the same panel at
+45 MHz). Measured on a PicoClaw from the SD image with `sg2002-c906l-drm-test
+/dev/dri/card0 700`: 40 ms per acknowledged full frame, of which roughly 20 ms
+is SPI wire time; the remainder is Linux's RGB565 conversion and its 5 ms
+completion poll. Byte-sized control transactions keep the preloaded-FIFO path.
+
 The standalone USB initrd uses this same DRM fbdev layer for a best-effort
 kernel console. `console=tty0` records boot text in the foreground virtual
 terminal, and `fbcon=nodefer` requests takeover as soon as the framebuffer is
@@ -50,7 +57,7 @@ profile ID 17, and final capabilities `0x8b`. Its immutable digest covers the
 physical resources, panel geometry, pin preconditions and framebuffer protocol.
 It also covers the firmware-mediated Wi-Fi power protocol. The combined
 configuration has digest
-`2ff551e54e51c569cc0539a4ab93e47438666288b861e248a5c77cc53ab92fd2`;
+`2b8d53933053abe380f5a096eb00a1ddc092a74ea2b2c7c17d599bad8840a187`;
 older LCD-only firmware deliberately fails this identity check.
 
 | Resource | Address | Size |
@@ -122,9 +129,10 @@ and credentials remain the image's policy (`wifi-aic8800.nix`,
 This standard supply relationship follows the Linux
 [regulator framework](https://docs.kernel.org/power/regulator/overview.html).
 
-The Rust panel driver sends at most 32 complete, eight-byte SPI transactions
-per service step, with scheduler-backed initialization deadlines. Mailbox and
-heartbeat processing stay independent. A terminal panel fault switches the
+The Rust panel driver sends panel commands as complete eight-byte SPI
+transactions, at most 32 per service step, and each frame as one transmit-only
+stream, with scheduler-backed initialization deadlines. Mailbox and heartbeat
+processing stay independent. A terminal panel fault switches the
 backlight off and retains the lease until whole-board reset. Runtime unbind,
 module unload, suspend and C906L reset are not validated recovery paths.
 

@@ -98,7 +98,7 @@ def main() -> None:
         require(
             main_body.index("let mut status = initial_status();")
             < main_body.index("lcd_service::initialize_generation(status.generation);")
-            < main_body.index("c906l_platform_start(control_task, rpmsg_task)"),
+            < main_body.index("c906l_platform_start(control_task, rpmsg_task, LCD_TASK)"),
             "LCD boot generation must be initialized before starting either task",
         )
         require(

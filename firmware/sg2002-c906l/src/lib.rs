@@ -49,6 +49,7 @@ unsafe extern "C" {
     fn c906l_platform_start(
         control_task: extern "C" fn(*mut c_void),
         rpmsg_task: extern "C" fn(*mut c_void),
+        lcd_task: Option<extern "C" fn(*mut c_void)>,
     ) -> c_int;
     fn c906l_request_receive(word: *mut u64, timeout_ticks: u32) -> c_int;
     fn c906l_response_send(word: u64) -> c_int;
@@ -330,6 +331,15 @@ extern "C" fn rpmsg_task(_argument: *mut c_void) {
     rpmsg::run()
 }
 
+#[cfg(feature = "picoclaw-lcd")]
+extern "C" fn lcd_task(_argument: *mut c_void) {
+    lcd_service::run()
+}
+#[cfg(feature = "picoclaw-lcd")]
+const LCD_TASK: Option<extern "C" fn(*mut c_void)> = Some(lcd_task);
+#[cfg(not(feature = "picoclaw-lcd"))]
+const LCD_TASK: Option<extern "C" fn(*mut c_void)> = None;
+
 /// Coarse FreeRTOS-backed delay for portable `embedded-hal` drivers.
 ///
 /// The scheduler tick is 5 ms. Sub-tick delays round up; timing-sensitive
@@ -367,9 +377,9 @@ pub extern "C" fn c906l_rust_main() -> ! {
         }
     }
 
-    // SAFETY: both tasks have the exact C ABI and never return. The shim owns
+    // SAFETY: every task has the exact C ABI and never returns. The shim owns
     // their queues and starts the scheduler only after all setup succeeds.
-    let _error = unsafe { c906l_platform_start(control_task, rpmsg_task) };
+    let _error = unsafe { c906l_platform_start(control_task, rpmsg_task, LCD_TASK) };
 
     // SAFETY: platform startup may have recorded a terminal lock failure
     // before the scheduler and control task could publish diagnostics.

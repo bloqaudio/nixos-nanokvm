@@ -104,7 +104,9 @@ trait Io {
     fn reset(&mut self, high: bool) -> Result<(), Error>;
     fn backlight(&mut self, enabled: bool) -> Result<(), Error>;
     fn write(&mut self, bytes: &[u8]) -> Result<(), Error>;
-    fn frame_chunk(&mut self, slot: u8, offset: usize, bytes: &mut [u8]) -> Result<(), Error>;
+    /// Stream `count` pixels of a frame slot starting at `first`, as one
+    /// transmit-only SPI burst with D/C already high.
+    fn frame_stream(&mut self, slot: u8, first: u32, count: u32) -> Result<(), Error>;
 }
 
 struct Hardware {
@@ -141,18 +143,30 @@ impl Io for Hardware {
             .transfer_in_place(&mut scratch[..bytes.len()], self.poll_budget)
             .map_err(Error::Spi)
     }
-    fn frame_chunk(&mut self, slot: u8, offset: usize, bytes: &mut [u8]) -> Result<(), Error> {
-        if slot > 1 || offset > FRAME_BYTES || bytes.len() > FRAME_BYTES - offset {
+    fn frame_stream(&mut self, slot: u8, first: u32, count: u32) -> Result<(), Error> {
+        let pixels = (FRAME_BYTES / 2) as u32;
+        if slot > 1 || first > pixels || count > pixels - first {
             return Err(Error::Bounds);
         }
-        let address = self.framebuffer_base + usize::from(slot) * self.framebuffer_stride + offset;
-        for (index, byte) in bytes.iter_mut().enumerate() {
+        let base = self.framebuffer_base + usize::from(slot) * self.framebuffer_stride;
+        let words = (first..first + count).map(|pixel| {
+            // Slot bytes are already in wire order (high byte first); the
+            // 16-bit frame shifts MSB first, so assemble big-endian.
+            let address = base + pixel as usize * 2;
             // SAFETY: Panel::new's caller guarantees both permanently mapped
-            // slots and frame ownership/cache invalidation before submission.
-            // The validated offset/length stays inside one 115200-byte frame.
-            *byte = unsafe { core::ptr::read_volatile((address + index) as *const u8) };
-        }
-        Ok(())
+            // slots and frame ownership/cache invalidation before submission;
+            // the validated range stays inside one 115200-byte frame.
+            let bytes = unsafe {
+                [
+                    core::ptr::read_volatile(address as *const u8),
+                    core::ptr::read_volatile((address + 1) as *const u8),
+                ]
+            };
+            u16::from_be_bytes(bytes)
+        });
+        self.spi
+            .stream_words(words, self.poll_budget)
+            .map_err(Error::Spi)
     }
 }
 
@@ -503,30 +517,31 @@ impl<I: Io> Engine<I> {
                         _ => {
                             let remaining =
                                 u32::from(render.width) * u32::from(render.height) - render.pixel;
+                            if let Pixels::Frame(slot) = render.source {
+                                // One burst per frame (~20 ms at 47 MHz) must
+                                // stay well inside the heartbeat period.
+                                self.io.dc(true)?;
+                                self.io.frame_stream(slot, render.pixel, remaining)?;
+                                self.io.backlight(self.backlight_requested)?;
+                                self.complete();
+                                return Ok(());
+                            }
                             let pixels = remaining.min(4);
                             let mut bytes = [0; 8];
-                            if let Pixels::Frame(slot) = render.source {
-                                self.io.frame_chunk(
-                                    slot,
-                                    render.pixel as usize * 2,
-                                    &mut bytes[..pixels as usize * 2],
-                                )?;
-                            } else {
-                                for index in 0..pixels {
-                                    let position = render.pixel + index;
-                                    let color = match render.source {
-                                        Pixels::Demo(seed) => demo_pixel(
-                                            (position % u32::from(WIDTH)) as u16,
-                                            (position / u32::from(WIDTH)) as u16,
-                                            seed,
-                                        ),
-                                        Pixels::Solid(color) => color,
-                                        Pixels::Frame(_) => unreachable!(),
-                                    }
-                                    .to_be_bytes();
-                                    bytes[index as usize * 2..index as usize * 2 + 2]
-                                        .copy_from_slice(&color);
+                            for index in 0..pixels {
+                                let position = render.pixel + index;
+                                let color = match render.source {
+                                    Pixels::Demo(seed) => demo_pixel(
+                                        (position % u32::from(WIDTH)) as u16,
+                                        (position / u32::from(WIDTH)) as u16,
+                                        seed,
+                                    ),
+                                    Pixels::Solid(color) => color,
+                                    Pixels::Frame(_) => unreachable!(),
                                 }
+                                .to_be_bytes();
+                                bytes[index as usize * 2..index as usize * 2 + 2]
+                                    .copy_from_slice(&color);
                             }
                             self.write(true, &bytes[..pixels as usize * 2])?;
                             render.pixel += pixels;
@@ -710,13 +725,15 @@ mod tests {
                 .push(Event::Write(self.dc, bytes.to_vec(), self.now));
             Ok(())
         }
-        fn frame_chunk(&mut self, slot: u8, offset: usize, bytes: &mut [u8]) -> Result<(), Error> {
-            assert!(slot < 2 && bytes.len() <= 8 && offset + bytes.len() <= FRAME_BYTES);
-            assert_eq!(offset % 2, 0);
-            self.events.push(Event::Frame(slot, offset, bytes.len()));
-            for (i, byte) in bytes.iter_mut().enumerate() {
-                *byte = (offset + i) as u8 ^ slot;
+        fn frame_stream(&mut self, slot: u8, first: u32, count: u32) -> Result<(), Error> {
+            assert!(slot < 2 && (first + count) as usize * 2 <= FRAME_BYTES);
+            assert_eq!(self.events.last(), Some(&Event::Dc(true)));
+            if self.fail_after == Some(self.writes) {
+                return Err(Error::Spi(spi::Error::Timeout));
             }
+            self.writes += 1;
+            self.events
+                .push(Event::Frame(slot, first as usize, count as usize));
             Ok(())
         }
     }
@@ -911,30 +928,33 @@ mod tests {
         assert_eq!(data[6], (true, vec![0xab, 0xcd]));
     }
     #[test]
-    fn frame_reads_only_selected_slot_in_order_under_step_budget() {
+    fn frame_streams_selected_slot_in_one_step() {
         let (mut engine, now) = initialized(0);
         engine.io.events.clear();
         engine.submit(19, Job::Frame { slot: 1 }).unwrap();
-        for i in 1..1000 {
-            step(&mut engine, now + i);
-            if engine.status.state == State::Ready {
-                break;
-            }
-        }
+        step(&mut engine, now + 1);
+        assert_eq!(engine.status.state, State::Ready);
         assert_eq!(engine.status.completed_sequence, 19);
-        let mut next_offset = 0;
-        for event in &engine.io.events {
-            if let Event::Frame(slot, offset, length) = event {
-                assert_eq!(*slot, 1);
-                assert_eq!(*offset, next_offset);
-                next_offset += length;
-            }
-        }
-        assert_eq!(next_offset, FRAME_BYTES);
-        let output = writes(&engine);
-        assert_eq!(output.len(), 5 + FRAME_BYTES / 8);
-        assert_eq!(output[5], (true, vec![1, 0, 3, 2, 5, 4, 7, 6]));
-        assert_eq!(output.last().unwrap().1.len(), 8);
+        let frames: Vec<_> = engine
+            .io
+            .events
+            .iter()
+            .filter(|event| matches!(event, Event::Frame(..)))
+            .collect();
+        assert_eq!(frames, vec![&Event::Frame(1, 0, FRAME_BYTES / 2)]);
+        // Window setup and RAMWR go through byte transactions; no pixel bytes do.
+        assert_eq!(writes(&engine).len(), 5);
+        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(true)));
+    }
+    #[test]
+    fn frame_stream_failure_is_sticky_and_fails_dark() {
+        let (mut engine, now) = initialized(0);
+        engine.submit(3, Job::Frame { slot: 0 }).unwrap();
+        engine.io.fail_after = Some(engine.io.writes + 5);
+        step(&mut engine, now + 1);
+        assert_eq!(engine.status.state, State::Fault);
+        assert_eq!(engine.status.completed_sequence, 0);
+        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(false)));
     }
     #[test]
     fn spi_failure_is_sticky_and_fails_dark_without_completing_job() {
