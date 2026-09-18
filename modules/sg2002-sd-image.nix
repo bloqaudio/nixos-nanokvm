@@ -103,11 +103,18 @@
   installBootLoader = pkgs.writeShellScript "install-sg2002-extlinux-boot" ''
     set -euo pipefail
 
-    ${pkgs.coreutils}/bin/mkdir -p /boot/nixos
+    ${pkgs.coreutils}/bin/mkdir -p /boot/nixos /boot/extlinux
     # Keep the rest of the small root compressed, but give U-Boot plain,
     # compact extents. This directory property is inherited by new payloads;
     # --reflink=never above ensures each installed generation is newly laid out.
-    ${pkgs.btrfs-progs}/bin/btrfs property set /boot/nixos compression none
+    # The object type is known: these are directory inodes. Specifying it
+    # avoids the FS_INFO autodetection ioctl unsupported by qemu-user during
+    # cross-image creation; btrfs still checks the filesystem before setting
+    # the compression xattr.
+    ${pkgs.btrfs-progs}/bin/btrfs property set -t inode /boot/nixos compression none
+    # extlinux.conf is also read by U-Boot, and its temporary replacement
+    # must inherit the same policy before the builder creates it.
+    ${pkgs.btrfs-progs}/bin/btrfs property set -t inode /boot/extlinux compression none
     ${targetExtlinuxBuilder} ${targetExtlinuxBuilderArgs} -c "$@" -d /boot
 
     if [ -d /firmware ]; then
@@ -142,8 +149,11 @@ in {
     # The SG2002 does not need nixpkgs' generic SD-card initrd module set.
     sg2002.initrd.pruneKernelModules = true;
     # The board-support module force-prunes the generic initrd module set, so
-    # supportedFilesystems alone cannot retain a modular Btrfs driver.
-    sg2002.initrd.availableKernelModules = ["btrfs"];
+    # supportedFilesystems alone cannot retain modular filesystem drivers.
+    # Retain mmc_block for modular kernels on every carrier as well (the
+    # current mainline kernel builds it in), not only in the PCIe board module.
+    sg2002.initrd.availableKernelModules = [ "btrfs" "mmc_block" ];
+    sg2002.initrd.kernelModules = [ "mmc_block" ];
 
     # These deployed SD images are not self-reconfiguring systems. Besides
     # shrinking the target, disabling the installer tools avoids pulling

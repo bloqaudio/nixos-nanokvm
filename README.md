@@ -1,8 +1,24 @@
 # nixos-nanokvm
 
-Reusable SG2002 / Sipeed NanoKVM hardware support and a standalone USB-booted
-NixOS initrd. The public SG2002 images run entirely in RAM: **no stage 2,
-SD card, NFS, NBD, or exported Nix store**.
+Reusable SG2002 / Sipeed NanoKVM hardware support, with persistent NixOS SD
+images and a standalone USB-booted initrd. USB initrd images run entirely in
+RAM: **no stage 2, SD card, NFS, NBD, or exported Nix store** is required.
+
+## Persistent SD boot
+
+The PicoClaw SD image boots a complete NixOS system with a writable Btrfs root,
+SSH, Wi-Fi and the C906L-backed LCD:
+
+```sh
+nix build .#boards.picoclaw.mainline.sd.c906l-lcd
+```
+
+The raw image is under `result/sd-image/`. The initial login is `root` with
+password `nixos-nanokvm`; change this shared development password immediately.
+See [the SD guide](docs/sg2002-c906l-picoclaw-sd-image.md) for SSH keys, Wi-Fi
+provisioning and writing the card. Mainline wired SD targets also remain
+available as `boards.licheerv.mainline.sd` and `boards.pcie.mainline.sd`;
+their initial password is `nixos`.
 
 ## USB boot
 
@@ -61,16 +77,16 @@ validate LCD, SDIO Wi-Fi, USB gadget, audio or camera hardware.
 
 ## Downstream integration
 
-SD and network-root deployment policy is not shipped by this repository.
-The former SG2002 `live`, `debug`, `kernel-test` and `sd` outputs are retired;
-use the standalone initrd targets for USB boot. Projects needing persistent
-or network-root systems can compose the reusable hardware modules with their
-own deployment profiles and host services.
+Persistent SD images and RAM-only USB initrd images are both public outputs.
+The former SG2002 network-root `live`, `debug` and `kernel-test` outputs are
+retired; use the standalone initrd targets for USB boot. Host-specific
+network-root profiles and NFS/NBD services belong to consuming projects.
 
 Reusable `boards/`, `platform/` and hardware `modules/` remain here.
 `nixosModules.boards.<board>.mainline.initrd.default` is the new importable
-RAM-only composition; stage-2 consumers should compose hardware modules with
-their own profile, not layer a root filesystem onto it. `nixosModules.default` still exposes the
+RAM-only composition. Persistent consumers can use the corresponding `sd`
+module or compose the hardware modules with their own profile; do not layer a
+root filesystem onto the initrd-only profile. `nixosModules.default` still exposes the
 NanoKVM service and package overlay for other consuming configurations.
 SpacemiT K3 outputs are unchanged by this SG2002 separation.
 
@@ -80,15 +96,17 @@ SpacemiT K3 outputs are unchanged by this SG2002 separation.
 | --- | --- |
 | `boards/`, `platform/` | Carrier and SoC hardware definitions |
 | `profiles/usb-initrd.nix` | RAM-only SSH/network/peripheral environment |
-| `lib/catalog.nix` | Public SG2002 initrd targets |
+| `profiles/sd-image-*.nix` | Persistent NixOS SD compositions |
+| `lib/catalog.nix` | Public SG2002 USB and SD targets |
 | `lib/initrd-artifacts.nix` | Bounded FIT, upload runner and portable bundle |
 | `pkgs/` | Kernels, drivers, firmware, toolchains and application packages |
 | `tests/` | Module, firmware, DT and uploader regression checks |
 
 `hydraJobs.x86_64-linux` builds all catalog images, the uploader regression
 tests, the 256 MiB boot test, and hardware checks. CI images are deliberately
-locked: they contain no authorized SSH keys or Wi-Fi credentials. Build your
-own keyed bundle as above; its kernel, firmware and tools can reuse CI's cache.
+free of personal SSH keys and Wi-Fi credentials. USB CI bundles are locked;
+SD CI images use the documented initial development password. Build a keyed
+USB bundle as above; its kernel, firmware and tools can reuse CI's cache.
 
 For application patches, update `patches/nanokvm/`; kernel and bootloader
 patches live under `pkgs/sg2002/`. Keep reusable hardware fixes here and

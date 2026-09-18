@@ -347,6 +347,8 @@
           artifactBuilder.initrd = entry:
             mkInitrdArtifacts pkgs
               (lib.getAttrFromPath entry.path boardSystems).config;
+          artifactBuilder.sd = entry:
+            (lib.getAttrFromPath entry.path boardSystems).config.system.build.sdImage;
 
           # Walk the catalog and produce the nested legacyPackages.boards tree.
           boardsTree =
@@ -481,8 +483,8 @@
         self.legacyPackages;
 
       # Never let an impure evaluator's local credentials enter CI images.
-      # These bundles exercise the real image builder but intentionally have
-      # no login keys. Users build their own keyed bundle; shared dependencies
+      # USB bundles intentionally have no login keys; persistent SD images
+      # retain their documented development password. Shared dependencies
       # (kernel, firmware, modules, tools) retain the same cached store paths.
       hydraJobs.x86_64-linux = let
         ciPkgs = import nixpkgs {
@@ -507,14 +509,20 @@
                   boot.initrd.network.ssh.authorizedKeyFiles = lib.mkForce [
                     ./tests/fixtures/empty-authorized-keys
                   ];
+                  sg2002.authorizedKeys = lib.mkForce [ ];
+                  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [ ];
+                  users.users.root.openssh.authorizedKeys.keyFiles = lib.mkForce [ ];
                   sg2002.wifi.wpaConf = lib.mkForce null;
                 })
               ];
             };
           in
-          assert board.config.boot.initrd.systemd.contents."/etc/ssh/authorized_keys.d/root".text == "";
           assert board.config.sg2002.wifi.wpaConf == null;
-          (ciArtifacts ciPkgs board.config).bundle;
+          if entry.artifact == "sd" then
+            board.config.system.build.sdImage
+          else
+            assert board.config.boot.initrd.systemd.contents."/etc/ssh/authorized_keys.d/root".text == "";
+            (ciArtifacts ciPkgs board.config).bundle;
       in {
         images = builtins.listToAttrs (map (entry: {
           name = entry.tag;
@@ -526,6 +534,7 @@
         checks = lib.getAttrs [
           "sg2002-initrd-eval"
           "sg2002-initrd-boot"
+          "sg2002-c906l-picoclaw-sd-module-eval"
           "sg2002-usb-boot-runner"
           "sg2002-h264-bridge-colour"
           "sg2002-vpss-state"
@@ -566,6 +575,9 @@
             catalog;
           picoclawLcdConfig =
             checkedConfig picoclawLcdEntry;
+          picoclawSdConfig = checkedConfig (lib.findFirst
+            (entry: entry.path == [ "picoclaw" "mainline" "sd" "c906l-lcd" ])
+            (throw "PicoClaw SD catalog entry is missing") catalog);
           failedAuxCoreEval = module:
             builtins.tryEval ((mkBoard {
               board = "licheerv-nano-w";
@@ -629,8 +641,13 @@
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           sg2002-initrd-eval = import ./tests/usb-initrd-eval.nix {
             inherit pkgs lib;
-            configs = map checkedConfig catalog;
+            configs = map checkedConfig (builtins.filter (entry: entry.artifact == "initrd") catalog);
           };
+          sg2002-c906l-picoclaw-sd-module-eval =
+            import ./tests/sg2002-c906l-picoclaw-sd-eval.nix {
+              inherit pkgs;
+              config = picoclawSdConfig;
+            };
           sg2002-initrd-boot = import ./tests/usb-initrd-boot.nix {
             inherit pkgs nixpkgs;
             board = boardSystems.picoclaw.mainline.initrd.default;

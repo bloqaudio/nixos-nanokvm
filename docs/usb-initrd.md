@@ -119,8 +119,9 @@ authenticated SSH. These are standard Linux
 [fbcon](https://docs.kernel.org/fb/fbcon.html) settings, with UART retained as
 `/dev/console`.
 
-SD/NFS/NBD deployment policy and root-serving services are deliberately outside
-this repository. They are not dependencies of the standalone USB workflow.
+For a persistent system, use the separate [SD image](sg2002-c906l-picoclaw-sd-image.md).
+Host-specific NFS/NBD deployment policy and root-serving services are outside
+this repository and are not dependencies of either standalone workflow.
 
 ## Verification
 
@@ -136,8 +137,8 @@ page flips, ALSA playback/capture and RPMsg checks. See the
 [2026-09-18 hardware report](usb-initrd-validation-20260918.md) for timings,
 the tested identities and remaining limitations.
 
-Hydra builds every catalog bundle under `hydraJobs.x86_64-linux.images`, plus
-the VM, uploader and hardware regression checks. Those CI bundles intentionally
+Hydra builds every catalog image under `hydraJobs.x86_64-linux.images`, plus
+the VM, uploader and hardware regression checks. USB CI bundles intentionally
 have an empty authorized-keys file and no Wi-Fi credentials: **you cannot log
 into them**. Build your own bundle with your public keys using the command
 above. The expensive kernel, firmware and tools remain shared dependencies;

@@ -1,4 +1,4 @@
-# Public SG2002 images are RAM-only; deployment policy belongs to consumers.
+# Reusable RAM-only USB and persistent SD images. Host services stay separate.
 { lib }:
 let
   wifi = [
@@ -13,6 +13,13 @@ let
     tag = "${name}-${variant}";
     inherit boardName mixins modules;
   };
+  sd = name: boardName: pathTail: profile: mixins: modules: {
+    path = [ name "mainline" "sd" ] ++ pathTail;
+    kernel = "mainline";
+    artifact = "sd";
+    tag = "${name}-sd";
+    inherit boardName profile mixins modules;
+  };
 in [
   (entry "licheerv" "licheerv-nano-w" "default" wifi [ ])
   (entry "pcie" "nanokvm-pcie" "default" wifi [ ])
@@ -26,4 +33,19 @@ in [
       };
     })
   ])
+  (sd "picoclaw" "licheerv-nano-picoclaw" [ "c906l-lcd" ]
+    "sd-image-picoclaw-c906l" [ ] [ ])
+  (sd "pcie" "nanokvm-pcie" [ ] "sd-image-mainline" [ ] [ ])
+  (sd "licheerv" "licheerv-nano-w" [ ] "sd-image-mainline"
+    [ ] [ ({ pkgs, ... }: {
+      sg2002.fdt = pkgs.sg2002-dtb-mainline-eth;
+      systemd.network = {
+        enable = true;
+        networks."20-eth0" = {
+          matchConfig.Name = "eth0";
+          networkConfig = { DHCP = "yes"; IPv6AcceptRA = true; };
+          linkConfig.RequiredForOnline = "no";
+        };
+      };
+    }) ])
 ]

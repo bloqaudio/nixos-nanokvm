@@ -1,7 +1,8 @@
 # PicoClaw C906L LCD SD image
 
-Historical stage-2 instructions: the SD catalog is no longer published by
-this repository, so the commands below are retained only as historical notes. For a shareable, diskless image use [the standalone USB initrd](usb-initrd.md).
+This persistent NixOS image is independent of the
+[RAM-only USB initrd](usb-initrd.md). Both remain supported build targets;
+neither requires a host NFS or NBD server.
 
 `boards.picoclaw.mainline.sd.c906l-lcd` builds a persistent, mainline-kernel
 SD image for the LicheeRV-Nano PicoClaw.  Linux renders through the standard
@@ -26,14 +27,42 @@ The standalone image builds without a developer SSH key:
 nix build .#boards.picoclaw.mainline.sd.c906l-lcd
 ```
 
+To include authorized public SSH keys:
+
+```sh
+NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/id_ed25519.pub" \
+  nix build --impure .#boards.picoclaw.mainline.sd.c906l-lcd
+```
+
 The image is under `result/sd-image/`. Log in as `root` with password
 `nixos-nanokvm`, over SSH or the physical console. Only its salted password
 hash is stored in the profile. This is a shared default for the public image;
 change it with `passwd` after boot. Downstream configurations can override
 `users.users.root.hashedPassword` and the OpenSSH authentication settings.
+Adding public keys does not disable this initial password automatically. Keep
+the default image on a trusted network until the password is changed.
 
 The board generates a unique Ed25519 SSH host key on its writable SD card at
 first boot; do not copy a host key from a USB live image.
+
+Hydra builds the credential-free SD image as
+`hydraJobs.x86_64-linux.images.picoclaw-sd`. It retains the same documented
+initial password, but never includes local public keys or Wi-Fi credentials.
+
+## Boot files and LCD console
+
+The root filesystem uses Btrfs compression, but both `/boot/nixos` and
+`/boot/extlinux` are marked uncompressed **before** boot files are created.
+This includes the temporary file atomically renamed to `extlinux.conf`.
+It avoids requiring U-Boot's Btrfs zstd reader for these files, addressing the
+reported error while reading `/boot/extlinux/extlinux.conf`. Existing cards
+need the updated boot installer or a newly built image; a USB upload does not
+modify an old card.
+
+The LCD uses standard fbcon when its validated firmware transport is ready,
+with the 4x6 font and UART retained as the primary console. The display probes
+through udev without blocking the forced-module boot path. Unlike the
+RAM-only USB environment, stage 2 provides the usual authenticated getty.
 
 ## Wi-Fi credentials
 
@@ -116,3 +145,22 @@ networkctl status wlan0
 The DRM test draws changing checkerboards, waits for page-flip completion, and
 restores the previous mode.  Its completion establishes the Linux-to-C906L
 path; inspect the panel itself for colour/orientation confirmation.
+
+## Build validation: 2026-09-18
+
+The restored PicoClaw, LicheeRV and PCIe mainline SD images all completed their
+full image builds. The module check covers persistent root, switch-root,
+authenticated SSH/getty, the combined firmware contract and both watchdog
+stages. The USB initrd checks continue to pass independently.
+
+Read-only inspection of the PicoClaw image confirmed a 4 GiB MBR image, the
+firmware partition starting at sector 1, and the Btrfs root at sector 49152.
+Both boot directories reported `compression=none`; extent inspection found
+all four boot files (including `extlinux.conf`) entirely uncompressed. The
+installer uses the explicit Btrfs `inode` object type so its cross-architecture
+execution does not depend on QEMU translating the filesystem autodetection
+ioctl. The usual filesystem check and xattr operation remain in place.
+
+This is image-build and filesystem validation, **not a physical SD boot**.
+No card was overwritten. The combined Wi-Fi/LCD hardware test described in
+the [USB report](usb-initrd-validation-20260918.md) used the RAM-only image.
