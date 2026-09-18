@@ -523,36 +523,54 @@
           else
             assert board.config.boot.initrd.systemd.contents."/etc/ssh/authorized_keys.d/root".text == "";
             (ciArtifacts ciPkgs board.config).bundle;
-      in {
-        images = builtins.listToAttrs (map (entry: {
-          name = entry.tag;
-          value = imageJob entry;
-        }) catalog);
-        packages = {
-          nanokvm-server = self.packages.x86_64-linux.nanokvm-server;
+
+        # One link farm per job family, so that a single commit status can
+        # stand for the whole family. Hydra's GitHub status plugin posts
+        # one status per matching build, and if a context were pointed at
+        # every image or check individually the last build to finish would
+        # overwrite whatever came before it, including a failure.
+        mkAggregate = name: jobs:
+          ciPkgs.runCommandLocal "nixos-nanokvm-ci-${name}" { } ''
+            mkdir -p "$out"
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList
+              (job: drv: ''ln -s ${drv} "$out"/${lib.escapeShellArg job}'')
+              jobs)}
+          '';
+
+        jobs = {
+          images = builtins.listToAttrs (map (entry: {
+            name = entry.tag;
+            value = imageJob entry;
+          }) catalog);
+          packages = {
+            nanokvm-server = self.packages.x86_64-linux.nanokvm-server;
+          };
+          checks = lib.getAttrs [
+            "extlinux-try-boot"
+            "sg2002-initrd-eval"
+            "sg2002-initrd-boot"
+            "sg2002-c906l-picoclaw-sd-module-eval"
+            "sg2002-usb-boot-runner"
+            "sg2002-h264-bridge-colour"
+            "sg2002-h264-bridge-c906"
+            "sg2002-c906-tuning"
+            "sg2002-wifi-ack-filter"
+            "sg2002-clock-kunit"
+            "sg2002-cpufreq"
+            "sg2002-pmu"
+            "sg2002-vpss-state"
+            "sg2002-c906l-module-eval"
+            "sg2002-c906l-picoclaw-module-eval"
+            "sg2002-c906l-picoclaw-dtb"
+            "sg2002-c906l-picoclaw-control"
+            "sg2002-c906l-picoclaw-framebuffer"
+            "sg2002-c906l-contract-generator"
+            "sg2002-c906l-rust"
+          ] self.checks.x86_64-linux;
         };
-        checks = lib.getAttrs [
-          "extlinux-try-boot"
-          "sg2002-initrd-eval"
-          "sg2002-initrd-boot"
-          "sg2002-c906l-picoclaw-sd-module-eval"
-          "sg2002-usb-boot-runner"
-          "sg2002-h264-bridge-colour"
-          "sg2002-h264-bridge-c906"
-          "sg2002-c906-tuning"
-          "sg2002-wifi-ack-filter"
-          "sg2002-clock-kunit"
-          "sg2002-cpufreq"
-          "sg2002-pmu"
-          "sg2002-vpss-state"
-          "sg2002-c906l-module-eval"
-          "sg2002-c906l-picoclaw-module-eval"
-          "sg2002-c906l-picoclaw-dtb"
-          "sg2002-c906l-picoclaw-control"
-          "sg2002-c906l-picoclaw-framebuffer"
-          "sg2002-c906l-contract-generator"
-          "sg2002-c906l-rust"
-        ] self.checks.x86_64-linux;
+      in
+      jobs // {
+        ci = lib.mapAttrs mkAggregate jobs;
       };
 
       checks = forAllSystems (pkgs:

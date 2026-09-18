@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: "nix"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    groups:
+      nix-inputs:
+        patterns:
+          - "*"
+        group-by: "dependency-name"
+    ignore:
+      # Only nixpkgs, disko and impermanence are meant to float. The
+      # remaining inputs are vendor sources that the images are built
+      # around; each is pinned to a commit in flake.nix on purpose and a
+      # bot bump would move a blob out from under a working image.
+      #
+      # Sipeed's megarepo: the vendor 5.10 kernel, its DTS/defconfig and
+      # the vendor AIC8800 osdrv tree. Its default branch is not tested
+      # against the vendor kernel profile here; bump it deliberately.
+      - dependency-name: "licheerv-nano-build"
+      # radxa-pkg/aic8800: the out-of-tree Wi-Fi driver is built and
+      # patched against this exact commit; a new head must be re-tested
+      # with the mainline kernel before it ships.
+      - dependency-name: "aic8800-radxa"
+      # AIC8800DC firmware blobs, pinned to the version Sipeed's Buildroot
+      # recipe ships. Firmware and driver versions have to match.
+      - dependency-name: "aic8800-firmware-src"
+      # Sipeed's NanoKVM userspace at the 2.4.1 release commit. The
+      # patches under patches/nanokvm/ apply to this tree only.
+      - dependency-name: "nanokvm-src"
+      # Sophgo's fiptool, which also bundles the FSBL and DDR parameters
+      # under data/. The FIP layout must stay what the boot ROM expects.
+      - dependency-name: "sophgo-fiptool"
