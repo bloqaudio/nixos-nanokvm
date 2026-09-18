@@ -121,3 +121,7 @@ instead of a hand-edited hash. `pkgs/sg2002/linux-mainline/source.nix` is
 the single place the kernel package, the DTB build and the clock KUnit
 suite agree on that version.
 
+Every applied kernel patch carries `origin`, `upstreamStatus`, `dropWhen`
+and `notes` in `patches.nix`, and the file refuses to evaluate if a patch
+has no metadata or metadata outlives its patch. `dropWhen` is the condition
+under which a patch can be deleted; check it when moving to a new kernel.

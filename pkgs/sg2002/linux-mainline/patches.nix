@@ -469,12 +469,6 @@ let
         dw_axi_dmac actually programs.
       '';
     };
-    "dmaengine-dw-axi-dmac-add-cv1800b-support" = {
-      origin = "linux-next";
-      upstreamStatus = "merged";
-      dropWhen = "already present in nixpkgs linux 7.1";
-      notes = "Pair with 0003 — required for I2S capture to function. Kept as metadata only because Linux 7.1 already contains this patch.";
-    };
     "asoc-cv1800b-sound-adc-init-analog-stage" = {
       origin = "local";
       upstreamStatus = "draft";
@@ -943,6 +937,43 @@ let
         capture plus Coda980 state within the proven 32 MiB media pool.
       '';
     };
+    "media-i2c-galaxycore-gc4653" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "A GC4653 driver lands in drivers/media/i2c";
+      notes = ''
+        Sensor driver for the GalaxyCore GC4653 on the LicheeRV camera
+        carrier. Written here because no upstream driver exists.
+      '';
+    };
+    "media-sophgo-sg2002-csi-capture-raw-sources" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The upstream SG2002 CSI capture driver accepts RAW Bayer sources";
+      notes = ''
+        Teaches the CSI capture path to take RAW Bayer from a sensor rather
+        than only the LT6911 YUV route. Folded into the SG2002 CSI capture
+        series before submission.
+      '';
+    };
+    "media-sophgo-sg2002-csi-vendor-deskew-codes" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Upstream CSI lane setup covers two-lane RAW sensors";
+      notes = ''
+        The GC4653 uses two physical data lanes; match the vendor cif
+        driver's deskew and lane configuration for that case.
+      '';
+    };
+    "media-sophgo-sg2002-csi-advertise-repacked-raw" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "Upstream advertises the repacked RAW formats the VI produces";
+      notes = ''
+        Report the repacked RAW pixel formats the capture hardware actually
+        emits, so userspace negotiates a format the VI can deliver.
+      '';
+    };
     "media-sophgo-cap-sg2002-csi-capture-buffer-count" = {
       origin = "local";
       upstreamStatus = "draft";
@@ -955,7 +986,20 @@ let
       '';
     };
   };
+  # Every applied patch documents where it came from and when it can go,
+  # and nothing keeps metadata for a patch that is no longer applied. Both
+  # halves drifted once: a patch that Linux had already absorbed kept its
+  # entry, and four CSI patches carried none at all.
+  appliedNames = map (p: p.name) patches;
+  undocumented = builtins.filter (n: !(meta ? ${n})) appliedNames;
+  orphanedMeta = builtins.filter
+    (n: !(builtins.elem n appliedNames))
+    (builtins.attrNames meta);
 in
+assert undocumented == [ ] || throw
+  "kernel patches without metadata: ${builtins.concatStringsSep ", " undocumented}";
+assert orphanedMeta == [ ] || throw
+  "metadata for patches that are not applied: ${builtins.concatStringsSep ", " orphanedMeta}";
 assert c906lMailbox.processorCount == 4;
 assert c906lMailbox.slotCount == 8;
 assert c906lHwspin.registerOffset == "0x000000c0";
