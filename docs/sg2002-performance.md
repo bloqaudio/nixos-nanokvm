@@ -236,20 +236,53 @@ also changes core voltage, and is not a safe device-tree-only optimization.
 
 ### CPU frequency and voltage scaling
 
-Live clock-framework readback on the camera and PicoClaw reports 850 MHz
-for the Linux C906 and 594 MHz for the auxiliary C906. The current kernel
-does not enable CPUFreq, and the CPU node has no operating-point table or
-voltage-supply connection. Temperature sensing works, but there is no CPU
-DVFS policy or frequency-based thermal cooling device. Enabling a governor
-alone would not supply that missing hardware integration.
+The default clock configuration is 850 MHz for the Linux C906 and 594 MHz
+for the auxiliary C906. CPUFreq remains opt-in; unmodified image profiles
+do not change clocks, governor policy or voltage.
+
+For the mainline kernel with this repository's normal 850 MHz FIP:
+
+```nix
+sg2002.cpuFreq.enable = true;
+```
+
+This enables the standard `cpufreq-dt` driver, OPPs at 212.5/425/850 MHz,
+the `schedutil` governor, and CPU thermal cooling above 85 °C with 5 °C
+hysteresis. It applies to both RAM-only and persistent images and retains
+the selected carrier and C906L device tree. The existing critical trip
+remains. The performance, powersave and userspace governors are also
+available through the standard CPUFreq sysfs interface; stage 2 can set
+`powerManagement.cpuFreqGovernor` normally.
+
+These are integer divisions of the existing MPLL clock, not PLL retuning.
+The driver retains that parent and uses the inactive divider lane during
+transitions, with an intermediate rate no higher than either endpoint.
+Peripheral clocks and the auxiliary-core clock are not retuned. Do not use
+this OPP table with a differently clocked third-party FIP.
+
+**This is DFS, not complete DVFS.** It does not change core voltage or
+enable 1 GHz. Sipeed's Nano 70415 and 70418 schematics mark R140/R141/C81,
+the PWM-to-buck feedback circuit, **DNP**; the 70405 schematic has a fixed
+feedback divider without that circuit. The Claw schematic describes a
+Nano core-board carrier, not an independent adjustable core supply.
+A running PWM0 waveform therefore does not establish voltage control.
+The camera's readback was 21% duty at 1 MHz, matching the vendor's nominal
+0.96 V PWM setting, but this is **not a measured supply voltage**.
+
+See the [Nano schematic collection](https://dl.sipeed.com/shareURL/LICHEE/LicheeRV_Nano/02_Schematic),
+in particular [70418, sheet 3](https://dl.sipeed.com/fileList/LICHEE/LicheeRV_Nano/02_Schematic/LicheeRV_Nano-70418_Schematic.pdf),
+and the [SG200X clock-transition procedure](https://github.com/sophgo/sophgo-doc/blob/main/SG200X/TRM/contents/en/clock/div_configure.rst).
+Full voltage scaling requires identifying a board with a populated control
+network, confirming its voltage/duty relationship and settling time, and
+accounting for all consumers of the shared core supply. Describing an
+unconnected PWM as a regulator would make Linux's voltage reports misleading.
 
 The vendor RISC-V overdrive path sets the main CPU to 1,050 MHz, requests
 1.00 V through PWM and changes several other clocks. It is not a validated
 1 GHz CPU-only operating point for these board configurations. A future
-DVFS implementation needs board-specific supply information, safe clock
-transitions and validated operating points, including the effects of the
-shared core supply on other engines. No clock or voltage changes were made
-as part of these read-only checks.
+DVFS implementation needs board-specific supply information and validated
+voltage/frequency operating points, including the effects of the shared
+core supply on other engines. No voltage changes were attempted.
 
 The CPU MMUX driver now translates a logical parent index through the
 selected lane's hardware selector table. Previously, requesting MPLL
@@ -263,11 +296,14 @@ parent's frequency.
 calls the actual CV18xx driver operations against memory-backed registers.
 It covers every C906 parent from both lanes and bypass, unchanged adjacent
 fields, an unmapped parent, divider rates and the earlier bypass-mux fix.
-The pre-fix driver failed three of four cases; the corrected driver passes
-all four. Test code is linked only into the test kernel, never board images.
-These tests establish register-selection and callback behaviour, not
-glitch-free silicon transitions. Coordinated parent/divider changes and
-board voltage control still need validation before enabling DVFS.
+The earlier parent-selection regression failed three of four cases with
+the pre-fix driver. Two further cases exercise 96 divider transitions
+through the common clock framework and reject an unsafe intermediate rate
+before writing registers. All six cases pass with the current driver.
+Test code is linked only into the test kernel, never board images.
+The composed-DTB/configuration check covers all seven image variants,
+including unchanged carrier properties and the C906L contract. These are
+software checks, not proof of analog voltage behaviour or silicon timing.
 
 A guarded, RAM-only camera boot with the clock fixes retained the existing
 850/594 MHz clock readback, started userspace in 16.5 seconds and left
@@ -276,6 +312,25 @@ runs took 2.623, 2.634 and 2.621 CPU seconds with the expected checksum.
 SSH, service health and the host-health watchdog passed. This is a boot
 regression check, not a physical frequency-transition test; the board was
 returned to its known-good image afterward.
+
+A subsequent RAM-only camera boot enabled CPUFreq. The production
+100-frame conversion benchmark took 2.618/2.628 CPU seconds at 850 MHz,
+5.165/5.154 seconds at 425 MHz and 10.365 seconds at 212.5 MHz; all five
+runs returned checksum `60633ec7`. Another 300 requested transitions
+passed frequency readback checks. Clock-framework readback retained the
+850 MHz MPLL, 1.5 GHz FPLL and 594 MHz auxiliary-core clock throughout
+the five benchmark runs. PWM readback was unchanged.
+
+The standard `schedutil` governor booted and ran the workload successfully.
+A diagnostic kernel with both `cpuFreq` and `profiling` enabled exposes
+thermal emulation: a simulated 90 °C reading capped the CPU at 425 MHz,
+and clearing it restored the 850 MHz ceiling. This tests the cooling map
+without overheating the board; it does not measure cooling effectiveness.
+The declared 100 µs transition latency is a conservative policy budget,
+not a measured silicon timing result. Watchdog and service-health checks
+passed before the camera was returned to its known-good image. No SD
+contents changed. CPUFreq remains opt-in pending wider carrier/peripheral
+and long-duration testing; no voltage or power-consumption claim is made.
 
 ## Profiling and recovery
 

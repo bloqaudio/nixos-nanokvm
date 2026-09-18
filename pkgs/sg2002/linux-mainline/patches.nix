@@ -46,6 +46,10 @@ let
       patch = ./patches/0072-clk-cv18xx-fix-mmux-parent-and-rate-ops.patch;
     })
     (patch {
+      name = "clk-cv18xx-switch-away-from-active-cpu-divider";
+      patch = ./patches/0073-clk-cv18xx-switch-away-from-active-cpu-divider.patch;
+    })
+    (patch {
       name = "clk-cv18xx-program-bypass-mux-parent";
       patch = ./patches/0071-clk-cv18xx-program-bypass-mux-parent.patch;
     })
@@ -308,6 +312,16 @@ let
   ];
 
   meta = {
+    "clk-cv18xx-switch-away-from-active-cpu-divider" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx MMUX changes active dividers through a safe intermediate clock";
+      notes = ''
+        Follow the SG200X TRM's inactive-lane CPU divider update sequence.
+        C906_0 rate requests retain the firmware-selected PLL; this does
+        not enable PLL retuning or claim a programmable board core supply.
+      '';
+    };
     "clk-cv18xx-fix-mmux-parent-and-rate-ops" = {
       origin = "local";
       upstreamStatus = "draft";

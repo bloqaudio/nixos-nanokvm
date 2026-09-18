@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Exercise the real CV18xx clock operations against memory-backed registers. */
 #include <kunit/test.h>
+#include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
@@ -24,11 +25,33 @@ struct cv18xx_test_context {
 	u32 regs[NUM_REGS];
 	spinlock_t lock;
 	struct cv1800_clk_mmux mmux;
+	struct clk_hw *parents[6];
 };
+
+static void cv18xx_unregister_fixed(void *hw)
+{
+	clk_disable_unprepare(((struct clk_hw *)hw)->clk);
+	clk_hw_unregister_fixed_rate(hw);
+}
+
+static void cv18xx_unregister(void *hw)
+{
+	clk_hw_unregister(hw);
+}
 
 static int cv18xx_test_init(struct kunit *test)
 {
 	struct cv18xx_test_context *ctx;
+	static const unsigned long rates[] = {
+		25000000, 1400000000, 442368000, 900000000, 850000000, 1500000000,
+	};
+	struct clk_init_data init = {
+		.name = "cv18xx-test-mmux",
+		.ops = &cv1800_clk_mmux_ops,
+		.num_parents = ARRAY_SIZE(rates),
+		.flags = CLK_SET_RATE_NO_REPARENT | CLK_GET_RATE_NOCACHE,
+	};
+	unsigned int i;
 
 	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, ctx);
@@ -49,6 +72,22 @@ static int cv18xx_test_init(struct kunit *test)
 		.parent2sel = c906_parent2sel,
 		.sel2parent = { c906_sel2parent[0], c906_sel2parent[1] },
 	};
+	for (i = 0; i < ARRAY_SIZE(rates); i++) {
+		char name[32];
+
+		snprintf(name, sizeof(name), "cv18xx-test-parent-%u", i);
+		ctx->parents[i] = clk_hw_register_fixed_rate(NULL, name, NULL, 0, rates[i]);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ctx->parents[i]);
+		KUNIT_ASSERT_EQ(test, clk_prepare_enable(ctx->parents[i]->clk), 0);
+		kunit_add_action_or_reset(test, cv18xx_unregister_fixed, ctx->parents[i]);
+	}
+	/* The normal firmware configuration: MPLL / 1, lane zero. */
+	ctx->regs[MUX0] = BIT(16) | (3 << 8) | BIT(3);
+	ctx->regs[SELECT] = BIT(23);
+	init.parent_hws = (const struct clk_hw **)ctx->parents;
+	ctx->mmux.common.hw.init = &init;
+	KUNIT_ASSERT_EQ(test, clk_hw_register(NULL, &ctx->mmux.common.hw), 0);
+	kunit_add_action_or_reset(test, cv18xx_unregister, &ctx->mmux.common.hw);
 	test->priv = ctx;
 	return 0;
 }
@@ -158,11 +197,51 @@ static void cv18xx_bypass_mux_parents(struct kunit *test)
 	}
 }
 
+static void cv18xx_mmux_cpufreq(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	struct clk *clk = ctx->mmux.common.hw.clk;
+	static const unsigned long rates[] = { 425000000, 850000000, 212500000 };
+	unsigned int i;
+
+	for (i = 0; i < 96; i++) {
+		unsigned long rate = rates[i % ARRAY_SIZE(rates)];
+
+		KUNIT_EXPECT_EQ(test, clk_round_rate(clk, rate), (long)rate);
+		KUNIT_ASSERT_EQ(test, clk_set_rate(clk, rate), 0);
+		KUNIT_EXPECT_EQ(test, clk_get_rate(clk), rate);
+		KUNIT_EXPECT_PTR_EQ(test, clk_hw_get_parent(&ctx->mmux.common.hw),
+				   ctx->parents[4]);
+		KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.get_parent(&ctx->mmux.common.hw), 4);
+		KUNIT_EXPECT_EQ(test, ctx->regs[MUX1], 0U);
+		KUNIT_EXPECT_EQ(test, ctx->regs[SELECT], BIT(23));
+		KUNIT_EXPECT_EQ(test, ctx->regs[BYPASS], 0U);
+		KUNIT_EXPECT_EQ(test, clk_hw_get_rate(ctx->parents[4]), 850000000UL);
+	}
+}
+
+static void cv18xx_mmux_unsafe_temporary_rate(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	u32 before[NUM_REGS];
+
+	memcpy(before, ctx->regs, sizeof(before));
+	/* Even FPLL / 15 exceeds this endpoint. Reject before any MMIO write. */
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.set_rate(&ctx->mmux.common.hw,
+						       85000000, 850000000), -ERANGE);
+	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.set_rate(&ctx->mmux.common.hw,
+						       0, 850000000), -EINVAL);
+	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
+}
+
 static struct kunit_case cv18xx_clock_cases[] = {
 	KUNIT_CASE(cv18xx_mmux_parents),
 	KUNIT_CASE(cv18xx_mmux_missing_selector),
 	KUNIT_CASE(cv18xx_mmux_rates),
 	KUNIT_CASE(cv18xx_bypass_mux_parents),
+	KUNIT_CASE(cv18xx_mmux_cpufreq),
+	KUNIT_CASE(cv18xx_mmux_unsafe_temporary_rate),
 	{}
 };
 

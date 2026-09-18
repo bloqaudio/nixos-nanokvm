@@ -15,7 +15,7 @@
 }: let
   cfg = config.sg2002;
 
-  kernelPkg =
+  baseKernelPkg =
     if cfg.kernel == "mainline" && cfg.audio.enable && cfg.bluetooth.enable
     then pkgs.sg2002-kernel-mainline-audio-bluetooth
     else if cfg.kernel == "mainline" && cfg.audio.enable
@@ -23,6 +23,9 @@
     else if cfg.kernel == "mainline" && cfg.bluetooth.enable
     then pkgs.sg2002-kernel-mainline-bluetooth
     else pkgs."sg2002-kernel-${cfg.kernel}";
+  kernelPkg = if cfg.kernel == "mainline" && cfg.cpuFreq.enable
+    then baseKernelPkg.override { cpuFreq = true; }
+    else baseKernelPkg;
   fipPkg =
     if cfg.uboot == "mainline"
     then pkgs.sg2002-fip-mainline-uboot
@@ -107,6 +110,12 @@ in {
       description = "Whether this carrier exposes UART1 as a physical rescue console.";
     };
 
+    cpuFreq.enable = mkEnableOption ''
+      experimental divider-only CPUFreq (212.5/425/850 MHz) and CPU thermal
+      cooling with the shipped 850 MHz firmware clock configuration.
+      This does not change core voltage or enable a 1 GHz operating point
+    '';
+
     consoleDevice = mkOption {
       type = types.enum ["ttyS0" "ttyS1" "ttyGS0" "tty0"];
       default = "ttyS0";
@@ -115,6 +124,12 @@ in {
 
     fdt = mkOption {
       type = types.path;
+      apply = base: if cfg.cpuFreq.enable
+        then pkgs.buildPackages.callPackage ../pkgs/sg2002/dtb-mainline/cpufreq.nix {
+          inherit base;
+          linuxSrc = pkgs.sg2002-kernel-mainline.src;
+        }
+        else base;
       description = ''
         Device-tree blob this board boots. Single source of truth shared
         by the vendor-FIT SD path (modules/sg2002-vendor-fit.nix) and the
@@ -207,6 +222,10 @@ in {
       ];
       assertions = [
         {
+          assertion = !cfg.cpuFreq.enable || cfg.kernel == "mainline";
+          message = "sg2002.cpuFreq.enable requires the mainline kernel.";
+        }
+        {
           assertion = pkgs ? "sg2002-kernel-${cfg.kernel}";
           message = ''
             sg2002.kernel = "${cfg.kernel}" requires the overlay from this
@@ -232,6 +251,8 @@ in {
       hardware.enableAllHardware = lib.mkForce false;
 
       boot.kernelPackages = pkgs.linuxPackagesFor kernelPkg;
+      powerManagement.cpuFreqGovernor = lib.mkIf cfg.cpuFreq.enable
+        (lib.mkDefault "schedutil");
       # nowayout protects against closing /dev/watchdog, not the kernel's
       # reboot notifier. dw_wdt otherwise stops the counter before kexec,
       # leaving a failed handoff without a hardware reset. Use the standard

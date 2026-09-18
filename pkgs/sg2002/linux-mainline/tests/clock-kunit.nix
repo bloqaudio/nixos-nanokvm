@@ -29,7 +29,7 @@ stdenv.mkDerivation {
       --jobs="$NIX_BUILD_CORES" --timeout=120 --json=results.json 'cv18xx-clock*'
     jq -e '
       [.sub_groups[] | select(.name == "cv18xx-clock") | .test_cases[]]
-      | length == 4 and all(.status == "PASS")
+      | length == 6 and all(.status == "PASS")
     ' results.json
     runHook postBuild
   '';

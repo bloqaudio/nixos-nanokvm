@@ -21,6 +21,9 @@
   linux_latest,
   audio ? false,
   bluetooth ? false,
+  # Divider-only CPUFreq. The board DT supplies the operating points;
+  # this does not establish voltage control or permit a higher PLL rate.
+  cpuFreq ? false,
   # Diagnostic builds retain the same hardware configuration and safety
   # checks, but expose perf and pressure metrics for workload profiling.
   profiling ? false,
@@ -43,10 +46,27 @@ in
     extraMeta.branch = "7.2-rc";
   };
   structuredExtraConfig = (import ./config.nix {inherit lib;})
+    // lib.optionalAttrs cpuFreq {
+      CPU_FREQ = lib.kernel.yes;
+      CPUFREQ_DT = lib.kernel.yes;
+      CPU_FREQ_STAT = lib.kernel.yes;
+      CPU_FREQ_DEFAULT_GOV_SCHEDUTIL = lib.kernel.yes;
+      CPU_FREQ_DEFAULT_GOV_PERFORMANCE = lib.kernel.no;
+      CPU_FREQ_GOV_PERFORMANCE = lib.kernel.yes;
+      CPU_FREQ_GOV_POWERSAVE = lib.kernel.yes;
+      CPU_FREQ_GOV_USERSPACE = lib.kernel.yes;
+      CPU_FREQ_GOV_SCHEDUTIL = lib.kernel.yes;
+      CPU_THERMAL = lib.kernel.yes;
+    }
     // lib.optionalAttrs profiling {
       PERF_EVENTS = lib.kernel.yes;
       PSI = lib.kernel.yes;
       PSI_DEFAULT_DISABLED = lib.kernel.no;
+    }
+    // lib.optionalAttrs (profiling && cpuFreq) {
+      # Test the thermal cooling map without physically overheating a board.
+      # Normal images do not expose the temperature-emulation interface.
+      THERMAL_EMULATION = lib.kernel.yes;
     }
     // lib.optionalAttrs audio {
       # The common Nano carrier DT already describes the internal RXADC on
