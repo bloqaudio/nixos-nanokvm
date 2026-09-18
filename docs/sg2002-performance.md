@@ -251,6 +251,32 @@ transitions and validated operating points, including the effects of the
 shared core supply on other engines. No clock or voltage changes were made
 as part of these read-only checks.
 
+The CPU MMUX driver now translates a logical parent index through the
+selected lane's hardware selector table. Previously, requesting MPLL
+(logical index 4) wrote zero into a two-bit selector and selected TPLL
+instead. The driver rejects an unmapped parent before writing registers
+and programs the chosen mux before selecting its lane or leaving bypass.
+Its bypassed `set_rate` callback also now returns success instead of the
+parent's frequency.
+
+`sg2002-clock-kunit` boots an isolated x86-64 test kernel under QEMU and
+calls the actual CV18xx driver operations against memory-backed registers.
+It covers every C906 parent from both lanes and bypass, unchanged adjacent
+fields, an unmapped parent, divider rates and the earlier bypass-mux fix.
+The pre-fix driver failed three of four cases; the corrected driver passes
+all four. Test code is linked only into the test kernel, never board images.
+These tests establish register-selection and callback behaviour, not
+glitch-free silicon transitions. Coordinated parent/divider changes and
+board voltage control still need validation before enabling DVFS.
+
+A guarded, RAM-only camera boot with the clock fixes retained the existing
+850/594 MHz clock readback, started userspace in 16.5 seconds and left
+9,260 KiB free in the initrd root filesystem. Three 100-frame conversion
+runs took 2.623, 2.634 and 2.621 CPU seconds with the expected checksum.
+SSH, service health and the host-health watchdog passed. This is a boot
+regression check, not a physical frequency-transition test; the board was
+returned to its known-good image afterward.
+
 ## Profiling and recovery
 
 `sg2002-kernel-mainline.override { profiling = true; }` enables perf events
@@ -296,6 +322,7 @@ Relevant regression checks:
 nix build \
   .#checks.x86_64-linux.sg2002-c906-tuning \
   .#checks.x86_64-linux.sg2002-wifi-ack-filter \
+  .#checks.x86_64-linux.sg2002-clock-kunit \
   .#checks.x86_64-linux.sg2002-h264-bridge-c906 \
   .#checks.x86_64-linux.extlinux-try-boot \
   .#checks.x86_64-linux.sg2002-initrd-eval \

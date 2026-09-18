@@ -42,6 +42,10 @@ let
 
   patches = [
     (patch {
+      name = "clk-cv18xx-fix-mmux-parent-and-rate-ops";
+      patch = ./patches/0072-clk-cv18xx-fix-mmux-parent-and-rate-ops.patch;
+    })
+    (patch {
       name = "clk-cv18xx-program-bypass-mux-parent";
       patch = ./patches/0071-clk-cv18xx-program-bypass-mux-parent.patch;
     })
@@ -304,6 +308,17 @@ let
   ];
 
   meta = {
+    "clk-cv18xx-fix-mmux-parent-and-rate-ops" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx MMUX set_parent encodes lane-local selectors and bypassed set_rate returns success";
+      notes = ''
+        Invert the selector-to-parent map before programming a CPU clock mux;
+        logical MPLL index 4 is hardware selector 3, not zero. KUnit exercises
+        the actual driver operations with memory-backed registers. This does
+        not enable CPUFreq or validate voltage/frequency transitions.
+      '';
+    };
     "clk-cv18xx-program-bypass-mux-parent" = {
       origin = "local";
       upstreamStatus = "draft";
