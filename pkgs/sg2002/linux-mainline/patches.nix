@@ -58,6 +58,10 @@ let
       patch = ./patches/0071-clk-cv18xx-program-bypass-mux-parent.patch;
     })
     (patch {
+      name = "clk-cv18xx-park-cpu-during-pll-retune";
+      patch = ./patches/0075-clk-cv18xx-park-cpu-during-pll-retune.patch;
+    })
+    (patch {
       name = "usb-dwc2-cv1800-let-dt-drive-g_dma-host_dma";
       patch = ./patches/0001-usb-dwc2-cv1800-let-DT-drive-g_dma-host_dma.patch;
     })
@@ -325,6 +329,19 @@ let
         corresponding high lock bit and return timeout/invalid-rate errors.
         CPU consumers still need a safe alternate clock before PLL retuning;
         this patch does not raise the default frequency.
+      '';
+    };
+    "clk-cv18xx-park-cpu-during-pll-retune" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx CPU muxes leave a PLL before it is retuned and return only on a verified lock";
+      notes = ''
+        A PLL cannot be retuned while a CPU executes from it. Park the CPU
+        on the mux's other lane across the change and return only once the
+        hardware reports a completed update and lock. clk_change_rate()
+        discards set_rate() errors and skips POST_RATE_CHANGE on an
+        unchanged rate, so the release also happens from set_rate().
+        Enables a board-selected CPU PLL rate; changes no core voltage.
       '';
     };
     "clk-cv18xx-switch-away-from-active-cpu-divider" = {

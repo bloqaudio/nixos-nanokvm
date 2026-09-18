@@ -1,0 +1,551 @@
+From: NanoKVM contributors
+Subject: [PATCH] clk: sophgo: park the CPU while its PLL is retuned
+
+The CV18xx CPU mux can only divide whatever its parent PLL produces, so
+reaching a frequency the firmware did not configure means changing MPLL
+itself. Retuning a PLL that a CPU is executing from hangs that CPU: the
+SG200X TRM requires every consumer to move to another stable clock first.
+
+The common clock framework cannot express that ordering, so watch the PLL
+instead. On PRE_RATE_CHANGE park the CPU on the mux's other lane, which
+runs from its own untouched PLL at no more than either endpoint. On
+POST_RATE_CHANGE return to it, but only after the hardware reports a
+completed update and a real lock.
+
+Two clk_change_rate() properties make the obvious implementation wrong.
+It discards set_rate() errors, so the PLL's own return value never
+reaches the caller; and it skips POST_RATE_CHANGE when the recalculated
+rate is unchanged, so a PLL that rejected the new rate outright would
+strand the CPU on the alternate lane forever. mmux_set_rate() therefore
+runs unconditionally afterwards and releases a mux that is still parked.
+
+A PLL that was rewritten but never locked is the one case where the CPU
+deliberately stays on the alternate lane. That is slower than requested,
+but it is running, and recalc_rate() reports the truth.
+
+The same park/unpark pair replaces the open-coded inactive-lane sequence
+used for divider-only changes, which did the identical thing inline. The
+selector register is now read-modify-written rather than restored
+wholesale, because the two halves of a transition no longer share one
+critical section and neighbouring clocks own the other bits.
+
+Also propagate fpll_find_rate() failures, which the integer path already
+reports, and add a lock poll a parked consumer can use to ask whether
+returning to its PLL is safe.
+
+This adds no operating point by itself: a board still has to ask for a
+different MPLL rate, and no core supply voltage is changed.
+
+References:
+  SG200X TRM, "PLL configuration" and "IP/SYS clock source and clock
+  division configuration"
+  https://github.com/sophgo/sophgo-doc/blob/main/SG200X/TRM/contents/en/clock/pll_configure.rst
+---
+--- a/drivers/clk/sophgo/clk-cv18xx-pll.h
++++ b/drivers/clk/sophgo/clk-cv18xx-pll.h
+@@ -115,4 +115,6 @@
+ extern const struct clk_ops cv1800_clk_ipll_ops;
+ extern const struct clk_ops cv1800_clk_fpll_ops;
+ 
++int cv1800_clk_pll_poll_lock(struct cv1800_clk_pll *pll);
++
+ #endif // _CLK_SOPHGO_CV1800_PLL_H_
+--- a/drivers/clk/sophgo/clk-cv18xx-pll.c
++++ b/drivers/clk/sophgo/clk-cv18xx-pll.c
+@@ -333,10 +333,8 @@
+ 	if (!fpll_is_factional_mode(pll))
+ 		return ipll_determine_rate(hw, req);
+ 
+-	fpll_find_rate(pll, &pll->pll_limit[2], req->best_parent_rate,
+-		       &req->rate, &val, &ssc_syn_set);
+-
+-	return 0;
++	return fpll_find_rate(pll, &pll->pll_limit[2], req->best_parent_rate,
++			      &req->rate, &val, &ssc_syn_set);
+ }
+ 
+ static bool fpll_check_mode_ctrl_restrict(unsigned long div_sel,
+@@ -357,12 +355,15 @@
+ 	u32 detected = 0, detected_ssc = 0;
+ 	unsigned long flags;
+ 	struct cv1800_clk_pll *pll = hw_to_cv1800_clk_pll(hw);
++	int ret;
+ 
+ 	if (!fpll_is_factional_mode(pll))
+ 		return ipll_set_rate(hw, rate, parent_rate);
+ 
+-	fpll_find_rate(pll, &pll->pll_limit[2], parent_rate,
+-		       &rate, &detected, &detected_ssc);
++	ret = fpll_find_rate(pll, &pll->pll_limit[2], parent_rate,
++			     &rate, &detected, &detected_ssc);
++	if (ret)
++		return ret;
+ 	pll_get_mode_ctrl(PLL_GET_DIV_SEL(detected),
+ 			  fpll_check_mode_ctrl_restrict,
+ 			  pll->pll_limit, &detected);
+@@ -416,3 +417,14 @@
+ 	.set_parent = fpll_set_parent,
+ 	.get_parent = fpll_get_parent,
+ };
++
++/*
++ * Re-check a PLL that has already been rewritten. The common clock
++ * framework discards set_rate() errors, so a consumer that moved away
++ * before the retune needs its own way to ask whether coming back is safe.
++ */
++int cv1800_clk_pll_poll_lock(struct cv1800_clk_pll *pll)
++{
++	return cv1800_clk_wait_for_lock(&pll->common, pll->pll_status.reg,
++					BIT(pll->pll_status.shift));
++}
+--- a/drivers/clk/sophgo/clk-cv18xx-ip.h
++++ b/drivers/clk/sophgo/clk-cv18xx-ip.h
+@@ -6,8 +6,12 @@
+ #ifndef _CLK_SOPHGO_CV1800_IP_H_
+ #define _CLK_SOPHGO_CV1800_IP_H_
+ 
++#include <linux/notifier.h>
++
+ #include "clk-cv18xx-common.h"
+ 
++struct cv1800_clk_pll;
++
+ struct cv1800_clk_gate {
+ 	struct cv1800_clk_common	common;
+ 	struct cv1800_clk_regbit	gate;
+@@ -53,6 +57,27 @@
+ 	struct cv1800_clk_regbit	clk_sel;
+ 	const s8			*parent2sel;
+ 	const u8			*sel2parent[2];
++
++	/*
++	 * Optional: the parent PLL this mux tolerates being retuned. While
++	 * that PLL changes rate the CPU is parked on the other lane, whose
++	 * own PLL is left alone. NULL keeps the mux divider-only.
++	 */
++	struct cv1800_clk_pll		*retune_pll;
++	struct notifier_block		retune_nb;
++	u32				retune_saved_lane;
++	u32				retune_saved_pll;
++	enum {
++		/* Running from the lane the firmware or CPUFreq selected. */
++		CV1800_MMUX_RUNNING = 0,
++		/* Temporarily on the other lane; the caller will return it. */
++		CV1800_MMUX_PARKED,
++		/*
++		 * Left on the other lane because the retuned PLL never
++		 * locked. Slower than requested, but running and truthful.
++		 */
++		CV1800_MMUX_STRANDED,
++	}				retune_state;
+ };
+ 
+ struct cv1800_clk_audio {
+@@ -258,4 +283,9 @@
+ extern const struct clk_ops cv1800_clk_mmux_ops;
+ extern const struct clk_ops cv1800_clk_audio_ops;
+ 
++int cv1800_clk_mmux_park(struct cv1800_clk_mmux *mmux, unsigned long limit);
++int cv1800_clk_mmux_unpark(struct cv1800_clk_mmux *mmux, int div);
++int cv1800_clk_mmux_add_retune(struct device *dev,
++			       struct cv1800_clk_mmux *mmux);
++
+ #endif // _CLK_SOPHGO_CV1800_IP_H_
+--- a/drivers/clk/sophgo/clk-cv18xx-ip.c
++++ b/drivers/clk/sophgo/clk-cv18xx-ip.c
+@@ -3,12 +3,14 @@
+  * Copyright (C) 2023 Inochi Amaoto <inochiama@outlook.com>
+  */
+ 
++#include <linux/clk.h>
+ #include <linux/clk-provider.h>
+ #include <linux/io.h>
+ #include <linux/gcd.h>
+ #include <linux/spinlock.h>
+ 
+ #include "clk-cv18xx-ip.h"
++#include "clk-cv18xx-pll.h"
+ 
+ /* GATE */
+ static inline struct cv1800_clk_gate *hw_to_cv1800_clk_gate(struct clk_hw *hw)
+@@ -715,78 +717,167 @@
+ 				   div->flags, div->width);
+ }
+ 
+-static int mmux_set_rate(struct clk_hw *hw, unsigned long rate,
+-			 unsigned long parent_rate)
++/*
++ * Move the CPU onto the inactive lane, running from that lane's own PLL at
++ * no more than @limit. The SG200X TRM requires this before the active
++ * divider is rewritten, and equally before the active lane's PLL is
++ * retuned. Leaves the mux parked; cv1800_clk_mmux_unpark() puts it back.
++ */
++int cv1800_clk_mmux_park(struct cv1800_clk_mmux *mmux, unsigned long limit)
+ {
+-	struct cv1800_clk_mmux *mmux = hw_to_cv1800_clk_mmux(hw);
+-	struct cv1800_clk_regfield *div, *temporary_div, *temporary_mux;
+-	struct clk_hw *temporary_parent;
+-	unsigned long temporary_rate, limit, flags;
+-	u32 saved, reg, select, val, temporary_val;
+-	unsigned int lane, temporary_lane;
+-	int ret;
++	struct clk_hw *hw = &mmux->common.hw;
++	struct cv1800_clk_regfield *park_div, *park_mux;
++	struct clk_hw *park_parent;
++	unsigned long park_rate, flags;
++	unsigned int lane, park_lane;
++	u32 reg, park_val;
+ 
+-	if (!rate || !parent_rate)
+-		return -EINVAL;
++	if (mmux->retune_state != CV1800_MMUX_RUNNING)
++		return -EBUSY;
+ 
+ 	if (cv1800_clk_checkbit(&mmux->common, &mmux->bypass))
+-		return 0;
++		return -EINVAL;
+ 
+ 	lane = cv1800_clk_checkbit(&mmux->common, &mmux->clk_sel) ? 0 : 1;
+-	div = &mmux->div[lane];
+-	ret = divider_get_val(rate, parent_rate, NULL, div->width, div->flags);
+-	if (ret < 0)
+-		return ret;
+-	val = ret;
+-	if (val == div_helper_get_clockdiv(&mmux->common, div))
+-		return 0;
++	park_lane = !lane;
++	park_div = &mmux->div[park_lane];
++	park_mux = &mmux->mux[park_lane];
+ 
+ 	/*
+-	 * The CPU clock cannot be gated, and its active divider must not be
+-	 * rewritten. Use the other divider lane while updating it (SG200X
+-	 * TRM, "IP/SYS clock source and clock division configuration").
+-	 * Both lane-zero's first PLL and lane-one's FPLL are critical clocks.
+-	 * Do not retune either PLL or exceed either endpoint frequency.
++	 * Selector zero of the parked lane. Both it and the active lane's
++	 * PLL are critical clocks; neither is retuned here.
+ 	 */
+-	temporary_lane = !lane;
+-	temporary_div = &mmux->div[temporary_lane];
+-	temporary_mux = &mmux->mux[temporary_lane];
+-	temporary_parent = clk_hw_get_parent_by_index(hw,
+-					mmux->sel2parent[temporary_lane][0]);
+-	if (!temporary_parent || !clk_hw_is_enabled(temporary_parent))
++	park_parent = clk_hw_get_parent_by_index(hw,
++					mmux->sel2parent[park_lane][0]);
++	if (!park_parent || !clk_hw_is_enabled(park_parent))
+ 		return -EINVAL;
+-	temporary_rate = clk_hw_get_rate(temporary_parent);
+-	limit = min(rate, mmux_recalc_rate(hw, parent_rate));
+-	if (!temporary_rate || !limit)
++	park_rate = clk_hw_get_rate(park_parent);
++	if (!park_rate || !limit)
+ 		return -EINVAL;
+-	temporary_val = DIV_ROUND_UP_ULL(temporary_rate, limit);
+-	if (temporary_val > GENMASK(temporary_div->width - 1, 0))
++	park_val = DIV_ROUND_UP_ULL(park_rate, limit);
++	if (park_val > GENMASK(park_div->width - 1, 0))
+ 		return -ERANGE;
+ 
+ 	spin_lock_irqsave(mmux->common.lock, flags);
+-	saved = readl(mmux->common.base + temporary_div->reg);
+-	reg = cv1800_clk_regfield_set(saved, temporary_val, temporary_div);
+-	reg = cv1800_clk_regfield_set(reg, 0, temporary_mux);
+-	writel(DIV_SET_EN_DIV_FACTOR(reg), mmux->common.base + temporary_div->reg);
++	mmux->retune_saved_lane = readl(mmux->common.base + park_div->reg);
++	reg = cv1800_clk_regfield_set(mmux->retune_saved_lane, park_val,
++				      park_div);
++	reg = cv1800_clk_regfield_set(reg, 0, park_mux);
++	writel(DIV_SET_EN_DIV_FACTOR(reg), mmux->common.base + park_div->reg);
+ 	/* Complete the inactive-lane update before selecting it. */
+-	readl(mmux->common.base + temporary_div->reg);
+-	select = readl(mmux->common.base + mmux->clk_sel.reg);
+-	writel(select ^ BIT(mmux->clk_sel.shift),
++	readl(mmux->common.base + park_div->reg);
++	reg = readl(mmux->common.base + mmux->clk_sel.reg);
++	writel(reg ^ BIT(mmux->clk_sel.shift),
+ 	       mmux->common.base + mmux->clk_sel.reg);
+ 	readl(mmux->common.base + mmux->clk_sel.reg);
++	mmux->retune_state = CV1800_MMUX_PARKED;
++	spin_unlock_irqrestore(mmux->common.lock, flags);
+ 
+-	reg = readl(mmux->common.base + div->reg);
+-	reg = cv1800_clk_regfield_set(reg, val, div);
+-	writel(DIV_SET_EN_DIV_FACTOR(reg), mmux->common.base + div->reg);
+-	readl(mmux->common.base + div->reg);
+-	writel(select, mmux->common.base + mmux->clk_sel.reg);
++	return 0;
++}
++
++/*
++ * Return the CPU to the lane it came from, optionally programming that
++ * lane's divider to @div first. A negative @div keeps the existing value,
++ * which is what a pure parent-PLL retune wants.
++ */
++int cv1800_clk_mmux_unpark(struct cv1800_clk_mmux *mmux, int div)
++{
++	struct cv1800_clk_regfield *active_div, *park_div;
++	unsigned int lane, park_lane;
++	unsigned long flags;
++	u32 reg;
++
++	if (mmux->retune_state != CV1800_MMUX_PARKED)
++		return -EINVAL;
++
++	/* While parked the selector names the parked lane; invert it. */
++	park_lane = cv1800_clk_checkbit(&mmux->common, &mmux->clk_sel) ? 0 : 1;
++	lane = !park_lane;
++	active_div = &mmux->div[lane];
++	park_div = &mmux->div[park_lane];
++
++	if (div >= 0 && div > (int)GENMASK(active_div->width - 1, 0))
++		return -ERANGE;
++
++	spin_lock_irqsave(mmux->common.lock, flags);
++	if (div >= 0) {
++		reg = readl(mmux->common.base + active_div->reg);
++		reg = cv1800_clk_regfield_set(reg, div, active_div);
++		writel(DIV_SET_EN_DIV_FACTOR(reg),
++		       mmux->common.base + active_div->reg);
++		readl(mmux->common.base + active_div->reg);
++	}
++	/*
++	 * Read-modify-write the shared selector register: the parked and
++	 * unparked halves of a transition do not hold the lock across it,
++	 * and neighbouring clocks own the other bits.
++	 */
++	reg = readl(mmux->common.base + mmux->clk_sel.reg);
++	writel(reg ^ BIT(mmux->clk_sel.shift),
++	       mmux->common.base + mmux->clk_sel.reg);
+ 	readl(mmux->common.base + mmux->clk_sel.reg);
+-	writel(saved, mmux->common.base + temporary_div->reg);
++	writel(mmux->retune_saved_lane, mmux->common.base + park_div->reg);
++	mmux->retune_state = CV1800_MMUX_RUNNING;
+ 	spin_unlock_irqrestore(mmux->common.lock, flags);
+ 
+ 	return 0;
+ }
+ 
++static int mmux_set_rate(struct clk_hw *hw, unsigned long rate,
++			 unsigned long parent_rate)
++{
++	struct cv1800_clk_mmux *mmux = hw_to_cv1800_clk_mmux(hw);
++	struct cv1800_clk_regfield *div;
++	unsigned long limit;
++	unsigned int lane;
++	int ret, val;
++
++	switch (mmux->retune_state) {
++	case CV1800_MMUX_PARKED:
++		/*
++		 * A parent-PLL retune left the CPU parked and never sent
++		 * POST_RATE_CHANGE, because the PLL's rate did not actually
++		 * move. It was therefore never rewritten: go straight back.
++		 */
++		return cv1800_clk_mmux_unpark(mmux, -1);
++	case CV1800_MMUX_STRANDED:
++		/*
++		 * The mux is not on the lane the framework believes. Refuse
++		 * rather than reprogram the lane the CPU is running from.
++		 */
++		return -EIO;
++	default:
++		break;
++	}
++
++	if (!rate || !parent_rate)
++		return -EINVAL;
++
++	if (cv1800_clk_checkbit(&mmux->common, &mmux->bypass))
++		return 0;
++
++	lane = cv1800_clk_checkbit(&mmux->common, &mmux->clk_sel) ? 0 : 1;
++	div = &mmux->div[lane];
++	val = divider_get_val(rate, parent_rate, NULL, div->width, div->flags);
++	if (val < 0)
++		return val;
++	if (val == div_helper_get_clockdiv(&mmux->common, div))
++		return 0;
++
++	/*
++	 * The CPU clock cannot be gated and its active divider must not be
++	 * rewritten, so change it from the other lane. Do not exceed either
++	 * endpoint frequency while parked.
++	 */
++	limit = min(rate, mmux_recalc_rate(hw, parent_rate));
++	ret = cv1800_clk_mmux_park(mmux, limit);
++	if (ret)
++		return ret;
++
++	return cv1800_clk_mmux_unpark(mmux, val);
++}
++
+ static u8 mmux_get_parent(struct clk_hw *hw)
+ {
+ 	struct cv1800_clk_mmux *mmux = hw_to_cv1800_clk_mmux(hw);
+@@ -858,6 +949,115 @@
+ 	.get_parent = mmux_get_parent,
+ };
+ 
++/*
++ * Retuning the PLL a CPU is running from hangs that CPU. The common clock
++ * framework has no way to express "move off this parent first", so watch
++ * the PLL instead: park before it is rewritten, return afterwards, and
++ * only once the hardware reports a completed update and a real lock.
++ *
++ * clk_change_rate() discards set_rate() errors and skips POST_RATE_CHANGE
++ * when the recalculated rate is unchanged, so neither the PLL's return
++ * value nor the POST callback can be relied on alone. mmux_set_rate() runs
++ * unconditionally afterwards and releases a still-parked mux.
++ */
++static int mmux_retune_notifier(struct notifier_block *nb,
++				unsigned long event, void *data)
++{
++	struct cv1800_clk_mmux *mmux = container_of(nb, struct cv1800_clk_mmux,
++						    retune_nb);
++	struct clk_notifier_data *cnd = data;
++	struct clk_hw *hw = &mmux->common.hw;
++	unsigned int lane;
++	unsigned long limit;
++	int ret;
++
++	switch (event) {
++	case PRE_RATE_CHANGE:
++		/* Only park when this mux is actually fed by that PLL. */
++		if (clk_hw_get_parent(hw) != &mmux->retune_pll->common.hw)
++			return NOTIFY_DONE;
++		/*
++		 * The mux divider is untouched across the retune, so the CPU
++		 * tracks the PLL through it. Stay at or below both endpoints.
++		 */
++		lane = cv1800_clk_checkbit(&mmux->common, &mmux->clk_sel) ? 0 : 1;
++		limit = min(cnd->old_rate, cnd->new_rate) /
++			div_helper_get_clockdiv(&mmux->common, &mmux->div[lane]);
++
++		ret = cv1800_clk_mmux_park(mmux, limit);
++		if (ret) {
++			pr_err("%s: cannot park CPU off %s, refusing retune\n",
++			       clk_hw_get_name(hw),
++			       clk_hw_get_name(&mmux->retune_pll->common.hw));
++			return notifier_from_errno(ret);
++		}
++		mmux->retune_saved_pll = readl(mmux->common.base +
++					       mmux->retune_pll->pll_reg);
++		return NOTIFY_OK;
++
++	case POST_RATE_CHANGE:
++		if (mmux->retune_state != CV1800_MMUX_PARKED)
++			return NOTIFY_DONE;
++		if (!cv1800_clk_pll_poll_lock(mmux->retune_pll)) {
++			cv1800_clk_mmux_unpark(mmux, -1);
++			return NOTIFY_OK;
++		}
++		/*
++		 * The new setting never locked. Put the PLL back where it
++		 * came from, which did lock, and return the CPU to it.
++		 */
++		writel(mmux->retune_saved_pll,
++		       mmux->common.base + mmux->retune_pll->pll_reg);
++		ret = cv1800_clk_pll_poll_lock(mmux->retune_pll);
++		if (ret) {
++			mmux->retune_state = CV1800_MMUX_STRANDED;
++			/*
++			 * The CPU is staying on the alternate lane, so its
++			 * parent really has changed. Tell the framework, or
++			 * every reported CPU rate from here on is a lie.
++			 */
++			clk_hw_reparent(hw, clk_hw_get_parent_by_index(hw,
++							mmux_get_parent(hw)));
++			pr_err("%s: %s neither locked nor rolled back (%d); staying on the alternate lane\n",
++			       clk_hw_get_name(hw),
++			       clk_hw_get_name(&mmux->retune_pll->common.hw),
++			       ret);
++			return NOTIFY_OK;
++		}
++		pr_warn("%s: %s did not lock; restored its previous rate\n",
++			clk_hw_get_name(hw),
++			clk_hw_get_name(&mmux->retune_pll->common.hw));
++		cv1800_clk_mmux_unpark(mmux, -1);
++		return NOTIFY_OK;
++
++	case ABORT_RATE_CHANGE:
++		/* The PLL was never rewritten; go straight back. */
++		if (mmux->retune_state == CV1800_MMUX_PARKED)
++			cv1800_clk_mmux_unpark(mmux, -1);
++		return NOTIFY_OK;
++	}
++
++	return NOTIFY_DONE;
++}
++
++int cv1800_clk_mmux_add_retune(struct device *dev,
++			       struct cv1800_clk_mmux *mmux)
++{
++	struct clk *pll;
++
++	if (!mmux->retune_pll)
++		return 0;
++
++	pll = devm_clk_hw_get_clk(dev, &mmux->retune_pll->common.hw,
++				  "cpu-retune");
++	if (IS_ERR(pll))
++		return PTR_ERR(pll);
++
++	mmux->retune_nb.notifier_call = mmux_retune_notifier;
++
++	return devm_clk_notifier_register(dev, pll, &mmux->retune_nb);
++}
++
+ /* AUDIO CLK */
+ static inline struct cv1800_clk_audio *
+ hw_to_cv1800_clk_audio(struct clk_hw *hw)
+--- a/drivers/clk/sophgo/clk-cv1800.c
++++ b/drivers/clk/sophgo/clk-cv1800.c
+@@ -91,7 +91,7 @@
+ 			    REG_PLL_G6_STATUS, 0,
+ 			    pll_limits,
+ 			    &clk_mpll_synthesizer,
+-			    CLK_IS_CRITICAL);
++			    CLK_IS_CRITICAL | CLK_GET_RATE_NOCACHE);
+ 
+ static struct cv1800_clk_pll_synthesizer clk_tpll_synthesizer = {
+ 	.en		= CV1800_CLK_BIT(REG_PLL_G6_SSC_SYN_CTRL, 3),
+@@ -1455,6 +1455,7 @@
+ 				struct cv1800_clk_ctrl *ctrl,
+ 				const struct cv1800_clk_desc *desc)
+ {
++	struct cv1800_clk_mmux *cpu_mmux = NULL;
+ 	int i, ret;
+ 
+ 	ctrl->desc = desc;
+@@ -1474,6 +1475,9 @@
+ 		common->base = reg;
+ 		common->lock = &ctrl->lock;
+ 
++		if (hw == &clk_c906_0.common.hw)
++			cpu_mmux = &clk_c906_0;
++
+ 		ret = devm_clk_hw_register(dev, hw);
+ 		if (ret) {
+ 			dev_err(dev, "Couldn't register clock %d - %s\n",
+@@ -1482,6 +1486,19 @@
+ 		}
+ 	}
+ 
++	/*
++	 * MPLL feeds nothing but the CPU muxes, so it is the one PLL whose
++	 * rate may be changed at runtime. Watch it before the provider is
++	 * published: of_clk_add_hw_provider() applies assigned-clock-rates,
++	 * which is how a board asks for a different CPU PLL frequency.
++	 */
++	if (cpu_mmux) {
++		cpu_mmux->retune_pll = &clk_mpll;
++		ret = cv1800_clk_mmux_add_retune(dev, cpu_mmux);
++		if (ret)
++			return ret;
++	}
++
+ 	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
+ 					   desc->clks_data);
+ }

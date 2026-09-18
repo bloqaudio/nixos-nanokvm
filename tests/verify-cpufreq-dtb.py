@@ -36,7 +36,20 @@ for node in opp_nodes:
     rates.append((hi << 32) | lo)
     assert "opp-microvolt" not in after[node]
     assert get(scaling, node, "clock-latency-ns") == "100000"
-assert sorted(rates) == [212500000, 425000000, 850000000]
+assert sorted(rates) == [250000000, 500000000, 1000000000]
+
+# The board picks the CPU PLL rate; the OPPs are integer divisions of it.
+# A mismatch would silently mis-report every CPU frequency Linux shows.
+clk = "/soc/clock-controller@3002000"
+assigned_provider, assigned_id = get(scaling, clk, "assigned-clocks").split()
+assert assigned_provider == get(scaling, clk, "phandle")
+assert int(assigned_id) == 0  # CLK_MPLL in the pinned clock binding
+pll_rate = int(get(scaling, clk, "assigned-clock-rates"))
+assert pll_rate == 1000000000
+assert max(rates) == pll_rate, "top OPP must be the PLL itself, divided by one"
+for rate in rates:
+    assert pll_rate % rate == 0, f"{rate} is not an integer division of the PLL"
+    assert pll_rate // rate <= 15, "CPU divider field is four bits, one-based"
 zone = "/thermal-zones/soc-thermal"
 trip = zone + "/trips/cpu-passive"
 assert get(scaling, trip, "temperature") == "85000"
@@ -47,4 +60,4 @@ assert get(scaling, cooling, "trip") == get(scaling, trip, "phandle")
 assert get(scaling, cooling, "cooling-device").split() == [
     get(scaling, cpu, "phandle"), "4294967295", "4294967295"
 ]
-print("Default CPUFreq DT: exact OPPs and CPU thermal link")
+print("Default CPUFreq DT: PLL-derived OPPs and CPU thermal link")
