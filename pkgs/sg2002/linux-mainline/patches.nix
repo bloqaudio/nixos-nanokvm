@@ -42,6 +42,10 @@ let
 
   patches = [
     (patch {
+      name = "clk-cv18xx-check-pll-lock-status";
+      patch = ./patches/0074-clk-cv18xx-check-pll-lock-status.patch;
+    })
+    (patch {
       name = "clk-cv18xx-fix-mmux-parent-and-rate-ops";
       patch = ./patches/0072-clk-cv18xx-fix-mmux-parent-and-rate-ops.patch;
     })
@@ -312,6 +316,17 @@ let
   ];
 
   meta = {
+    "clk-cv18xx-check-pll-lock-status" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx PLL operations check update completion and lock, and return failures";
+      notes = ''
+        The low PLL status bits indicate updates, not lock. Require the
+        corresponding high lock bit and return timeout/invalid-rate errors.
+        CPU consumers still need a safe alternate clock before PLL retuning;
+        this patch does not raise the default frequency.
+      '';
+    };
     "clk-cv18xx-switch-away-from-active-cpu-divider" = {
       origin = "local";
       upstreamStatus = "draft";

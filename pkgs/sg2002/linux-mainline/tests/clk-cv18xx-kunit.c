@@ -7,6 +7,7 @@
 #include <linux/spinlock.h>
 
 #include "clk-cv18xx-ip.h"
+#include "clk-cv18xx-pll.h"
 
 enum {
 	MUX0,
@@ -235,6 +236,68 @@ static void cv18xx_mmux_unsafe_temporary_rate(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
 }
 
+static void cv18xx_pll_lock_status(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	unsigned int bit;
+
+	/* G2 uses indices 0..4; G6 uses 0..2. Other PLLs may be updating. */
+	for (bit = 0; bit < 5; bit++) {
+		writel(BIT(bit + 16) | (GENMASK(4, 0) & ~BIT(bit)),
+		       &ctx->regs[GATE]);
+		KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+							     GATE * 4, BIT(bit)), 0);
+	}
+
+	/* Updating, unlocked, or locked but still updating must not succeed. */
+	writel(BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+	writel(0, &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+	writel(BIT(16) | BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+}
+
+static void cv18xx_ipll_rates(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	static const struct cv1800_clk_pll_limit limits = {
+		.pre_div = _CV1800_PLL_LIMIT(1, 127),
+		.div = _CV1800_PLL_LIMIT(6, 127),
+		.post_div = _CV1800_PLL_LIMIT(1, 127),
+		.ictrl = _CV1800_PLL_LIMIT(0, 7),
+		.mode = _CV1800_PLL_LIMIT(0, 3),
+	};
+	struct cv1800_clk_pll pll = {
+		.common = { .base = (void __iomem *)ctx->regs, .lock = &ctx->lock },
+		.pll_reg = MUX0 * 4,
+		.pll_status = CV1800_CLK_BIT(GATE * 4, 0),
+		.pll_limit = &limits,
+	};
+	const struct clk_ops *ops = &cv1800_clk_ipll_ops;
+	u32 before;
+
+	writel(BIT(16), &ctx->regs[GATE]);
+	writel(BIT(31) | BIT(7), &ctx->regs[MUX0]);
+	KUNIT_ASSERT_EQ(test, ops->set_rate(&pll.common.hw, 1000000000, 25000000), 0);
+	KUNIT_EXPECT_EQ(test, ops->recalc_rate(&pll.common.hw, 25000000), 1000000000UL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]) & ~_PLL_ALL_FIELD_MASK,
+			BIT(31) | BIT(7));
+
+	before = readl(&ctx->regs[MUX0]);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 0, 25000000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]), before);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 1, 25000000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]), before);
+
+	writel(BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 850000000, 25000000),
+			-ETIMEDOUT);
+}
+
 static struct kunit_case cv18xx_clock_cases[] = {
 	KUNIT_CASE(cv18xx_mmux_parents),
 	KUNIT_CASE(cv18xx_mmux_missing_selector),
@@ -242,6 +305,8 @@ static struct kunit_case cv18xx_clock_cases[] = {
 	KUNIT_CASE(cv18xx_bypass_mux_parents),
 	KUNIT_CASE(cv18xx_mmux_cpufreq),
 	KUNIT_CASE(cv18xx_mmux_unsafe_temporary_rate),
+	KUNIT_CASE(cv18xx_pll_lock_status),
+	KUNIT_CASE(cv18xx_ipll_rates),
 	{}
 };
 
