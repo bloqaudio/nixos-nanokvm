@@ -17,6 +17,7 @@
 # correctly (the reason the old path needed make-config.nix).
 {
   lib,
+  stdenv,
   fetchurl,
   linux_latest,
   audio ? false,
@@ -81,6 +82,12 @@ in
     BT_BNEP_PROTO_FILTER = lib.kernel.yes;
   };
   kernelPatches = (import ./patches.nix).patches;
+  # nixpkgs deliberately invokes the unwrapped kernel compiler, so the
+  # target cc-wrapper's scheduling defaults do not reach Kbuild. KCFLAGS
+  # applies to built-in C code and modules, without affecting host tools.
+  extraMakeFlags = lib.optionals
+    (stdenv.cc.isGNU && stdenv.hostPlatform.gcc ? tune)
+    [ "KCFLAGS=-mtune=${stdenv.hostPlatform.gcc.tune}" ];
   # Let olddefconfig drop options whose dependencies are unavailable.
   ignoreConfigErrors = true;
 })

@@ -7,10 +7,11 @@ CPU code does not automatically mean faster SD, USB or hardware encoding.
 ## Compiler configuration
 
 The CV181x NixOS platform selects `gcc.tune = "thead-c906"`. This supplies
-GCC's scheduling/cost model throughout the target package set, including
-libc, without changing the instruction set or ABI. Native build tools keep
-their own target. Rust, Go, prebuilt binaries and the independently packaged
-C906L firmware are not implicitly retuned by this GCC setting.
+GCC's scheduling/cost model to target C/C++ packages using the compiler
+wrapper, including libc, without changing the instruction set or ABI. Native
+build tools keep their own target. Rust, Go, prebuilt binaries and the
+independently packaged C906L firmware are not implicitly retuned by this
+GCC setting.
 
 The pinned nixpkgs compiler wrapper omits RISC-V from its supported-tuning
 dispatch. `pkgs/sg2002/c906-tuning.nix` uses the wrapper's extension point to
@@ -19,6 +20,15 @@ so an explicit package override remains possible. The regression check
 inspects the final and libc-bootstrap wrappers, asks GCC which tuning is
 active, checks a caller override, and runs C and C++ programs under the C906
 QEMU model. It also checks that vector instructions were not enabled.
+
+The mainline kernel uses nixpkgs' unwrapped compiler and therefore needs
+the same platform setting passed explicitly through Kbuild's standard
+`KCFLAGS`. This covers built-in C code and modules compiled in the kernel
+build; it does not change host-tool flags. The regression check also builds
+a probe object through Kbuild using the kernel's actual compiler and make
+flags, and verifies that an untuned platform does not acquire this flag.
+Out-of-tree modules must use the target compiler wrapper or inherit the
+kernel's `commonMakeFlags` to receive the same tuning.
 
 This changes derivation identities across the target closure and therefore
 requires rebuilding packages that a generic RISC-V binary cache cannot supply.
