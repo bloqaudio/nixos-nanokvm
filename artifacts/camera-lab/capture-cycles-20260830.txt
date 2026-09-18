@@ -1,4 +1,4 @@
-Fresh post-fix hardware run on strix-4, after a controlled `systemctl reboot -ff`
+Fresh post-fix hardware run on the test host, after a controlled `systemctl reboot -ff`
 and re-boot with the FIT built from the current GC4653 patch. Target was a
 LicheeRV Nano B-W DT (`Linux nanokvm-nfs-live ... 7.2.0-rc5 ... riscv64`),
 using `/dev/v4l-subdev0` discovered from the media graph and `/dev/video0`.

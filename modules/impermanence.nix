@@ -1,5 +1,4 @@
-# Thin wrapper over the upstream impermanence module, adapted from
-# nixos-config's modules/impermanence.nix. Provides the default
+# Thin wrapper over the upstream impermanence module. Provides the default
 # persistent-state set (machine-id, nixos state dir, random seed) plus
 # a seed-existing mechanism that copies current state into the
 # persistent volume before the first bind mount.

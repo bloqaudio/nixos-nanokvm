@@ -374,7 +374,7 @@ with lib.kernel; {
   PCIE_FU740 = no;
   PCIE_STARFIVE_HOST = no;
   PHY_STARFIVE_JH7110_PCIE = no;
-  # Still no NVMe/SCSI/ATA anywhere in this fleet; PCI coming back must
+  # Still no NVMe/SCSI/ATA anywhere in this deployment; PCI coming back must
   # not drag the block-driver zoo in behind it.
   SCSI = no;
   ATA = no;
@@ -480,7 +480,7 @@ with lib.kernel; {
   # allocator cannot colonize. VPSS is deliberately NOT pool-bound (0048):
   # rmem dma_ops cannot map imported dma-bufs. The default CMA serves the
   # VPSS<->encoder middle buffers at 1080p (4 x 3.13 MiB) — 24 MiB keeps
-  # them out of the pool, and is only affordable once the fleet drops the
+  # them out of the pool, and is only affordable once the deployment drops the
   # ~88 MiB preserved-initrd pin (usbGadget.stage2.preserveInitrd=false).
   CMA = yes;
   DMA_CMA = yes;

@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -23,6 +24,7 @@ from usb_boot_mainline import (
     C906L_VECTOR_LOW_REG,
     apply_c906l_reset_sequence,
     arm_uboot_watchdog,
+    bootm_handoff_commands,
     SG2002_WDT_BASE,
     decode_c906l_manifest,
     decode_c906l_snapshot,
@@ -129,7 +131,45 @@ class WatchdogTests(unittest.TestCase):
                 self.assertEqual(len(writes), failing_write + 1)
 
 
+class BootHandoffTests(unittest.TestCase):
+    def test_legacy_fastboot_limit_and_lossless_bootargs(self):
+        values = [
+            '',
+            'console=ttyS0,115200 earlycon=sbi panic=10 oops=panic ' * 8,
+            'init=/nix/store/' + 'a' * 100 + '/init',
+            'quoted="two words" literal=$value slash=\\ backtick=`true` utf8=é',
+        ]
+        for value in values:
+            with self.subTest(value=value):
+                setup, handoff = bootm_handoff_commands(value)
+                for command in setup + [handoff]:
+                    self.assertLessEqual(len(('oem run:' + command).encode()), 64)
+                # Exercise quoting and expansion with POSIX shell semantics.
+                script = 'setenv() { export "$1=${2-}"; }; bootargs=old;\n'
+                script += '\n'.join(setup) + '\nprintf %s "$bootargs"'
+                result = subprocess.check_output(['sh', '-c', script], text=True)
+                self.assertEqual(result, value)
+                self.assertTrue(handoff.endswith('bootm 82000000'))
+
+    def test_no_bootargs_override_or_soft_disconnect(self):
+        setup, handoff = bootm_handoff_commands(None, False)
+        self.assertFalse(any('bootargs' in command for command in setup))
+        self.assertEqual(handoff, 'bootm 82000000')
+
+    def test_rejects_control_characters(self):
+        for value in ['a\nb', 'a\rb', 'a\0b']:
+            with self.assertRaises(ValueError):
+                bootm_handoff_commands(value)
+
+
 class UBootOutputTests(unittest.TestCase):
+    def test_memory_dump_accepts_debian_fastboot_status_padding(self):
+        output = (
+            " " * 51 + "(bootloader) 03010000: 00000001                             ....\n"
+            "OKAY [  0.000s]\nFinished. Total time: 0.000s\n"
+        )
+        self.assertEqual(parse_uboot_words(output, 0x03010000, 1), [1])
+
     def test_crc32_accepts_fastboot_console_prefix(self):
         output = (
             "(bootloader) crc32 for 88000000 ... 88002fff ==> 961ca69b\n"

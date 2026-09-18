@@ -19,7 +19,7 @@ nixpkgs: rec {
   # this — lose nothing.
   #
   # Exported through the flake as `nixosModules.boards.<path>` so a
-  # downstream fleet can graft a board onto its own `lib.nixosSystem`
+  # downstream deployment can graft a board onto its own `lib.nixosSystem`
   # (shared base modules, deployment options, …) instead of consuming
   # the finished nixosConfiguration.
   mkBoardModules =

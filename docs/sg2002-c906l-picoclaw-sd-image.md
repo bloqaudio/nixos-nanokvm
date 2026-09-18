@@ -1,5 +1,8 @@
 # PicoClaw C906L LCD SD image
 
+Historical stage-2 instructions: the SD catalog is no longer published by
+this repository, so the commands below are retained only as historical notes. For a shareable, diskless image use [the standalone USB initrd](usb-initrd.md).
+
 `boards.picoclaw.mainline.sd.c906l-lcd` builds a persistent, mainline-kernel
 SD image for the LicheeRV-Nano PicoClaw.  Linux renders through the standard
 DRM/KMS and fbdev interfaces; the C906L firmware owns LCD SPI1 and GPIOA,

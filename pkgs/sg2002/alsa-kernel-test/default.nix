@@ -3,7 +3,7 @@
 stdenv.mkDerivation {
   pname = "sg2002-alsa-kernel-test";
   version = "1";
-  src = ../../../artifacts/camera-lab-strix4/alsa-kernel-test.c;
+  src = ../../../artifacts/camera-lab/alsa-kernel-test.c;
   dontUnpack = true;
   dontConfigure = true;
 

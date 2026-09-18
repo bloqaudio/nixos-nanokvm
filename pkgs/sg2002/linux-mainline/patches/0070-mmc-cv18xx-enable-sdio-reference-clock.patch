@@ -1,0 +1,85 @@
+From: NanoKVM developers <nanokvm@localhost>
+Subject: [PATCH] mmc: sdhci-of-dwcmshc: acquire CV18xx timer clock
+
+SDIO1 needs its separate 100 kHz reference even when the data and AXI
+clocks are enabled. Firmware may leave it on, hiding the missing consumer
+until clk_disable_unused runs. On PicoClaw the C906L-backed vmmc provider
+defers MMC probe into the initrd, exposing repeated internal-clock-stable
+timeouts and preventing SDIO enumeration.
+
+Describe the optional timer clock using the existing clock-name convention
+and acquire it through CCF for the lifetime of the host. Managed cleanup
+balances the reference on probe failure and unbind. Old device trees with
+only core/bus remain supported. No global keep-clocks-on workaround or
+GPIO ownership changes are needed.
+
+---
+diff --git a/drivers/mmc/host/sdhci-of-dwcmshc.c b/drivers/mmc/host/sdhci-of-dwcmshc.c
+--- a/drivers/mmc/host/sdhci-of-dwcmshc.c
++++ b/drivers/mmc/host/sdhci-of-dwcmshc.c
+@@ -1108,6 +1108,7 @@ static int cv18xx_sdhci_init(struct device *dev, struct sdhci_host *host,
+ 	struct dwcmshc_priv *priv = sdhci_pltfm_priv(pltfm_host);
+ 	struct reset_control *rst;
+ 	struct gpio_desc *wifi_pwr;
++	struct clk *timer;
+ 	u32 pll_reg_addr, pll_div, bypass_reg_addr, bypass_bit;
+ 	u32 rtc2ap_reg, pad_cfg_reg, wifi_pinmux_reg;
+ 	u32 sd_pwrsw_reg, sd_pwrsw_val;
+@@ -1114,5 +1115,12 @@ static int cv18xx_sdhci_init(struct device *dev, struct sdhci_host *host,
+ 	int ret;
+ 
++	/* The independent reference is required for internal clock stability,
++	 * including when the host probes after firmware clocks are gated. */
++	timer = devm_clk_get_optional_enabled(dev, "timer");
++	if (IS_ERR(timer))
++		return dev_err_probe(dev, PTR_ERR(timer),
++				     "failed to enable timer clock\n");
++
+ 	rst = devm_reset_control_array_get_optional_exclusive(dev);
+ 	if (IS_ERR(rst))
+ 		return dev_err_probe(dev, PTR_ERR(rst),
+diff --git a/Documentation/devicetree/bindings/mmc/snps,dwcmshc-sdhci.yaml b/Documentation/devicetree/bindings/mmc/snps,dwcmshc-sdhci.yaml
+--- a/Documentation/devicetree/bindings/mmc/snps,dwcmshc-sdhci.yaml
++++ b/Documentation/devicetree/bindings/mmc/snps,dwcmshc-sdhci.yaml
+@@ -170,16 +170,21 @@ allOf:
+       properties:
+         compatible:
+           contains:
+-            const: sophgo,sg2042-dwcmshc
++            enum:
++              - sophgo,sg2042-dwcmshc
++              - sophgo,cv1800b-dwcmshc
++              - sophgo,sg2002-dwcmshc
+ 
+     then:
+       properties:
+         clocks:
++          minItems: 1
+           items:
+             - description: core clock
+             - description: bus clock
+             - description: timer clock
+         clock-names:
++          minItems: 1
+           items:
+             - const: core
+             - const: bus
+@@ -201,6 +206,18 @@ allOf:
+             - const: block
+             - const: timer
+ 
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: sophgo,sg2042-dwcmshc
++    then:
++      properties:
++        clocks:
++          minItems: 3
++        clock-names:
++          minItems: 3
++
+   - if:
+       properties:
+         compatible:

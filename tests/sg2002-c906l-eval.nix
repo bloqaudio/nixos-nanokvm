@@ -24,20 +24,13 @@ assert config.sg2002.auxCore.firmware.contractSha256
 assert config.sg2002.auxCore.firmware.contractSha256
   == config.system.build.fip.c906lContract.contractSha256;
 assert config.sg2002.watchdogKeeper.initrd.enable;
-assert config.sg2002.watchdogKeeper.stage2.enable;
-assert config.sg2002.watchdogKeeper.healthHost == "10.55.0.2";
+assert !config.sg2002.watchdogKeeper.stage2.enable;
+assert config.sg2002.watchdogKeeper.healthHost == null;
 assert !config.sg2002.usbGadget.console.enable;
 assert config.sg2002.usbGadget.network.enable;
-assert config.nanokvm.usbControl.initrd.enable;
-assert config.nanokvm.usbControl.stage2.enable;
-assert builtins.hasAttr "usb-debug-shell" config.boot.initrd.systemd.services;
-assert builtins.hasAttr "usb-debug-shell" config.systemd.services;
-assert artifactArgs.usbConsole == false;
-assert (artifactArgs.uartConsole or "ttyS0") == "ttyS0";
 assert !config.services.nanokvm.enable;
 assert !config.services.openssh.enable;
-assert builtins.length packageNames == 4;
-assert builtins.elem "sg2002-c906l-ctl-all-timers" packageNames;
+assert builtins.hasAttr "sg2002-c906l-ctl" config.boot.initrd.systemd.extraBin;
 assert !firmwareMismatch.success;
 assert !fdtMismatch.success;
 assert !duplicatePeripherals.success;

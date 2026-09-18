@@ -87,7 +87,7 @@ kernel's own DMA/V4L2 APIs, without the factory module ABI.
 
 ## Board evidence: 2026-09-13
 
-The LicheeRV camera attached to strix-4 RAM-booted Linux 7.2.0-rc5 from commit
+The LicheeRV camera attached to the test host RAM-booted Linux 7.2.0-rc5 from commit
 `7edcc3b` with runner
 `/nix/store/dcsvm3hz9d05ibm66f14jn0pfk2fhd03-usb-boot`. The final bridge was
 cross-built from `c4656b6` and copied into target `/tmp`; its store package was
@@ -136,6 +136,4 @@ should be silently represented as a completely warning-free production path.
 
 Host regression tests exercise the real VPSS queue/format functions with
 ASan/UBSan and the bridge format/frame-accounting helpers. Both pass. Full
-cross-builds and `nix flake check --no-build` also pass. Binary captures and
-logs are archived outside the repository under
-`/mnt/Home/src/nixos-nanokvm-local-archive-20260913.Zsyivt/mainline-isp`.
+cross-builds and `nix flake check --no-build` also pass. Large binary captures and transient logs are not included in this repository.

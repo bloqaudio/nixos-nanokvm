@@ -130,7 +130,8 @@ _CRC32_LINE = re.compile(
     re.IGNORECASE,
 )
 _MD_LONG_LINE = re.compile(
-    r"(?im)^(?:\(bootloader\)\s*)?([0-9a-fA-F]{8,16}):\s+"
+    # Debian platform-tools 29 pads the first INFO line to its status column.
+    r"(?im)^[ \t]*(?:\(bootloader\)[ \t]*)?([0-9a-fA-F]{8,16}):\s+"
     r"((?:[0-9a-fA-F]{8}(?:\s+|$)){1,4})"
 )
 
@@ -519,6 +520,35 @@ def acquire_rom_downloader_lock():
             return None
         raise
     return lock
+
+
+def bootm_handoff_commands(bootargs, soft_disconnect=True):
+    """Stay within the original fastboot protocol's 64-byte command limit.
+
+    Older platform-tools enforce this limit locally, before sending anything.
+    Build bootargs through short, quoted appends, then disconnect and boot in
+    one final command (there is no USB channel after the disconnect).
+    """
+    commands = []
+    if bootargs is not None:
+        if any(c in bootargs for c in '\0\r\n'):
+            raise ValueError('bootargs must be a single line without NUL bytes')
+        commands.append('setenv bootargs')
+        prefix = 'setenv bootargs "${bootargs}'
+        chunk = ''
+        for char in bootargs:
+            escaped = '\\' + char if char in '\\"$`' else char
+            if len(('oem run:' + prefix + chunk + escaped + '"').encode()) > 64:
+                commands.append(prefix + chunk + '"')
+                chunk = ''
+            chunk += escaped
+        if chunk:
+            commands.append(prefix + chunk + '"')
+    commands += ['setenv fdt_high 0xffffffff', 'setenv initrd_high 0xffffffff']
+    handoff = ''
+    if soft_disconnect:
+        handoff = f'mw.l {DWC2_DCTL_ADDR:x} {DWC2_DCTL_SFTDISCON:x}; sleep 1; '
+    return commands, handoff + f'bootm {FASTBOOT_BUF_ADDR:x}'
 
 
 def find_nanokvm_fastboot_serial():
@@ -981,7 +1011,7 @@ def main():
         outsink = None if a.rom_dl_verbose else subprocess.DEVNULL
         # Per-attempt timeout floored high (120s): a *successful* push is
         # multi-stage (1st-stage FSBL → cvi_utask 2nd-stage → OpenSBI+
-        # U-Boot). The Claw path through fuckup has taken about 70s in real
+        # U-Boot). The Claw path through the test host has taken about 70s in real
         # use; a 45s ceiling killed a valid push mid-2nd-stage. EIO attempts
         # (device cycled mid-send) still return quickly, so the high ceiling
         # only bites on a real push — exactly when we want to let it finish.
@@ -1126,47 +1156,31 @@ def main():
     # If bootm succeeds and hands off to the kernel, U-Boot never sends
     # the OKAY response, so host-side `fastboot` returns an error /
     # times out — that's expected and harmless.
-    bootargs_cmd = (
-        f'setenv bootargs "{a.bootargs}"; ' if a.bootargs else ''
+    setup_commands, bootm_cmd = bootm_handoff_commands(
+        a.bootargs, a.handoff_soft_disconnect,
     )
-    handoff_cmd = ''
-    if a.handoff_soft_disconnect:
-        handoff_cmd = (
-            f'mw.l 0x{DWC2_DCTL_ADDR:08x} '
-            f'0x{DWC2_DCTL_SFTDISCON:08x}; sleep 1; '
-        )
-    bootm_cmd = (
-        f'{handoff_cmd}'
-        f'{bootargs_cmd}'
-        f'setenv fdt_high 0xffffffff; '
-        f'setenv initrd_high 0xffffffff; '
-        f'bootm 0x{FASTBOOT_BUF_ADDR:x}'
-    )
+    for command in setup_commands:
+        run_uboot_checked(command)
     log(f"issuing: oem run:{bootm_cmd}")
-    # Three normal outcomes:
-    #   1. Kernel boots cleanly → U-Boot's USB gadget tears down →
-    #      fastboot sees a disconnect → returncode != 0, harmless.
-    #   2. bootm fails fast and returns → returncode == 0 with output —
-    #      rare but useful (means the FIT is broken).
-    #   3. Kernel panics → hardware watchdog resets the board → U-Boot
-    #      comes back up and re-enumerates → host fastboot session is
-    #      now stuck on the original `oem run`, which never gets an
-    #      OKAY → subprocess timeout fires. We swallow the timeout and
-    #      let the caller (mkUsbBoot wrapper) attach picocom to the
-    #      ACM gadget that comes up post-reset, so the panic trace is
-    #      capturable.
+    # A transport disconnect is expected, but is not proof Linux booted.
+    # In particular, a local fastboot error must never be reported as success.
     try:
         r = subprocess.run(fastboot_cmd('oem', f'run:{bootm_cmd}'),
                            capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
-            log(f"bootm returned (unexpected — kernel may not have started):"
+            log(f"ERROR: bootm returned instead of handing off:"
                 f"\n{r.stdout}\n{r.stderr}")
-        else:
-            log("bootm handed off (fastboot disconnected — kernel is running)")
+            sys.exit(1)
+        time.sleep(1)
+        if find_nanokvm_fastboot_serial() is not None:
+            log(f"ERROR: fastboot failed and U-Boot is still enumerated:"
+                f"\n{r.stdout}\n{r.stderr}")
+            sys.exit(1)
+        log("U-Boot USB disconnected after bootm; verify Linux via SSH or UART")
     except subprocess.TimeoutExpired:
-        log("oem-run timed out — kernel likely panicked and watchdog "
-            "reset the board (fastboot session never got an OKAY). "
-            "Continuing so picocom can attach to the post-reset ACM gadget.")
+        log("ERROR: bootm USB response timed out; Linux boot is unconfirmed. "
+            "Inspect UART or wait for watchdog recovery.")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

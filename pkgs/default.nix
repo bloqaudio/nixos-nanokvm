@@ -133,7 +133,6 @@ in
     nanokvm-patched-src = final.nanokvm-patched-src;
   };
   nanokvm-factory-runtime = final.callPackage ./nanokvm-factory-runtime { };
-  nanokvm-host-keys = final.callPackage ./nanokvm-host-keys { };
   sg2002-coda980-firmware = final.callPackage ./sg2002/coda980-firmware { };
   nanokvm-server = final.callPackage ./nanokvm-server { };
 
@@ -165,35 +164,7 @@ in
     targetSystem = "riscv64-linux";
   };
 
-  nbd-client-minimal = final.callPackage ./nbd-client-minimal { };
 
-  nanokvm-erofs-rootfs-for = toplevel:
-    final.callPackage ./erofs-rootfs {
-      inherit toplevel;
-    };
-
-  # Throughput benchmark for the USB transport. Wrapped as a
-  # writeShellApplication so its closure carries jq+iperf3+fio+ssh
-  # by reference; `nix run .#nanokvm-bench-usb-transport` works
-  # without nested `nix shell` calls that add eval noise to the
-  # measurement.
-  nanokvm-bench-usb-transport = final.writeShellApplication {
-    name = "nanokvm-bench-usb-transport";
-    runtimeInputs = with final; [
-      coreutils
-      fio
-      gnugrep
-      gnused
-      iperf3
-      iputils # ping
-      jq
-      openssh
-    ];
-    text = builtins.readFile ../scripts/bench-usb-transport.sh;
-  };
-
-  nanokvm-kexec-payload-erofs = args:
-    final.callPackage ./kexec-payload-erofs args;
 
   sophgo-host-tools = final.callPackage ./sophgo-host-tools { };
 

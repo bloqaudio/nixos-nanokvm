@@ -334,6 +334,14 @@ let
         exit 1
       fi
       test "$(fdtget -t s "$out" /soc/mmc@4320000 status)" = okay
+      test "$(fdtget -t s "$out" /soc/mmc@4320000 clock-names)" = "core bus timer"
+      set -- $(fdtget -t x "$out" /c906l-control clocks)
+      clock_provider="$1"
+      set -- $(fdtget -t x "$out" /soc/mmc@4320000 clocks)
+      test "$#" -eq 6
+      test "$1 $3 $5" = "$clock_provider $clock_provider $clock_provider"
+      # CLK_AXI4_SD1, CLK_SD1 and CLK_SD1_100K from sophgo,cv1800.h.
+      test "$2 $4 $6" = "1e 1f 20"
       test "$(fdtget -t x "$out" /soc/mmc@4320000 vmmc-supply)" = \
         "$(fdtget -t x "$out" /c906l-wifi-power phandle)"
       test "$(fdtget -t x "$out" /c906l-wifi-power memory-region)" = \

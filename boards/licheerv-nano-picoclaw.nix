@@ -6,8 +6,8 @@
 # board carries the AIC8800 WiFi chip, so the WiFi-variant DTB and the
 # wifi-aic8800 mixin apply.
 #
-# This unit has no SD card: it boots exclusively over the USB recovery
-# path (ROM USB-DL -> FIP -> fastboot -> FIT), root-on-NFS.
+# USB recovery uses ROM USB-DL -> FIP -> fastboot -> kernel/initrd FIT.
+# Storage and any stage-2 deployment policy belong to the consuming profile.
 { lib, ... }: {
   imports = [
     ../platform/cv181x.nix

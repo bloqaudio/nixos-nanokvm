@@ -54,6 +54,10 @@ let
       patch = ./patches/0069-mmc-cv18xx-preserve-bus-voltage-with-vmmc.patch;
     })
     (patch {
+      name = "mmc-cv18xx-enable-sdio-reference-clock";
+      patch = ./patches/0070-mmc-cv18xx-enable-sdio-reference-clock.patch;
+    })
+    (patch {
       name = "dmaengine-cv1800b-dmamux-fix-channel-allocation-order";
       patch = ./patches/0003-dmaengine-cv1800b-dmamux-fix-channel-allocation-order.patch;
     })
@@ -296,6 +300,12 @@ let
   ];
 
   meta = {
+    "mmc-cv18xx-enable-sdio-reference-clock" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "CV18xx MMC consumes its optional timer clock upstream";
+      notes = "Late SDIO probe requires the 100 kHz reference after unused firmware clocks are gated; verified with a CCF consumer on PicoClaw.";
+    };
     "mmc-cv18xx-preserve-bus-voltage-with-vmmc" = {
       origin = "local";
       upstreamStatus = "draft";

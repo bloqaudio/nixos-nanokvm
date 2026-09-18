@@ -1,10 +1,9 @@
-# LicheeRV/GC4653 kernel lab — strix-4
+# LicheeRV/GC4653 kernel lab
 
 This directory records the isolated hardware bring-up of the LicheeRV Nano
-camera board attached to `strix-4`. The USB path is used only for ROM/FIP/FIT
+camera board attached to the test host. The USB path is used only for ROM/FIP/FIT
 bootstrap and optional recovery; where the board's RJ45 is present, target
-NFS/SSH and camera data use its Ethernet address. Do not use the production
-`licheerv` identity (`192.168.23.29`) during lab runs.
+NFS/SSH and camera data use its Ethernet address. Use an isolated test configuration for hardware bring-up.
 
 Large frame captures and transient logs stay off the repository. Record exact
 commands, concise verbatim output, kernel/media evidence, and any failure
@@ -12,13 +11,13 @@ signatures here after each run.
 
 ## Attachment/topology
 
-On `strix-4`, USB bus `7-1` enumerates the board first as Sipeed's ROM
+On the test host, USB bus `7-1` enumerates the board first as Sipeed's ROM
 download gadget (`18d1:d00d`, product `USB download gadget`) and after FIT
 boot as `1d6b:0104`, product `Sipeed SG2002 (NixOS)`, with CDC ACM
 `/dev/ttyACM0` and CDC Ethernet `usb0` (`10.55.0.2` host /
 `10.55.0.1` target). USB is bootstrap/control; the attached RJ45 is Link Up
 100 Mb/s full duplex and carries runtime NFS/SSH. DHCP assigned changing
-non-production Ethernet leases across resets, so no fixed fleet address was
+non-production Ethernet leases across resets, so no fixed deployment address was
 claimed.
 
 The live target reports `Sipeed LicheeRV Nano B-W`. Dynamic media discovery
@@ -85,7 +84,7 @@ I built a kernel from the same source and patches with these eight symbols
 built in: `SOUND`, `SND`, `SND_PCM`, `SND_SOC`, `SND_SIMPLE_CARD`,
 `SND_SOC_CV1800B_TDM`, `SND_SOC_CV1800B_ADC_CODEC`, and
 `SND_SOC_CV1800B_DAC_CODEC`. The generated kernel config was accepted and the
-Image grew by 3,584 bytes (19,802,624 vs 19,799,040); no fleet profile was
+Image grew by 3,584 bytes (19,802,624 vs 19,799,040); no deployment profile was
 changed.
 
 Verbatim live-kernel enumeration:

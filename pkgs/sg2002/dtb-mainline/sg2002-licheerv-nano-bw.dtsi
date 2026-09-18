@@ -138,6 +138,10 @@
  *     the Sophgo vendor cv181x-resets.h (0x03003000 bit 17: 1=running). */
 &sdhci1 {
 	status = "okay";
+	/* The internal reference must remain held even when probe is deferred
+	 * until after clk_disable_unused (e.g. a remote vmmc provider). */
+	clocks = <&clk CLK_AXI4_SD1>, <&clk CLK_SD1>, <&clk CLK_SD1_100K>;
+	clock-names = "core", "bus", "timer";
 	bus-width = <4>;
 	pinctrl-0 = <&sdhci1_cfg &wifi_pwr_cfg>;
 	pinctrl-names = "default";

@@ -60,7 +60,7 @@ buildUBoot {
     CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
     # The upstream board defconfig fixes SYS_CBSIZE at 512 bytes. NixOS
     # extlinux APPEND lines routinely exceed that once an init store path and
-    # fleet kernel parameters are included; pxe_utils otherwise abandons the
+    # deployment kernel parameters are included; pxe_utils otherwise abandons the
     # label with "bootarg overflow" after loading its kernel and initrd.
     CONFIG_SYS_CBSIZE=2048
     CONFIG_SYS_PBSIZE=2080

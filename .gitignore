@@ -3,11 +3,11 @@ result-*
 .direnv
 
 # Local access material. These are useful for standalone images, but
-# downstream fleet configs should own real users and keys.
+# downstream deployment configs should own real users and keys.
 authorized_keys
 
 # Legacy/local wpa_supplicant snippets. Credentials belong in the
-# downstream fleet config or secrets system, not in this reusable repo.
+# downstream deployment config or secrets system, not in this reusable repo.
 wifi.conf
 
 # Per-device snapshots taken before flashing (wifi PSK, tailscaled state,

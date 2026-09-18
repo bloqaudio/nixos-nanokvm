@@ -48,7 +48,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Stateless-root pattern from ../nixos-config: tmpfs / with
+    # Optional stateless-root support: tmpfs / with
     # opt-in bind-mounted state. Nothing enables it on the NFS-live
     # boards (they're fully ephemeral), but the module is wired in so
     # boards that later gain a writable backing can just set
@@ -69,7 +69,6 @@
       lib = nixpkgs.lib;
       protocol = import ./lib/protocol.nix;
       mkBoardFn = import ./lib/mkBoard.nix nixpkgs;
-      hostShellPrelude = import ./lib/host-prelude.nix protocol;
 
       # Host-build platforms.
       #
@@ -179,7 +178,7 @@
 
       # The same composition as a plain importable module, for
       # downstream flakes that build their own nixosSystem around a
-      # board (fleet base modules, Colmena deployment options, …).
+      # board (deployment base modules, Colmena deployment options, …).
       mkBoardModule = args: {
         imports = mkBoardFn.mkBoardModules (resolveBoardArgs args);
       };
@@ -301,14 +300,7 @@
           qemu-c906-virt = qemuVirtSystem;
         };
 
-      # =============================================================
-      # Helpers that build the host-side artifacts (FIT, kexec payload,
-      # rootfs, and the runner shell scripts). Body lives in
-      # lib/artifacts.nix so this file doesn't carry ~450 lines of bash.
-      # =============================================================
-      mkArtifacts = import ./lib/artifacts.nix {
-        inherit lib hostShellPrelude;
-      };
+      mkInitrdArtifacts = import ./lib/initrd-artifacts.nix { inherit lib; };
     in
     {
       overlays.default = import ./pkgs {
@@ -334,9 +326,9 @@
       nixosModules.spacemitK3RecoverySdImage = import ./modules/spacemit-k3-recovery-sd-image.nix;
       nixosModules.spacemitK3KexecInstaller = import ./modules/spacemit-k3-kexec-installer.nix;
       nixosModules.spacemitK3InitrdRescue = import ./modules/spacemit-k3-initrd-rescue.nix;
-      # Every catalog entry as a plain module. Downstream fleets import e.g.
-      # `nixosModules.boards.pcie.mainline.sd` into their own
-      # lib.nixosSystem to make the board a regular fleet member; the
+      # Every catalog entry as a plain module. Consumers import e.g.
+      # `nixosModules.boards.pcie.mainline.initrd.default` into their own
+      # lib.nixosSystem to make the board a regular deployment member; the
       # module list is self-contained (no specialArgs required), so
       # Colmena-style re-instantiation from `_module.args.modules`
       # works without reconstructing anything.
@@ -352,231 +344,9 @@
           # "x86_64-linux". Don't try to construct it on aarch64.
           withBoardMatrix = hostSys == "x86_64-linux";
 
-          art = mkArtifacts pkgs;
-
-          # Specialise the artifact builders so the catalog-walker below
-          # can just call them with a catalog entry. The DTB each artifact
-          # boots comes from the entry's resolved `config.sg2002.fdt`, so
-          # nothing board-specific needs threading through here anymore.
-          entryCfg = entry: lib.getAttrFromPath entry.path boardSystems;
-          entryArtifactArgs = entry: entry.artifactArgs or { };
-          entryArtifactArg = name: default: entry: (entryArtifactArgs entry).${name} or default;
-          entryOled = entryArtifactArg "oled" false;
-          entryExtraBootargs = entryArtifactArg "extraBootargs" [ ];
-          entryRootfsBindIp = entryArtifactArg "rootfsBindIp" null;
-          entryRequireRootfsHostOverride = entryArtifactArg "requireRootfsHostOverride" false;
-          entryIncludeKexec = entryArtifactArg "includeKexec" true;
-          entryUsbConsole = entryArtifactArg "usbConsole" true;
-          entryUartConsole = entryArtifactArg "uartConsole" "ttyS0";
-          entryUsbBootTool = entry: cfg:
-            if cfg.config.sg2002.auxCore.enable
-            then pkgs.sg2002-usb-boot-for cfg.config.system.build.fipFastboot
-            else if entry.boardName == "licheerv-nano-picoclaw"
-            then pkgs.sg2002-usb-boot-picoclaw-splash
-            else pkgs.sg2002-usb-boot;
-
-          mkEntryPayload =
-            { entry
-            , cfg
-            , extraBootargs ? [ ]
-            ,
-            }:
-            art.mkKexecPayload {
-              name = "nanokvm-kexec-${entry.tag}.erofs";
-              inherit cfg extraBootargs;
-              oled = entryOled entry;
-              usbConsole = entryUsbConsole entry;
-              uartConsole = entryUartConsole entry;
-            };
-
-          mkEntryBootFit =
-            { entry
-            , cfg
-            , profile
-            , description
-            ,
-            }:
-            art.mkBootFit {
-              inherit cfg profile description;
-            };
-
-          liveArtifacts = entry:
-            let
-              cfg = entryCfg entry;
-              tag = entry.tag;
-              oled = entryOled entry;
-              rootfsBindIp = entryRootfsBindIp entry;
-              requireRootfsHostOverride = entryRequireRootfsHostOverride entry;
-              extraBootargs = entryExtraBootargs entry;
-              includeKexec = entryIncludeKexec entry;
-              usbConsole = entryUsbConsole entry;
-              rootfs = art.mkLiveRootfs cfg;
-              payload = mkEntryPayload {
-                inherit entry cfg;
-                extraBootargs =
-                  [
-                    "init=${cfg.config.system.build.toplevel}/init"
-                    "nanokvm.kexec_target=${tag}"
-                  ]
-                  ++ extraBootargs;
-              };
-              kexec = art.mkKexecRunner {
-                name = "kexec";
-                inherit payload rootfs oled rootfsBindIp requireRootfsHostOverride;
-                useRunningDtb = !oled && rootfsBindIp == null;
-              };
-              usb-boot = art.mkUsbBootRunner ({
-                name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry cfg;
-                inherit rootfsBindIp requireRootfsHostOverride;
-                fit = mkEntryBootFit {
-                  inherit entry cfg;
-                  profile = "live";
-                  description = "NanoKVM SG2002 USB NBD live boot (${tag})";
-                };
-                inherit rootfs;
-                bootargs = art.mkLiveBootargs {
-                  inherit cfg oled usbConsole;
-                  extra = extraBootargs;
-                  uartConsole = entryUartConsole entry;
-                };
-                waitForSsh = cfg.config.services.openssh.enable;
-              } // lib.optionalAttrs includeKexec {
-                onShellDetachCommand = "${kexec}/bin/kexec";
-              });
-            in
-            {
-              inherit rootfs usb-boot;
-            }
-            // lib.optionalAttrs includeKexec {
-              inherit payload kexec;
-            };
-
-          kernelTestArtifacts = entry:
-            let
-              cfg = entryCfg entry;
-              oled = entryOled entry;
-              payload = mkEntryPayload {
-                inherit entry cfg;
-              };
-              kexec = art.mkKexecRunner {
-                name = "kexec";
-                inherit payload oled;
-                useRunningDtb = !oled;
-              };
-              usb-boot = art.mkUsbBootRunner {
-                name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry cfg;
-                fit = mkEntryBootFit {
-                  inherit entry cfg;
-                  profile = "kernel-test";
-                  description = "NanoKVM SG2002 USB kernel test (${entry.tag})";
-                };
-                bootargs = art.mkKexecBootargs {
-                  extra = entryExtraBootargs entry;
-                  usbConsole = entryUsbConsole entry;
-                  uartConsole = entryUartConsole entry;
-                };
-                attachPicocom = true;
-              };
-            in
-            {
-              inherit payload kexec usb-boot;
-            };
-
-          debugArtifacts = entry:
-            let
-              cfg = entryCfg entry;
-              liveCfg = lib.getAttrFromPath entry.liveCfgPath boardSystems;
-              tag = entry.tag;
-              rootfs = art.mkLiveRootfs liveCfg;
-              payload = mkEntryPayload {
-                inherit entry cfg;
-                extraBootargs = [ "nanokvm.kexec_target=${tag}" ];
-              };
-              kexec = art.mkKexecRunner {
-                name = "kexec";
-                inherit payload rootfs;
-                useRunningDtb = true;
-              };
-              usb-boot = art.mkUsbBootRunner {
-                name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry cfg;
-                fit = mkEntryBootFit {
-                  inherit entry cfg;
-                  profile = "debug";
-                  description = "NanoKVM SG2002 USB NBD debug boot (${tag})";
-                };
-                inherit rootfs;
-                bootargs = art.kernelTestBootargs;
-              };
-            in
-            {
-              inherit rootfs payload kexec usb-boot;
-            };
-
-          sdImageArtifact = entry:
-            (lib.getAttrFromPath entry.path boardSystems).config.system.build.sdImage;
-
-          # NFS-rooted live: no rootfs image at all. The host's kernel
-          # nfsd exports /nix/store read-only; the target mounts it
-          # from the initrd (config baked into the system, no
-          # runtime bootargs needed). The kexec payload still travels
-          # over NBD — it's tiny and the agent already speaks it.
-          nfsLiveArtifacts = entry:
-            let
-              cfg = entryCfg entry;
-              tag = entry.tag;
-              payload = mkEntryPayload {
-                inherit entry cfg;
-                extraBootargs = [
-                  "init=${cfg.config.system.build.toplevel}/init"
-                  "nanokvm.kexec_target=${tag}"
-                ];
-              };
-              kexec = art.mkNfsKexecRunner {
-                name = "kexec";
-                inherit payload;
-                nfsServer = cfg.config.nanokvm.nfsLive.server;
-                nfsExport = cfg.config.nanokvm.nfsLive.storeExport;
-                # The payload carries the board's resolved fdt
-                # (wifi-variant DTB via the aic8800 mixin); don't keep
-                # whatever DTB the source kernel happened to boot with
-                # (e.g. the nowifi kernel-test one).
-                useRunningDtb = false;
-              };
-              usb-boot = art.mkNfsUsbBootRunner {
-                name = "usb-boot";
-                usbBootTool = entryUsbBootTool entry cfg;
-                fit = mkEntryBootFit {
-                  inherit entry cfg;
-                  profile = "live";
-                  description = "SG2002 USB NFS live boot (${tag})";
-                };
-                bootargs = art.mkLiveBootargs {
-                  inherit cfg;
-                  extra = entryExtraBootargs entry;
-                  uartConsole = entryUartConsole entry;
-                  usbConsole = entryUsbConsole entry;
-                };
-                nfsServer = cfg.config.nanokvm.nfsLive.server;
-                nfsExport = cfg.config.nanokvm.nfsLive.storeExport;
-                waitForSsh = cfg.config.services.openssh.enable;
-                onShellDetachCommand = "${kexec}/bin/kexec";
-              };
-            in
-            {
-              inherit payload kexec usb-boot;
-            };
-
-          # Dispatch table indexed by entry.artifact.
-          artifactBuilder = {
-            "kernel-test" = kernelTestArtifacts;
-            "live" = liveArtifacts;
-            "debug" = debugArtifacts;
-            "nfs-live" = nfsLiveArtifacts;
-            "sd" = sdImageArtifact;
-          };
+          artifactBuilder.initrd = entry:
+            mkInitrdArtifacts pkgs
+              (lib.getAttrFromPath entry.path boardSystems).config;
 
           # Walk the catalog and produce the nested legacyPackages.boards tree.
           boardsTree =
@@ -606,14 +376,11 @@
           # boards/ tree.
           inherit
             (pkgs)
-            nanokvm-bench-usb-transport
             nanokvm-patched-src
             nanokvm-factory-runtime
-            nanokvm-host-keys
             nanokvm-server
             nanokvm-server-nocamera
             nanokvm-web
-            nbd-client-minimal
             sg2002-c906l-contract
             sg2002-c906l-contract-timer4
             sg2002-c906l-contract-timer5
@@ -705,7 +472,6 @@
           # This helper executes on the K3 target; expose an actual riscv64
           # derivation instead of lying about the x86 host platform.
           spacemit-k3-flash-uefi = pkgs.pkgsCross.riscv64.spacemit-k3-flash-uefi;
-          sg2002-licheerv-nano-oled-dtbo = art.sg2002OledOverlayDtbo;
         });
 
       # `packages` must contain flat derivations. Nix installable lookup falls
@@ -714,20 +480,57 @@
         (_system: attrs: builtins.removeAttrs attrs [ "boards" ])
         self.legacyPackages;
 
-      # Hydra builds the canonical outputs, so downstream `nix build` calls
-      # use exactly the same store paths from cache.hellas.ai.
-      hydraJobs.x86_64-linux = {
+      # Never let an impure evaluator's local credentials enter CI images.
+      # These bundles exercise the real image builder but intentionally have
+      # no login keys. Users build their own keyed bundle; shared dependencies
+      # (kernel, firmware, modules, tools) retain the same cached store paths.
+      hydraJobs.x86_64-linux = let
+        ciPkgs = import nixpkgs {
+          system = "x86_64-linux";
+          config.allowUnfreePredicate = allowUnfreePredicate;
+          overlays = [ self.overlays.default ];
+        };
+        ciArtifacts = import ./lib/initrd-artifacts.nix {
+          inherit lib;
+          requireAuthorizedKeys = false;
+        };
+        imageJob = entry:
+          let
+            board = mkBoard {
+              board = entry.boardName;
+              inherit (entry) kernel profile mixins;
+              extraModules = (entry.modules or [ ]) ++ [
+                ({ lib, ... }: {
+                  boot.initrd.network.ssh.authorizedKeys = lib.mkForce [ ];
+                  # Use the normal key-file API to install an empty file:
+                  # sshd is exercised, but no key can authenticate to CI images.
+                  boot.initrd.network.ssh.authorizedKeyFiles = lib.mkForce [
+                    ./tests/fixtures/empty-authorized-keys
+                  ];
+                  sg2002.wifi.wpaConf = lib.mkForce null;
+                })
+              ];
+            };
+          in
+          assert board.config.boot.initrd.systemd.contents."/etc/ssh/authorized_keys.d/root".text == "";
+          assert board.config.sg2002.wifi.wpaConf == null;
+          (ciArtifacts ciPkgs board.config).bundle;
+      in {
+        images = builtins.listToAttrs (map (entry: {
+          name = entry.tag;
+          value = imageJob entry;
+        }) catalog);
         packages = {
           nanokvm-server = self.packages.x86_64-linux.nanokvm-server;
-          pcie-sd = self.legacyPackages.x86_64-linux.boards.pcie.mainline.sd;
-          picoclaw-c906l-lcd-sd = self.legacyPackages.x86_64-linux.boards.picoclaw.mainline.sd.c906l-lcd;
         };
         checks = lib.getAttrs [
+          "sg2002-initrd-eval"
+          "sg2002-initrd-boot"
+          "sg2002-usb-boot-runner"
           "sg2002-h264-bridge-colour"
           "sg2002-vpss-state"
           "sg2002-c906l-module-eval"
           "sg2002-c906l-picoclaw-module-eval"
-          "sg2002-c906l-picoclaw-sd-module-eval"
           "sg2002-c906l-picoclaw-dtb"
           "sg2002-c906l-picoclaw-control"
           "sg2002-c906l-picoclaw-framebuffer"
@@ -738,27 +541,37 @@
 
       checks = forAllSystems (pkgs:
         let
+          testCredentials = { lib, ... }: {
+            # Public upstream test fixture; used only in checks, never images.
+            boot.initrd.network.ssh.authorizedKeys = lib.mkForce [
+              (lib.fileContents (nixpkgs + "/nixos/tests/initrd-network-ssh/id_ed25519.pub"))
+            ];
+          };
+          checkedConfig = entry: (mkBoard {
+            board = entry.boardName;
+            inherit (entry) kernel profile mixins;
+            extraModules = (entry.modules or [ ]) ++ [ testCredentials ];
+          }).config;
           allTimersEntry = lib.findFirst
             (entry: entry.path
-              == [ "licheerv" "mainline" "live" "usb-c906l-all-timers" ])
+              == [ "licheerv" "mainline" "initrd" "c906l-all-timers" ])
             (throw "C906L all-timers catalog entry is missing")
             catalog;
           allTimersConfig =
-            boardSystems.licheerv.mainline.live.usb-c906l-all-timers.config;
+            checkedConfig allTimersEntry;
           picoclawLcdEntry = lib.findFirst
             (entry: entry.path
-              == [ "picoclaw" "mainline" "live" "usb-c906l-lcd" ])
+              == [ "picoclaw" "mainline" "initrd" "default" ])
             (throw "C906L PicoClaw LCD catalog entry is missing")
             catalog;
           picoclawLcdConfig =
-            boardSystems.picoclaw.mainline.live.usb-c906l-lcd.config;
-          picoclawLcdSdConfig = boardSystems.picoclaw.mainline.sd.c906l-lcd.config;
+            checkedConfig picoclawLcdEntry;
           failedAuxCoreEval = module:
             builtins.tryEval ((mkBoard {
               board = "licheerv-nano-w";
               kernel = "mainline";
-              profile = "usb-nbd-live";
-              extraModules = [ module ];
+              profile = "usb-initrd";
+              extraModules = [ module testCredentials ];
             }).config.system.build.toplevel.drvPath);
           firmwareMismatch = failedAuxCoreEval ({ lib, pkgs, ... }: {
             sg2002 = {
@@ -793,8 +606,9 @@
             (mkBoard {
               board = "licheerv-nano-picoclaw";
               kernel = "mainline";
-              profile = "usb-nbd-live";
+              profile = "usb-initrd";
               extraModules = [
+                testCredentials
                 ({ lib, pkgs, ... }: {
                   sg2002 = {
                     auxCore = {
@@ -813,6 +627,15 @@
           );
         in
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          sg2002-initrd-eval = import ./tests/usb-initrd-eval.nix {
+            inherit pkgs lib;
+            configs = map checkedConfig catalog;
+          };
+          sg2002-initrd-boot = import ./tests/usb-initrd-boot.nix {
+            inherit pkgs nixpkgs;
+            board = boardSystems.picoclaw.mainline.initrd.default;
+          };
+          sg2002-usb-boot-runner = pkgs.sg2002-usb-boot.tests.mainlineRunner;
           sg2002-h264-bridge-colour =
             pkgs.callPackage ./pkgs/sg2002/h264-bridge/test-colour.nix { };
           sg2002-vpss-state =
@@ -834,11 +657,6 @@
               inherit picoclawFdtMismatch;
               config = picoclawLcdConfig;
               artifactArgs = picoclawLcdEntry.artifactArgs or { };
-            };
-          sg2002-c906l-picoclaw-sd-module-eval =
-            import ./tests/sg2002-c906l-picoclaw-sd-eval.nix {
-              inherit pkgs;
-              config = picoclawLcdSdConfig;
             };
           sg2002-c906l-picoclaw-dtb = picoclawLcdConfig.sg2002.auxCore.fdt;
           sg2002-c906l-picoclaw-control =
@@ -946,101 +764,6 @@
       apps = forAllSystems (pkgs:
         let
           system = pkgs.stdenv.hostPlatform.system;
-          usbOledTop = pkgs.writeShellApplication {
-            name = "usb-oled-top";
-            text = ''
-                            case "''${1:-}" in
-                              -h|--help)
-                                cat <<'EOF'
-              Usage: nix run .#usb-oled-top -- [usb-boot options]
-
-              Boots or kexecs the LicheeRV-Nano-W OLED live image and runs top on
-              the 128x128 framebuffer via fbcon.
-
-              Defaults:
-                --attempts 120
-                --rom-dl-timeout 1800
-                --wait 120
-
-              Environment overrides:
-                NANOKVM_USB_BOOT_ATTEMPTS
-                NANOKVM_USB_BOOT_ROM_DL_TIMEOUT
-                NANOKVM_USB_BOOT_WAIT
-                NANOKVM_NBD_ROOTFS_PORT=auto|0|<port>
-                NANOKVM_NBD_ROOTFS_HOST=<target-visible-host-ip>
-                NANOKVM_NBD_ROOTFS_BIND=<host-bind-ip>
-                NANOKVM_NBD_CLEANUP=0
-                NANOKVM_ATTACH=shell|none
-                NANOKVM_ON_DETACH=hold|kexec|exit
-                NANOKVM_BOOT_MODE=auto|usb|kexec
-                NANOKVM_STATUS_LISTEN=1
-                USB_IFACE
-              EOF
-                                exit 0
-                                ;;
-                            esac
-
-                            usb_iface_present() {
-                              local path mac
-                              if [ -n "''${USB_IFACE:-}" ]; then
-                                [ -d "/sys/class/net/$USB_IFACE" ]
-                                return
-                              fi
-
-                              for path in /sys/class/net/*; do
-                                [ -r "$path/address" ] || continue
-                                IFS= read -r mac < "$path/address" || true
-                                if [ "$mac" = "${protocol.hostMac}" ]; then
-                                  return 0
-                                fi
-                              done
-                              return 1
-                            }
-
-                            case "''${NANOKVM_BOOT_MODE:-auto}" in
-                              auto|"")
-                                if usb_iface_present; then
-                                  echo "[usb-oled-top] USB debug interface is present; using kexec"
-                                  exec ${self.legacyPackages.${system}.boards.licheerv.mainline.live.usb-oled.kexec}/bin/kexec "$@"
-                                fi
-                                ;;
-                              kexec)
-                                exec ${self.legacyPackages.${system}.boards.licheerv.mainline.live.usb-oled.kexec}/bin/kexec "$@"
-                                ;;
-                              usb|usb-boot)
-                                ;;
-                              *)
-                                echo "[usb-oled-top] invalid NANOKVM_BOOT_MODE=''${NANOKVM_BOOT_MODE}; expected auto, usb, or kexec" >&2
-                                exit 1
-                                ;;
-                            esac
-
-                            export NANOKVM_ON_DETACH="''${NANOKVM_ON_DETACH:-kexec}"
-                            exec ${self.legacyPackages.${system}.boards.licheerv.mainline.live.usb-oled.usb-boot}/bin/usb-boot \
-                              --attempts "''${NANOKVM_USB_BOOT_ATTEMPTS:-120}" \
-                              --rom-dl-timeout "''${NANOKVM_USB_BOOT_ROM_DL_TIMEOUT:-1800}" \
-                              --wait "''${NANOKVM_USB_BOOT_WAIT:-120}" \
-                              "$@"
-            '';
-          };
-          captureUsbOledTop = pkgs.writeShellApplication {
-            name = "capture-usb-oled-top";
-            runtimeInputs = with pkgs; [
-              asciinema
-              asciinema-agg
-              coreutils
-              git
-              gnused
-              openssh
-              sshpass
-            ];
-            text = ''
-              export NANOKVM_USB_OLED_TOP="''${NANOKVM_USB_OLED_TOP:-${usbOledTop}/bin/usb-oled-top}"
-              export NANOKVM_CAPTURE_FONT_DIR="''${NANOKVM_CAPTURE_FONT_DIR:-${pkgs.dejavu_fonts}/share/fonts/truetype}"
-              export NANOKVM_CAPTURE_FONT_FAMILY="''${NANOKVM_CAPTURE_FONT_FAMILY:-DejaVu Sans Mono}"
-              ${builtins.readFile ./scripts/capture-usb-oled-top.sh}
-            '';
-          };
         in
         lib.optionalAttrs pkgs.stdenv.isLinux
           {
@@ -1050,14 +773,6 @@
             };
           }
         // lib.optionalAttrs (system == "x86_64-linux") {
-          usb-oled-top = {
-            type = "app";
-            program = "${usbOledTop}/bin/usb-oled-top";
-          };
-          capture-usb-oled-top = {
-            type = "app";
-            program = "${captureUsbOledTop}/bin/capture-usb-oled-top";
-          };
           # `nix run .#qemu-c906-virt` — the board's own kernel on
           # `-M virt -cpu thead-c906 -m 256 -smp 1`, in a window.
           # Set QEMU_OPTS='-display vnc=:0' on a headless build host.
@@ -1077,8 +792,6 @@
                 pnpm_10
                 patchelf
                 dtc
-                erofs-utils
-                nbd
                 sg2002-cv181x-usb-dl
                 usbutils
                 pkgsCross.riscv64-musl.stdenv.cc

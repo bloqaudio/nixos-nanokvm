@@ -31,6 +31,18 @@ the SPI transfer has finished; without the panel's tearing-effect signal this
 does not establish tear-free presentation or a physical vertical-blank event.
 The nominal DRM mode must not be interpreted as a guaranteed refresh rate.
 
+The standalone USB initrd uses this same DRM fbdev layer for a best-effort
+kernel console. `console=tty0` records boot text in the foreground virtual
+terminal, and `fbcon=nodefer` requests takeover as soon as the framebuffer is
+ready. The existing built-in `MINI4x6` font gives 60x40 characters. UART stays
+the last console, so `/dev/console` remains serial. The optional framebuffer
+module uses normal DT/udev discovery rather than blocking the initrd's
+synchronous module-loading service. No earlier lease activation, new peripheral
+access or framebuffer ownership path is introduced. Logs become visible only
+after the validated transport and panel are ready; older text may already have
+scrolled out of the virtual terminal. Stage 1 keeps the LCD as a read-only log
+console and retains key-only SSH, without adding an unauthenticated getty.
+
 ## Shared-memory ownership
 
 The generated `picoclaw-lcd` contract retains ABI 1.1 and assigns lease bit 4,
@@ -116,15 +128,16 @@ heartbeat processing stay independent. A terminal panel fault switches the
 backlight off and retains the lease until whole-board reset. Runtime unbind,
 module unload, suspend and C906L reset are not validated recovery paths.
 
-Both Linux watchdog stages monitor the USB host, and the ROM runner can arm
-the reset-only U-Boot watchdog with `--uboot-watchdog`. Use RAM boot only; no
+The standalone initrd feeds the Linux watchdog independently of the USB host,
+and its ROM runner arms the reset-only U-Boot watchdog. Use RAM boot only; no
 flash operation is needed.
 
 ## Build and test
 
 ```console
-nix build --builders '' --no-link --print-out-paths \
-  .#boards.picoclaw.mainline.live.usb-c906l-lcd.usb-boot
+NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/id_ed25519.pub" \
+  nix build --impure --builders '' --no-link --print-out-paths \
+  .#boards.picoclaw.mainline.initrd.default.usb-boot
 ```
 
 On the board, verify `sg2002-c906l-ctl check` before display testing. The
@@ -150,11 +163,14 @@ traffic over Wi-Fi. Check both the regulator and framebuffer
 
 ## Hardware validation: 2026-09-16
 
+For the newer combined Wi-Fi/LCD contract and standalone initrd, see the
+[2026-09-18 hardware report](usb-initrd-validation-20260918.md).
+
 These measurements cover the earlier LCD-only contract, before the Wi-Fi
 power provider was added. They are not evidence of simultaneous Wi-Fi/LCD
 operation with the new contract.
 
-The PicoClaw on workstation `fuckup`, USB port `3-4`, RAM-booted the dedicated
+The PicoClaw RAM-booted the dedicated
 Linux 7.2-rc5 image. No flash operation or workstation reboot was performed.
 The tested runner was
 `/nix/store/8zk8qq4vydy5k8ilmd82a6pm78c0ph73-usb-boot`, built from the implementation
@@ -205,8 +221,6 @@ on optional kexec packaging for its real client. The no-kexec image now includes
 that executable and its runtime libraries explicitly and calls it by absolute
 path, preventing fallback to BusyBox's incompatible applet.
 
-Console, loader and recovery logs are retained on the development host in
-`/mnt/Home/src/nixos-nanokvm-picoclaw-evidence-20260916.mmhC01`.
 
 ## EPHY handoff register validation
 
