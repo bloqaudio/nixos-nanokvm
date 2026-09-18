@@ -1,0 +1,99 @@
+From: NanoKVM contributors
+Subject: [PATCH] riscv: dts: cv18xx: describe the C906 performance counters
+
+OpenSBI builds its SBI PMU event table exclusively from a "riscv,pmu"
+node in the device tree it is handed, and sbi_pmu_event_get_info()
+reports any event absent from that table as unsupported. Linux's
+riscv-pmu-sbi driver asks firmware which events exist and marks every
+unclaimed one -ENOENT, so without this node the entire hardware PMU is
+unusable. That includes cpu-cycles and instructions, which are served by
+the fixed mcycle/minstret counters and need no selector -- get_info()
+still refuses to claim them. On a PicoClaw every PERF_TYPE_HARDWARE and
+PERF_TYPE_HW_CACHE event returned ENOENT while the kernel had already
+logged "16 firmware and 10 hardware counters".
+
+Describe the counters here rather than in the Linux device tree: the
+SG2002's FSBL passes no FDT, so OpenSBI is built around U-Boot's, and
+that is the only device tree it ever reads.
+
+The selectors are the C906's mhpmevent codes, each wired to the single
+counter mhpmcounter(selector + 2), matching the Allwinner D1's
+sun20i-d1s.dtsi, which carries the same T-Head C906 core.
+
+Unlike the D1, this SoC implements only mhpmcounter3 through
+mhpmcounter9, so selectors above 0x07 are deliberately omitted. Measured
+with them present, raw selectors 0x01-0x07 counted and 0x08-0x0f read
+zero, which is the counters OpenSBI masks away in pmu_add_hw_event_map()
+via sbi_hart_mhpm_mask(). That agrees with the ten hardware counters
+firmware reports: mcycle, time, minstret and seven programmable ones.
+
+Omitting them turns the two PERF_TYPE_HW_CACHE L1D events from a handle
+that reads zero forever into an honest -ENOENT. Raw events are unaffected
+either way, since the kernel does not validate those against firmware.
+
+Declaring the two fixed counters is permitted: pmu_add_hw_event_map()
+rejects SBI_PMU_FIXED_CTR_MASK only for events above
+SBI_PMU_HW_INSTRUCTIONS.
+
+The raw-event range makes perf's t-head/c900-legacy vendor events usable;
+the board reports mvendorid 0x5b7 with marchid and mimpid zero, which is
+exactly that file's mapfile.csv entry.
+
+References:
+  Linux arch/riscv/boot/dts/allwinner/sun20i-d1s.dtsi
+  Documentation/devicetree/bindings/perf/riscv,pmu.yaml
+---
+--- a/arch/riscv/dts/cv18xx.dtsi
++++ b/arch/riscv/dts/cv18xx.dtsi
+@@ -46,6 +46,51 @@
+ 		#clock-cells = <0>;
+ 	};
+ 
++	/*
++	 * OpenSBI builds its SBI PMU event table from this node, and reports
++	 * every event missing from it as unsupported -- which Linux then
++	 * turns into -ENOENT for the whole hardware PMU, fixed counters
++	 * included. The selectors are the C906's mhpmevent codes, and each
++	 * one is wired to the single counter mhpmcounter(selector + 2).
++	 *
++	 * The Allwinner D1 carries the same core and also describes
++	 * selectors 0x0b-0x0f, but this SoC implements only mhpmcounter3
++	 * through mhpmcounter9, so those events would bind to counters that
++	 * do not exist and silently read back zero. Keep 0x01-0x07 only.
++	 */
++	pmu {
++		compatible = "riscv,pmu";
++		riscv,event-to-mhpmcounters =
++			/* Fixed mcycle and minstret; no selector to program. */
++			<0x00001 0x00001 0x00000001>,
++			<0x00002 0x00002 0x00000004>,
++			<0x00003 0x00003 0x00000008>,
++			<0x00004 0x00004 0x00000010>,
++			<0x00005 0x00005 0x00000200>,
++			<0x00006 0x00006 0x00000100>,
++			<0x10008 0x10008 0x00000008>,
++			<0x10009 0x10009 0x00000010>,
++			<0x10019 0x10019 0x00000040>,
++			<0x10021 0x10021 0x00000020>;
++		riscv,event-to-mhpmevent =
++			<0x00003 0x00000000 0x00000001>,
++			<0x00004 0x00000000 0x00000002>,
++			<0x00005 0x00000000 0x00000007>,
++			<0x00006 0x00000000 0x00000006>,
++			<0x10008 0x00000000 0x00000001>,
++			<0x10009 0x00000000 0x00000002>,
++			<0x10019 0x00000000 0x00000004>,
++			<0x10021 0x00000000 0x00000003>;
++		riscv,raw-event-to-mhpmcounters =
++			<0x00000000 0x00000001 0xffffffff 0xffffffff 0x00000008>,
++			<0x00000000 0x00000002 0xffffffff 0xffffffff 0x00000010>,
++			<0x00000000 0x00000003 0xffffffff 0xffffffff 0x00000020>,
++			<0x00000000 0x00000004 0xffffffff 0xffffffff 0x00000040>,
++			<0x00000000 0x00000005 0xffffffff 0xffffffff 0x00000080>,
++			<0x00000000 0x00000006 0xffffffff 0xffffffff 0x00000100>,
++			<0x00000000 0x00000007 0xffffffff 0xffffffff 0x00000200>;
++	};
++
+ 	soc {
+ 		compatible = "simple-bus";
+ 		interrupt-parent = <&plic>;
