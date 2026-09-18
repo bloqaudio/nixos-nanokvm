@@ -504,9 +504,72 @@ this kernel for a board. External Wi-Fi modules follow the selected
 
 The profiling kernel booted on physical SG2002 hardware and exposed the SBI
 PMU and `/proc/pressure/{cpu,memory,io}`. Software events (task CPU time,
-context switches and page faults) work. Hardware cycle events returned
-`ENOENT`, while tested raw events were not counted; PMU enumeration alone
-does not establish usable hardware counters. The tuned RAM image and the
+context switches and page faults) work.
+
+Hardware counters previously returned `ENOENT` for every event. The cause
+was not the kernel, which had already logged `16 firmware and 10 hardware
+counters`, but the firmware's event table. OpenSBI builds that table
+exclusively from a `riscv,pmu` device-tree node, and
+`sbi_pmu_event_get_info()` reports any event missing from it as
+unsupported; Linux's `riscv-pmu-sbi` asks firmware which events exist and
+marks each unclaimed one `-ENOENT`. Nothing was misconfigured in the
+kernel: there was simply no node. It had to go in **U-Boot's** device
+tree, because the SG2002's FSBL passes no FDT and OpenSBI is therefore
+built around U-Boot's, which is the only device tree it reads.
+
+The selectors are the C906's `mhpmevent` codes, each wired to the single
+counter `mhpmcounter(selector + 2)`, taken from the Allwinner D1's
+`sun20i-d1s.dtsi` — the same T-Head C906 core, so the mapping is one
+already validated upstream rather than invented here.
+
+Two differences from the D1 were measured, not assumed. First, this SoC
+implements only `mhpmcounter3` through `mhpmcounter9`: with the D1's full
+table in place, raw selectors `0x01`–`0x07` counted and `0x08`–`0x0f` read
+zero. That matches the ten counters firmware reports — `mcycle`, `time`,
+`minstret` and seven programmable — so selectors above `0x07` are omitted.
+Dropping them turns the two `PERF_TYPE_HW_CACHE` L1D events from handles
+that read zero forever into an honest `-ENOENT`; raw events are unaffected,
+as the kernel does not validate those against firmware.
+
+Second, `cpu-cycles` and `instructions` need declaring even though they use
+the fixed `mcycle`/`minstret` counters and take no selector, because
+`get_info()` will not otherwise claim them. OpenSBI permits this:
+`pmu_add_hw_event_map()` rejects `SBI_PMU_FIXED_CTR_MASK` only for events
+above `SBI_PMU_HW_INSTRUCTIONS`.
+
+Measured on a PicoClaw at 1 GHz against a fixed ten-million-iteration loop:
+
+| Event | Count |
+| --- | --- |
+| `cpu-cycles` | 51,219,679 |
+| `instructions` | 50,170,937 |
+| `branch-instructions` | 10,014,172 |
+| `branch-misses` | 2,514 |
+| `cache-references` (L1 I-cache access) | 45,179,971 |
+| `cache-misses` (L1 I-cache miss) | 4,520 |
+| `dTLB-read-miss` | 4,417 |
+| `iTLB-read-miss` | 4,920 |
+| `task-clock` | 51,063,040 ns |
+
+The counters corroborate each other and the clock: `cpu-cycles` over
+`task-clock` is 1.003 GHz on a part running at 1 GHz, and
+`branch-instructions` matches the loop's ten million iterations to within
+0.15%. Raw selectors `0x01`–`0x07` all count, so perf's
+`t-head/c900-legacy` vendor events are usable — the board reports
+`mvendorid 0x5b7` with `marchid` and `mimpid` zero, exactly that file's
+`mapfile.csv` entry.
+
+`bus-cycles` and the stalled-cycle events remain `ENOENT`: the C906 has no
+such counters. The `sg2002-pmu` check verifies the node in U-Boot's DTB,
+that each event binds exactly one implemented counter, that the fixed
+counters are declared, and that the profiling kernel keeps
+`RISCV_PMU_SBI` and `ERRATA_THEAD_PMU`.
+
+This core has **no vector unit**. The same C906 in the Allwinner D1
+declares `xtheadvector` with `thead,vlenb`, but executing a single OP-V
+instruction on this silicon raises `SIGILL`, so that part of the D1's
+description must not be copied. `RISCV_ISA_V` stays off and the check
+rejects any DT that starts advertising it. The tuned RAM image and the
 two workloads above have been tested; persistent-system and peripheral
 performance are separate validation tasks. Do not include
 the full `perf` closure in the tiny initrd without checking its actual

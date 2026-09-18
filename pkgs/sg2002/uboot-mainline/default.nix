@@ -138,6 +138,9 @@ buildUBoot {
     # SYS_MEM_TOP_HIDE must constrain LMB/EFI allocations as well as U-Boot's
     # relocation and malloc arenas.
     ./patches/0007-lmb-respect-SYS_MEM_TOP_HIDE-for-allocations.patch
+    # OpenSBI reads U-Boot's DTB, not Linux's, and builds its SBI PMU event
+    # table from it. Without this node every hardware perf event is ENOENT.
+    ./patches/0008-riscv-dts-cv18xx-describe-c906-performance-counters.patch
   ] ++ (if picoclawSplash then [
     ./patches/0006-cmd-picoclaw-add-board-scoped-pre-linux-splash.patch
   ] else [ ]);
