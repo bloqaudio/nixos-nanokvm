@@ -1,7 +1,7 @@
 # BT-enabled wrapper around the normal AIC8800 mainline driver.
 #
-# Keep the ordinary derivation in default.nix untouched: WiFi is production
-# critical and its derivation must remain identical when Bluetooth is off.
+# Share the WiFi policy with default.nix; keep Bluetooth-specific changes
+# confined to this wrapper.
 {
   stdenv,
   lib,
@@ -9,10 +9,11 @@
   kernel,
   firmware,
   src,
+  tcpAckFilter ? false,
 }:
 let
   base = import ./default.nix {
-    inherit stdenv lib buildPackages kernel firmware src;
+    inherit stdenv lib buildPackages kernel firmware src tcpAckFilter;
   };
 in
 base.overrideAttrs (old: {

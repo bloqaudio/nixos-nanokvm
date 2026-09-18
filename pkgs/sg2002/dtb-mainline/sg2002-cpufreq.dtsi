@@ -1,0 +1,47 @@
+/* Divider-only scaling with the shipped 850 MHz MPLL configuration.
+ * Nano 70415/70418 mark the PWM voltage-control network DNP; do not
+ * describe an adjustable regulator or undervolt the shared core rail.
+ */
+#include <dt-bindings/clock/sophgo,cv1800.h>
+#include <dt-bindings/thermal/thermal.h>
+
+&{/cpus/cpu@0} {
+	clocks = <&{/soc/clock-controller@3002000} CLK_C906_0>;
+	operating-points-v2 = <&cpu_opp_table>;
+	#cooling-cells = <2>;
+};
+
+/ {
+	cpu_opp_table: opp-table-cpu {
+		compatible = "operating-points-v2";
+
+		opp-212500000 {
+			opp-hz = /bits/ 64 <212500000>;
+			clock-latency-ns = <100000>;
+		};
+		opp-425000000 {
+			opp-hz = /bits/ 64 <425000000>;
+			clock-latency-ns = <100000>;
+		};
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+			clock-latency-ns = <100000>;
+		};
+	};
+};
+
+&{/thermal-zones/soc-thermal} {
+	trips {
+		cpu_passive: cpu-passive {
+			temperature = <85000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+	cooling-maps {
+		cpu-map {
+			trip = <&cpu_passive>;
+			cooling-device = <&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+	};
+};

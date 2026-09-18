@@ -1,5 +1,8 @@
-{ pkgs, lib, configs }:
+{ pkgs, lib, configs, profilingConfig }:
 let
+  profilingWifi = builtins.filter
+    (p: lib.hasPrefix "aic8800-" (lib.getName p))
+    profilingConfig.boot.extraModulePackages;
   check = config:
     let
       stage1 = config.boot.initrd;
@@ -15,6 +18,7 @@ let
     assert builtins.isString uploader.drvPath;
     assert (uploader.c906lContract != null) == config.sg2002.auxCore.enable;
     assert stage1.systemd.enable;
+    assert config.nixpkgs.hostPlatform.gcc.tune == "thead-c906";
     assert stage1.systemd.root == null;
     assert stage1.network.ssh.enable;
     assert !stage1.systemd.emergencyAccess;
@@ -33,7 +37,18 @@ let
     assert net.matchConfig.Name == [ "eth*" "en*" "wl*" "usb*" ];
     assert stage1.services.resolved.enable;
     assert config.sg2002.watchdogKeeper.initrd.enable;
+    assert builtins.elem "watchdog.stop_on_reboot=0" config.boot.kernelParams;
     assert config.sg2002.watchdogKeeper.healthHost == null;
+    assert config.sg2002.wifi.enable ->
+      services.wpa_supplicant-wlan0.wantedBy
+        == [ "sys-subsystem-net-devices-wlan0.device" ]
+      && services.wpa_supplicant-wlan0.wants == [ ];
+    assert config.sg2002.wifi.enable ->
+      builtins.elem "wpa_supplicant/client"
+        services.wpa_supplicant-wlan0.serviceConfig.RuntimeDirectory;
+    assert config.sg2002.wifi.enable -> config.hardware.wirelessRegulatoryDatabase;
+    assert config.sg2002.wifi.enable ->
+      builtins.elem "sha256" config.sg2002.initrd.availableKernelModules;
     assert (config.sg2002.wifi.enable && config.sg2002.wifi.wpaConf == null
       && config.sg2002.wifi.wpaConfRuntimePath != null) ->
       services.wpa_supplicant-wlan0.unitConfig.ConditionPathExists
@@ -49,6 +64,10 @@ let
     true;
 in
 assert lib.all check configs;
+assert builtins.length profilingWifi == 1;
+assert lib.hasInfix (builtins.unsafeDiscardStringContext
+  (toString profilingConfig.boot.kernelPackages.kernel.dev))
+  (builtins.head profilingWifi).preBuild;
 pkgs.runCommand "sg2002-initrd-eval" { } ''
   touch "$out"
 ''

@@ -56,6 +56,9 @@ in {
       ConditionPathExists = wpaConfPath;
     };
     serviceConfig = {
+      # Match the initrd instance and nixpkgs' wpa_cli client socket path.
+      RuntimeDirectory = [ "wpa_supplicant/client" ];
+      RuntimeDirectoryMode = "0750";
       ExecStart = "${pkgs.wpa_supplicant}/bin/wpa_supplicant -i wlan0 -c ${wpaConfPath} -D nl80211";
       Restart = "on-failure";
       RestartSec = 5;

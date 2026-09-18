@@ -17,6 +17,14 @@ assert config.sg2002.watchdogKeeper.initrd.enable;
 assert config.sg2002.watchdogKeeper.stage2.enable;
 assert config.sg2002.watchdogKeeper.healthHost == null;
 assert config.sg2002.wifi.enable;
+assert pkgs.lib.all (c: c.sg2002.wifi.enable -> c.hardware.wirelessRegulatoryDatabase)
+  [ config pcieConfig ];
+assert pkgs.lib.all (c: c.sg2002.wifi.enable ->
+  builtins.elem "sha256" c.sg2002.initrd.availableKernelModules) [ config pcieConfig ];
+assert builtins.elem "wpa_supplicant/client"
+  config.systemd.services.wpa_supplicant-wlan0.serviceConfig.RuntimeDirectory;
+assert pkgs.lib.all (c: c.nixpkgs.hostPlatform.gcc.tune == "thead-c906")
+  [ config pcieConfig ];
 assert config.sg2002.wifi.wpaConfRuntimePath
   == "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf";
 assert !config.sg2002.usbGadget.console.enable;
@@ -24,6 +32,12 @@ assert config.sg2002.usbGadget.stage2.enable;
 assert config.sg2002.usbGadget.stage2.preserveInitrd;
 assert pcieConfig.sg2002.usbGadget.stage2.enable;
 assert !pcieConfig.sg2002.usbGadget.stage2.preserveInitrd;
+assert builtins.elem "sg2002-vpss" pcieConfig.sg2002.initrd.availableKernelModules;
+assert builtins.elem "sg2002-vpss" pcieConfig.boot.kernelModules;
+assert pkgs.lib.all (c: !builtins.elem "ignore_loglevel" c.boot.kernelParams)
+  [ config pcieConfig ];
+assert pkgs.lib.all (c: builtins.elem "watchdog.stop_on_reboot=0" c.boot.kernelParams)
+  [ config pcieConfig ];
 # Both handoff strategies run before sysinit; DefaultDependencies belongs
 # in [Unit], not [Service], or systemd ignores it and creates an order cycle.
 assert pkgs.lib.all (c:

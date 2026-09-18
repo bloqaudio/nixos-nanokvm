@@ -23,7 +23,7 @@ To provision Wi-Fi at build time, also set `NANOKVM_WIFI_CONFIG` to an absolute
 path to a wpa_supplicant configuration, for example:
 
 ```conf
-ctrl_interface=/run/wpa_supplicant
+ctrl_interface=/run/wpa_supplicant/control
 country=CH
 network={
     ssid="your-network"
@@ -88,6 +88,7 @@ journalctl -b
 systemd-analyze time
 systemd-analyze critical-chain
 iw dev
+wpa_cli -i wlan0 status
 aplay -l
 arecord -l
 ls /dev/dri /dev/fb* /dev/snd

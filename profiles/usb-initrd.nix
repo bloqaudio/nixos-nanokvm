@@ -60,6 +60,9 @@ in {
   boot.kernelParams = lib.mkForce (lib.optional lcd "console=tty0" ++ [
     "console=${if config.sg2002.uart1Rescue.enable then "ttyS1" else "ttyS0"},115200"
     "earlycon=sbi" "panic=10" "oops=panic" "riscv.fwsz=0x80000"
+    # This profile replaces kernelParams, so retain the platform's watchdog
+    # handoff policy explicitly as well as its recovery console.
+    "watchdog.stop_on_reboot=0"
     "systemd.getty_auto=no" "udev.children_max=2"
   ] ++ lib.optionals lcd [
     # Standard fbcon takeover; the built-in 4x6 font gives 60x40 characters.
@@ -86,6 +89,22 @@ in {
     };
     systemd = {
       enable = true;
+      # Keep the RAM appliance's networking, diagnostics, console and
+      # sandboxing without pulling in stage-2 managers and their libraries.
+      package = lib.mkDefault (pkgs.systemdMinimal.override {
+        withAnalyze = true;
+        withNetworkd = true;
+        withResolved = true;
+        withNss = true;
+        withOpenSSL = true;
+        withLibseccomp = true;
+        withVConsole = true;
+        withAcl = true;
+        withCompression = true;
+        withHwdb = true;
+        # systemd-bsod is part of the initrd's boot-failure console.
+        withQrencode = true;
+      });
       tpm2.enable = false;
       root = null;
       emergencyAccess = false;
@@ -100,12 +119,19 @@ in {
         "initrd-switch-root" "initrd-cleanup" "initrd-parse-etc"
         "systemd-tmpfiles-setup-sysroot"
       ] (_: { enable = false; }) // {
-        wpa_supplicant-wlan0 = lib.mkIf (config.sg2002.wifi.enable
-          && config.sg2002.wifi.wpaConf == null
-          && config.sg2002.wifi.wpaConfRuntimePath != null) {
+        wpa_supplicant-wlan0 = lib.mkIf config.sg2002.wifi.enable {
+          # Start association when the interface appears. An optional WLAN
+          # that is absent or fails to probe must not add a 90-second device
+          # job to the RAM appliance's startup (conditions alone do not
+          # prevent systemd from queuing a service's device dependencies).
+          wantedBy = lib.mkForce [ "sys-subsystem-net-devices-wlan0.device" ];
+          wants = lib.mkForce [ ];
           # An unprovisioned RAM image is valid. Copying credentials over SSH
           # and explicitly restarting this unit enables association later.
-          unitConfig.ConditionPathExists = config.sg2002.wifi.wpaConfRuntimePath;
+          unitConfig.ConditionPathExists = lib.mkIf
+            (config.sg2002.wifi.wpaConf == null
+              && config.sg2002.wifi.wpaConfRuntimePath != null)
+            config.sg2002.wifi.wpaConfRuntimePath;
         };
         sshd = {
           preStart = lib.mkBefore ''
@@ -118,7 +144,12 @@ in {
         };
       };
       targets.initrd-switch-root.enable = false;
-      storePaths = lib.optional config.sg2002.audio.enable "${pkgs.alsa-lib}/share/alsa";
+      storePaths = [
+        # glibc dlopens the unwinder for pthread_cancel; it is not an ELF
+        # DT_NEEDED dependency that makeInitrdNG can discover. Use glibc's
+        # own trusted runtime, without adding the full compiler closure.
+        "${pkgs.glibc.libgcc}/lib/libgcc_s.so.1"
+      ] ++ lib.optional config.sg2002.audio.enable "${pkgs.alsa-lib}/share/alsa";
       network = {
         enable = true;
         wait-online.enable = false;

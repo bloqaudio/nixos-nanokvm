@@ -21,6 +21,9 @@
   kernel,
   firmware,
   src, # radxa-pkg/aic8800 tree, passed in from the flake input
+  # Let Linux send its TCP ACKs without the vendor's additional coalescing.
+  # Keep the upstream policy available for controlled comparisons.
+  tcpAckFilter ? false,
 }: let
 
   patchSeries = [
@@ -83,6 +86,7 @@ in
         # Radxa's 7.1 compat patch only covers the USB tree; carry the
         # equivalent cfg80211/string API updates for the SDIO driver.
         patch -p1 < ${./patches/aic8800-sdio-linux-7.1-cfg80211.patch}
+        patch -p1 < ${./patches/aic8800-sdio-vmalloc-include.patch}
       )
     '';
 
@@ -100,6 +104,7 @@ in
       "KVER=${kernel.modDirVersion}"
       "ARCH=riscv"
       "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
+      "CONFIG_FILTER_TCP_ACK=${if tcpAckFilter then "y" else "n"}"
     ];
 
     preBuild = ''
@@ -119,6 +124,8 @@ in
       done
       runHook postInstall
     '';
+
+    passthru = { inherit tcpAckFilter; };
 
     meta = {
       description = "AIC8800DC SDIO wifi+BT driver (radxa-pkg fork, mainline-kernel-compat)";

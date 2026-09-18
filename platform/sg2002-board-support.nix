@@ -32,10 +32,10 @@
     if !cfg.wifi.enable
     then null
     else if cfg.kernel == "vendor"
-    then pkgs.sg2002-aic8800-vendor-for kernelPkg
+    then pkgs.sg2002-aic8800-vendor-for config.boot.kernelPackages.kernel
     else if cfg.bluetooth.enable
-    then pkgs.sg2002-aic8800-mainline-bluetooth-for kernelPkg
-    else pkgs.sg2002-aic8800-mainline-for kernelPkg;
+    then pkgs.sg2002-aic8800-mainline-bluetooth-for config.boot.kernelPackages.kernel
+    else pkgs.sg2002-aic8800-mainline-for config.boot.kernelPackages.kernel;
 
   # systemd's pivot_root success path used to detach the initrd root mount
   # without emptying its ramfs superblock.  The decompressed cpio then stayed
@@ -232,6 +232,14 @@ in {
       hardware.enableAllHardware = lib.mkForce false;
 
       boot.kernelPackages = pkgs.linuxPackagesFor kernelPkg;
+      powerManagement.cpuFreqGovernor = lib.mkIf (cfg.kernel == "mainline")
+        (lib.mkDefault "schedutil");
+      # nowayout protects against closing /dev/watchdog, not the kernel's
+      # reboot notifier. dw_wdt otherwise stops the counter before kexec,
+      # leaving a failed handoff without a hardware reset. Use the standard
+      # watchdog-core policy rather than a driver or register workaround.
+      boot.kernelParams = lib.optional (cfg.kernel == "mainline")
+        "watchdog.stop_on_reboot=0";
       systemd.package = lib.mkDefault systemdWithOldRootCleanup;
       system.build.fip = fipPkg;
 
@@ -250,7 +258,10 @@ in {
       # never appear and the hardened wpa_supplicant unit cannot start.
       sg2002.initrd.availableKernelModules = lib.optionals
         (cfg.kernel == "mainline" && cfg.wifi.enable) (
-          [ "rfkill" ]
+          # PKCS#7 verification requests SHA-256 through the crypto API at
+          # runtime; it is not a static dependency of cfg80211. Preserve it
+          # when pruning the initrd so signed regulatory.db is accepted.
+          [ "rfkill" "sha256" ]
           ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ]
           ++ [
             "aic8800_bsp"
@@ -272,6 +283,11 @@ in {
           ]
         );
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
+      # These small images deliberately omit the all-firmware collection,
+      # which normally enables the signed cfg80211 database in NixOS. Keep
+      # the standard database available in both the initrd and stage 2,
+      # independently of which service manages Wi-Fi association.
+      hardware.wirelessRegulatoryDatabase = lib.mkIf cfg.wifi.enable (lib.mkDefault true);
 
       # The aicbsp driver opens /lib/firmware/... directly via
       # filp_open instead of going through request_firmware, so

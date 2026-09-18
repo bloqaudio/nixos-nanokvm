@@ -3,8 +3,9 @@
 # Requires `sg2002.wifi.enable = true` and, for association,
 # `sg2002.wifi.wpaConf`.
 #
-# Pair this with an initrd boot profile such as profiles/usb-nfs-live.nix.
-# modules/wifi-aic8800.nix owns the corresponding stage-2 service.
+# profiles/usb-initrd.nix supplies the standalone RAM appliance's optional
+# device-triggered policy. modules/wifi-aic8800.nix owns the stage-2 service
+# for persistent consumers.
 {
   config,
   lib,
@@ -13,20 +14,6 @@
 }: let
   cfg = config.sg2002;
 
-  kernelPkg =
-    if cfg.kernel == "mainline" && cfg.audio.enable && cfg.bluetooth.enable
-    then pkgs.sg2002-kernel-mainline-audio-bluetooth
-    else if cfg.kernel == "mainline" && cfg.audio.enable
-    then pkgs.sg2002-kernel-mainline-audio
-    else if cfg.kernel == "mainline" && cfg.bluetooth.enable
-    then pkgs.sg2002-kernel-mainline-bluetooth
-    else pkgs."sg2002-kernel-${cfg.kernel}";
-  aic8800Pkg =
-    if cfg.kernel == "vendor"
-    then pkgs.sg2002-aic8800-vendor-for kernelPkg
-    else if cfg.bluetooth.enable
-    then pkgs.sg2002-aic8800-mainline-bluetooth-for kernelPkg
-    else pkgs.sg2002-aic8800-mainline-for kernelPkg;
   runtimeWpaConf = cfg.wifi.wpaConfRuntimePath;
   manageInitrd = cfg.wifi.wpaConf != null || runtimeWpaConf != null;
   wpaConfPath =
@@ -50,7 +37,9 @@ in {
         }
       ];
 
-      boot.extraModulePackages = [aic8800Pkg];
+      # The common hardware module builds the driver for the selected
+      # boot.kernelPackages.kernel. Only its initrd loading policy belongs
+      # here; independently selecting a kernel breaks diagnostic overrides.
       sg2002.initrd.pruneKernelModules = true;
       sg2002.initrd.availableKernelModules = lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ] ++ [
         "aic8800_bsp"
@@ -109,6 +98,10 @@ in {
             SurviveFinalKillSignal = true;
           };
           serviceConfig = {
+            # nixpkgs' wpa_cli creates its client socket in this directory.
+            # Keep it managed by systemd, including on service restarts.
+            RuntimeDirectory = [ "wpa_supplicant/client" ];
+            RuntimeDirectoryMode = "0750";
             ExecStartPre = lib.optionals (runtimeWpaConf != null && cfg.wifi.wpaConf != null) [
               "${pkgs.busybox}/bin/busybox cp -f /etc/wpa_supplicant.conf ${wpaConfPath}"
               "${pkgs.busybox}/bin/busybox chmod 0600 ${wpaConfPath}"

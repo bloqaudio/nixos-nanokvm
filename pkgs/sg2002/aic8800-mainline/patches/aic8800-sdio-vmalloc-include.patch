@@ -1,0 +1,14 @@
+Include the declarations used by aic_priv_cmd.c directly. Otherwise building
+without CONFIG_FILTER_TCP_ACK loses the transitive vmalloc/vfree declarations
+previously supplied by the TCP ACK filter's headers.
+
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aic_priv_cmd.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aic_priv_cmd.c
+@@ -12,6 +12,7 @@
+ 
+ #include <linux/netdevice.h>
+ #include <linux/ctype.h>
++#include <linux/vmalloc.h>
+ #include "rwnx_defs.h"
+ #include "rwnx_msg_tx.h"
+ #include "rwnx_debugfs.h"

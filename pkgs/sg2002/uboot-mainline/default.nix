@@ -14,6 +14,9 @@
   # and shared-memory carveouts; ordinary images retain upstream's zero.
   memoryTopHide ? 0,
   picoclawSplash ? false,
+  # Command-level MMC tracing is expensive on a 115200-baud console. Keep
+  # it available for bring-up without slowing every normal SD boot.
+  debug ? false,
 }:
 assert lib.assertMsg (builtins.isInt memoryTopHide)
   "sg2002 U-Boot: memoryTopHide must be an integer byte count";
@@ -27,6 +30,10 @@ buildUBoot {
   filesToInstall = ["u-boot.bin" "u-boot.dtb"];
 
   extraConfig = ''
+    # Read GPT partitions as well as MBR. This is partition-table support,
+    # independent of the UEFI executable loader; extlinux remains unchanged.
+    CONFIG_EFI_PARTITION=y
+
     # extlinux lives on the Btrfs root partition.  The generic filesystem
     # layer used by `sysboot ... any` needs the Btrfs reader compiled in.
     CONFIG_FS_BTRFS=y
@@ -70,11 +77,8 @@ buildUBoot {
     # root partition explicitly before falling back to the generic scan and
     # then fastboot.
     CONFIG_BOOTCOMMAND="${bootCommand}"
-    # MMC command-level tracing into the console record; pr_info/pr_debug
-    # on the mmc init failure paths only compile in at LOGLEVEL>=7, so
-    # without these a failed `mmc dev 0` is completely silent.
-    CONFIG_LOGLEVEL=8
-    CONFIG_MMC_TRACE=y
+    CONFIG_LOGLEVEL=${if debug then "8" else "4"}
+    CONFIG_MMC_TRACE=${if debug then "y" else "n"}
   '' + lib.optionalString (memoryTopHide != 0) ''
     # Keep the auxiliary C906L firmware and its Linux mailbox carveout outside
     # U-Boot's relocation and malloc arenas.  The Linux DT independently
@@ -95,6 +99,12 @@ buildUBoot {
   # resolves Kconfig dependencies for the gadget/fastboot tree.
   postConfigure = ''
     make olddefconfig
+    if ! grep -Fxq 'CONFIG_EFI_PARTITION=y' .config; then
+      echo "SG2002 GPT partition support was not preserved by olddefconfig" >&2
+      exit 1
+    fi
+    grep -Fxq 'CONFIG_LOGLEVEL=${if debug then "8" else "4"}' .config
+    grep -Fxq '${if debug then "CONFIG_MMC_TRACE=y" else "# CONFIG_MMC_TRACE is not set"}' .config
   '' + lib.optionalString (memoryTopHide != 0) ''
     # Fail the build if this option is renamed, removed, dependency-gated or
     # otherwise discarded by a future U-Boot Kconfig update.  Silently losing
@@ -113,7 +123,7 @@ buildUBoot {
   passthru = {
     # Numeric bytes, intentionally not a formatted Kconfig string, so FIP and
     # firmware packages can assert their complete carveout fits this contract.
-    inherit memoryTopHide;
+    inherit memoryTopHide debug;
   };
 
   extraPatches = [
