@@ -179,7 +179,8 @@ in {
         else
           "console=${config.sg2002.consoleDevice},115200")
         "earlycon=sbi"
-        "ignore_loglevel"
+        # No ignore_loglevel: it overrides loglevel and floods the LCD
+        # console with driver debug output (AIC8800 "get tx power").
       ];
     };
 
