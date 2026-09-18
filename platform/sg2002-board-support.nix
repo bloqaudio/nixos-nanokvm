@@ -256,7 +256,10 @@ in {
       # never appear and the hardened wpa_supplicant unit cannot start.
       sg2002.initrd.availableKernelModules = lib.optionals
         (cfg.kernel == "mainline" && cfg.wifi.enable) (
-          [ "rfkill" ]
+          # PKCS#7 verification requests SHA-256 through the crypto API at
+          # runtime; it is not a static dependency of cfg80211. Preserve it
+          # when pruning the initrd so signed regulatory.db is accepted.
+          [ "rfkill" "sha256" ]
           ++ lib.optionals cfg.bluetooth.enable [ "bluetooth" "bnep" "rfcomm" ]
           ++ [
             "aic8800_bsp"
@@ -278,6 +281,11 @@ in {
           ]
         );
       hardware.firmware = lib.optional cfg.wifi.enable pkgs.sg2002-aic8800-firmware;
+      # These small images deliberately omit the all-firmware collection,
+      # which normally enables the signed cfg80211 database in NixOS. Keep
+      # the standard database available in both the initrd and stage 2,
+      # independently of which service manages Wi-Fi association.
+      hardware.wirelessRegulatoryDatabase = lib.mkIf cfg.wifi.enable (lib.mkDefault true);
 
       # The aicbsp driver opens /lib/firmware/... directly via
       # filp_open instead of going through request_firmware, so

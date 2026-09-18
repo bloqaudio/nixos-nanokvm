@@ -17,6 +17,10 @@ assert config.sg2002.watchdogKeeper.initrd.enable;
 assert config.sg2002.watchdogKeeper.stage2.enable;
 assert config.sg2002.watchdogKeeper.healthHost == null;
 assert config.sg2002.wifi.enable;
+assert pkgs.lib.all (c: c.sg2002.wifi.enable -> c.hardware.wirelessRegulatoryDatabase)
+  [ config pcieConfig ];
+assert pkgs.lib.all (c: c.sg2002.wifi.enable ->
+  builtins.elem "sha256" c.sg2002.initrd.availableKernelModules) [ config pcieConfig ];
 assert builtins.elem "wpa_supplicant/client"
   config.systemd.services.wpa_supplicant-wlan0.serviceConfig.RuntimeDirectory;
 assert pkgs.lib.all (c: c.nixpkgs.hostPlatform.gcc.tune == "thead-c906")

@@ -27,6 +27,9 @@ let
 in pkgs.runCommand "sg2002-initrd-boot" {
   nativeBuildInputs = [ pkgs.qemu pkgs.openssh pkgs.coreutils pkgs.gnugrep ];
 } ''
+  # A successful reload must not be obtained by disabling verification.
+  grep -qx 'CONFIG_CFG80211_REQUIRE_SIGNED_REGDB=y' ${cfg.boot.kernelPackages.kernel.configfile}
+  grep -qx 'CONFIG_CFG80211_USE_KERNEL_REGDB_KEYS=y' ${cfg.boot.kernelPackages.kernel.configfile}
   cp ${fixture + "/id_ed25519"} key
   chmod 600 key
   qemu-system-riscv64 -machine virt -cpu thead-c906 -m 256 -smp 1 \
@@ -67,6 +70,23 @@ in pkgs.runCommand "sg2002-initrd-boot" {
     test -z "$(systemctl show sys-subsystem-net-devices-wlan0.device -p Job --value)"
     test -z "$(systemctl --failed --no-legend --plain)"
     timeout 10 pthread-cancel-probe
+    # The normal firmware collection is disabled on this small image. Check
+    # the signed regulatory database through cfg80211, not just its pathname.
+    # There is no radio in this VM: selecting a non-world domain proves the
+    # database was loaded and accepted, without changing any hardware policy.
+    modprobe cfg80211
+    iw reg reload
+    iw reg set US
+    regulatory_ready=0
+    for attempt in $(seq 1 20); do
+      case "$(iw reg get)" in
+        *"country US:"*) regulatory_ready=1; break ;;
+      esac
+      sleep 0.25
+    done
+    test "$regulatory_ready" = 1
+    iw reg get
+    iw reg set 00
     test "$(systemctl is-enabled initrd-switch-root.service)" = masked
     while read -r device target rest; do
       test "$target" != /sysroot

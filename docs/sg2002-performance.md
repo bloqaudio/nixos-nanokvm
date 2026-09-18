@@ -91,6 +91,18 @@ tools. Wi-Fi credentials were supplied at runtime over USB SSH;
 association, DHCP and SSH over Wi-Fi then worked. Both initrd and stage-2
 supplicant units create the client socket directory expected by `wpa_cli`.
 
+Wi-Fi configurations enable NixOS's `hardware.wirelessRegulatoryDatabase`
+even though the large default firmware collection is omitted. The pruned
+initrd also retains the SHA-256 crypto module, which cfg80211 needs at
+runtime to verify the signed database. On the PicoClaw, database reload
+failed with `ENOENT` without the files and `ENODATA` with the signed files
+but without SHA-256; adding both made reload succeed while Wi-Fi remained
+associated. The country and the driver's self-managed PHY rules were not
+changed. The QEMU boot check exercises signed database reload and country
+selection in a VM with no radio. Signature verification stays enabled.
+This fixes database availability, not the AIC driver's independent
+self-managed regulatory policy, and is not a throughput claim.
+
 The 496-byte C906L round-trip test remained approximately 2.50 ms at the
 median and 2.59 ms at the 99th percentile over 300 requests. A 16-frame DRM
 test completed and restored the display while Wi-Fi carried traffic. This
@@ -144,6 +156,23 @@ tests were approximately 67% and 56% idle respectively. The receive-side
 limitation therefore remains under investigation; these measurements do
 not support treating it as simple CPU saturation or fixing it by overclocking.
 
+A follow-up receive comparison on the same 5 GHz PicoClaw connection kept
+power saving enabled and used 20-second measurements after a two-second
+warm-up:
+
+| Traffic toward the board | Received throughput | Loss indication |
+| --- | --- | --- |
+| One TCP stream | 21.6 Mbit/s | 163 sender retransmissions |
+| Four TCP streams | 40.4 Mbit/s combined | 1,369 sender retransmissions |
+| UDP, offered at 30 Mbit/s with 1,200-byte datagrams | 30.0 Mbit/s | 0 of 62,506 datagrams lost |
+
+Whole-CPU idle time across the respective server runs was approximately
+66%, 49% and 29%. These results rule out a fixed 22 Mbit/s receive ceiling;
+they do not establish the cause of TCP's lower throughput. Driver ACK
+filtering, receive reordering and the network path require controlled
+comparisons before any defaults change. All tests completed, and the
+watchdog, Wi-Fi and C906L remained healthy afterward.
+
 The CV18xx bypass-mux driver now programs the selected PLL mux as well as
 the bypass bit. A RAM-only camera experiment using standard assigned clocks
 read back `0x00040009` for both SD clock registers and reported 375 MHz card
@@ -166,6 +195,23 @@ high-speed failures; the separate `sg2002-dtb-mainline-*-high-speed`
 packages remain opt-in diagnostics. Likewise, the
 CPU's 850 MHz normal setting is unchanged: the vendor higher-frequency mode
 also changes core voltage, and is not a safe device-tree-only optimization.
+
+### CPU frequency and voltage scaling
+
+Live clock-framework readback on the camera and PicoClaw reports 850 MHz
+for the Linux C906 and 594 MHz for the auxiliary C906. The current kernel
+does not enable CPUFreq, and the CPU node has no operating-point table or
+voltage-supply connection. Temperature sensing works, but there is no CPU
+DVFS policy or frequency-based thermal cooling device. Enabling a governor
+alone would not supply that missing hardware integration.
+
+The vendor RISC-V overdrive path sets the main CPU to 1,050 MHz, requests
+1.00 V through PWM and changes several other clocks. It is not a validated
+1 GHz CPU-only operating point for these board configurations. A future
+DVFS implementation needs board-specific supply information, safe clock
+transitions and validated operating points, including the effects of the
+shared core supply on other engines. No clock or voltage changes were made
+as part of these read-only checks.
 
 ## Profiling and recovery
 

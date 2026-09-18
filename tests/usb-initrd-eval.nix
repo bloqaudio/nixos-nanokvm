@@ -46,6 +46,9 @@ let
     assert config.sg2002.wifi.enable ->
       builtins.elem "wpa_supplicant/client"
         services.wpa_supplicant-wlan0.serviceConfig.RuntimeDirectory;
+    assert config.sg2002.wifi.enable -> config.hardware.wirelessRegulatoryDatabase;
+    assert config.sg2002.wifi.enable ->
+      builtins.elem "sha256" config.sg2002.initrd.availableKernelModules;
     assert (config.sg2002.wifi.enable && config.sg2002.wifi.wpaConf == null
       && config.sg2002.wifi.wpaConfRuntimePath != null) ->
       services.wpa_supplicant-wlan0.unitConfig.ConditionPathExists
