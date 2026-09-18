@@ -168,10 +168,48 @@ warm-up:
 
 Whole-CPU idle time across the respective server runs was approximately
 66%, 49% and 29%. These results rule out a fixed 22 Mbit/s receive ceiling;
-they do not establish the cause of TCP's lower throughput. Driver ACK
-filtering, receive reordering and the network path require controlled
-comparisons before any defaults change. All tests completed, and the
+they do not establish the cause of TCP's lower throughput. They motivated
+the controlled driver ACK-filter comparison below. All tests completed, and the
 watchdog, Wi-Fi and C906L remained healthy afterward.
+
+The mainline AIC8800 package now disables the vendor's additional TCP ACK
+filter (`CONFIG_FILTER_TCP_ACK=n`), leaving ACK handling to Linux TCP. A
+reversible on/off/on/off module comparison used the same PicoClaw, 5 GHz
+access point and 5180 MHz channel, with power saving enabled throughout.
+Each single-stream receive measurement lasted 20 seconds after a two-second
+warm-up; USB provided an independent control connection:
+
+| ACK filter | Received by board | Sender retransmissions |
+| --- | --- | --- |
+| On, initial | 22.1 Mbit/s | 115 |
+| Off | 55.4 Mbit/s | 293 |
+| On, restored | 19.6 Mbit/s | 135 |
+| Off, repeated | 55.3 Mbit/s | 341 |
+
+The receive gain reproduced after restoring the original driver. It is not
+a claim of reduced packet loss: the faster runs transferred more data and
+had more retransmissions. Separate transmit tests received 47.2 Mbit/s at
+the host with the filter enabled and 54.9 Mbit/s with it disabled, both
+without retransmissions. The two filter-disabled receive runs used roughly
+two-thirds of the CPU, so this is not an energy-efficiency claim either.
+
+A 60-second filter-disabled bidirectional test completed alongside a
+16-frame DRM test, with the display restored and C906L/watchdog/service
+checks passing. Throughput remained asymmetric: 3.13 Mbit/s received by
+the board and 41.1 Mbit/s by the host (170 and one sender retransmissions).
+Disabling the filter does not solve all bidirectional throughput limits.
+A subsequent baseline run associated on 2.4 GHz and is excluded from the
+5 GHz comparison. These tests do not establish long-term stability or
+Bluetooth coexistence performance. The original driver was restored and
+temporary recovery/network settings removed after testing.
+
+For an explicit comparison build, use
+`(pkgs.sg2002-aic8800-mainline-for kernel).override { tcpAckFilter = true; }`.
+The Bluetooth-enabled factory accepts the same argument. The
+`sg2002-wifi-ack-filter` check builds both settings for both variants and
+inspects the compiled modules to verify that the filter code is absent
+by default and present only when requested. No Wi-Fi power-saving,
+SDIO clock, CPU frequency or voltage default changed.
 
 The CV18xx bypass-mux driver now programs the selected PLL mux as well as
 the bypass bit. A RAM-only camera experiment using standard assigned clocks
@@ -257,6 +295,7 @@ Relevant regression checks:
 ```sh
 nix build \
   .#checks.x86_64-linux.sg2002-c906-tuning \
+  .#checks.x86_64-linux.sg2002-wifi-ack-filter \
   .#checks.x86_64-linux.sg2002-h264-bridge-c906 \
   .#checks.x86_64-linux.extlinux-try-boot \
   .#checks.x86_64-linux.sg2002-initrd-eval \

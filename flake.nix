@@ -540,6 +540,7 @@
           "sg2002-h264-bridge-colour"
           "sg2002-h264-bridge-c906"
           "sg2002-c906-tuning"
+          "sg2002-wifi-ack-filter"
           "sg2002-vpss-state"
           "sg2002-c906l-module-eval"
           "sg2002-c906l-picoclaw-module-eval"
@@ -674,6 +675,11 @@
           sg2002-c906-tuning = import ./tests/sg2002-c906-tuning.nix {
             inherit pkgs;
             targetPkgs = boardSystems.pcie.mainline.sd.pkgs;
+          };
+          sg2002-wifi-ack-filter = import ./tests/sg2002-wifi-ack-filter.nix {
+            inherit pkgs;
+            targetPkgs = boardSystems.picoclaw.mainline.initrd.default.pkgs;
+            kernel = picoclawLcdConfig.boot.kernelPackages.kernel;
           };
           sg2002-h264-bridge-c906 =
             let
