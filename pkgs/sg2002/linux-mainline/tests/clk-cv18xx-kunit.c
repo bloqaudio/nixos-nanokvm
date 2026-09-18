@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Exercise the real CV18xx clock operations against memory-backed registers. */
+#include <kunit/device.h>
 #include <kunit/test.h>
 #include <linux/clk.h>
 #include <linux/io.h>
@@ -7,6 +8,7 @@
 #include <linux/spinlock.h>
 
 #include "clk-cv18xx-ip.h"
+#include "clk-cv18xx-pll.h"
 
 enum {
 	MUX0,
@@ -235,6 +237,337 @@ static void cv18xx_mmux_unsafe_temporary_rate(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
 }
 
+static void cv18xx_pll_lock_status(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	unsigned int bit;
+
+	/* G2 uses indices 0..4; G6 uses 0..2. Other PLLs may be updating. */
+	for (bit = 0; bit < 5; bit++) {
+		writel(BIT(bit + 16) | (GENMASK(4, 0) & ~BIT(bit)),
+		       &ctx->regs[GATE]);
+		KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+							     GATE * 4, BIT(bit)), 0);
+	}
+
+	/* Updating, unlocked, or locked but still updating must not succeed. */
+	writel(BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+	writel(0, &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+	writel(BIT(16) | BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_wait_for_lock(&ctx->mmux.common,
+						     GATE * 4, BIT(0)), -ETIMEDOUT);
+}
+
+static void cv18xx_ipll_rates(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	static const struct cv1800_clk_pll_limit limits = {
+		.pre_div = _CV1800_PLL_LIMIT(1, 127),
+		.div = _CV1800_PLL_LIMIT(6, 127),
+		.post_div = _CV1800_PLL_LIMIT(1, 127),
+		.ictrl = _CV1800_PLL_LIMIT(0, 7),
+		.mode = _CV1800_PLL_LIMIT(0, 3),
+	};
+	struct cv1800_clk_pll pll = {
+		.common = { .base = (void __iomem *)ctx->regs, .lock = &ctx->lock },
+		.pll_reg = MUX0 * 4,
+		.pll_status = CV1800_CLK_BIT(GATE * 4, 0),
+		.pll_limit = &limits,
+	};
+	const struct clk_ops *ops = &cv1800_clk_ipll_ops;
+	u32 before;
+
+	writel(BIT(16), &ctx->regs[GATE]);
+	writel(BIT(31) | BIT(7), &ctx->regs[MUX0]);
+	KUNIT_ASSERT_EQ(test, ops->set_rate(&pll.common.hw, 1000000000, 25000000), 0);
+	KUNIT_EXPECT_EQ(test, ops->recalc_rate(&pll.common.hw, 25000000), 1000000000UL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]) & ~_PLL_ALL_FIELD_MASK,
+			BIT(31) | BIT(7));
+
+	before = readl(&ctx->regs[MUX0]);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 0, 25000000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]), before);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 1, 25000000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[MUX0]), before);
+
+	writel(BIT(0), &ctx->regs[GATE]);
+	KUNIT_EXPECT_EQ(test, ops->set_rate(&pll.common.hw, 850000000, 25000000),
+			-ETIMEDOUT);
+}
+
+/*
+ * The whole parent-PLL retune, driven through the common clock framework
+ * exactly as an assigned-clock-rates property drives it on the board.
+ */
+enum {
+	RETUNE_LANE0,
+	RETUNE_LANE1,
+	RETUNE_BYPASS,
+	RETUNE_SELECT,
+	RETUNE_PLL,
+	RETUNE_STATUS,
+	RETUNE_NUM_REGS,
+};
+
+struct cv18xx_retune_context {
+	u32 regs[RETUNE_NUM_REGS];
+	spinlock_t lock;
+	struct cv1800_clk_mmux mmux;
+	struct cv1800_clk_pll pll;
+	struct clk_hw *parents[6];
+	/* What the mux looked like while the PLL was mid-change. */
+	struct notifier_block observer;
+	u32 seen_select[2];
+	u32 seen_spare_div[2];
+	u32 seen_pll_div[2];
+};
+
+/*
+ * Registered after the driver's own notifier, so it runs second and sees
+ * the state the driver left behind. Without this the test could not tell
+ * a real park from a mux that simply ended up where it started.
+ */
+static int cv18xx_retune_observe(struct notifier_block *nb,
+				 unsigned long event, void *data)
+{
+	struct cv18xx_retune_context *ctx = container_of(nb,
+					struct cv18xx_retune_context, observer);
+	unsigned int slot;
+
+	if (event == PRE_RATE_CHANGE)
+		slot = 0;
+	else if (event == POST_RATE_CHANGE)
+		slot = 1;
+	else
+		return NOTIFY_DONE;
+
+	ctx->seen_select[slot] = readl(&ctx->regs[RETUNE_SELECT]);
+	ctx->seen_spare_div[slot] =
+		cv1800_clk_regfield_get(readl(&ctx->regs[RETUNE_LANE1]),
+					&ctx->mmux.div[1]);
+	ctx->seen_pll_div[slot] = PLL_GET_DIV_SEL(readl(&ctx->regs[RETUNE_PLL]));
+	return NOTIFY_OK;
+}
+
+static void cv18xx_retune_unobserve(void *data)
+{
+	struct cv18xx_retune_context *ctx = data;
+
+	clk_notifier_unregister(ctx->pll.common.hw.clk, &ctx->observer);
+}
+
+static const struct cv1800_clk_pll_limit retune_pll_limits[] = {
+	{
+		.pre_div = _CV1800_PLL_LIMIT(1, 127),
+		.div = _CV1800_PLL_LIMIT(6, 127),
+		.post_div = _CV1800_PLL_LIMIT(1, 127),
+		.ictrl = _CV1800_PLL_LIMIT(0, 7),
+		.mode = _CV1800_PLL_LIMIT(0, 3),
+	},
+};
+
+/* Build the SG2002 CPU topology: osc -> MPLL -> C906_0, with FPLL spare. */
+static struct cv18xx_retune_context *
+cv18xx_retune_setup(struct kunit *test, struct device *dev)
+{
+	struct cv18xx_retune_context *ctx;
+	static const unsigned long rates[] = {
+		25000000, 1400000000, 442368000, 900000000, 0, 1500000000,
+	};
+	struct clk_init_data mmux_init = {
+		.name = "cv18xx-retune-mmux",
+		.ops = &cv1800_clk_mmux_ops,
+		.num_parents = ARRAY_SIZE(rates),
+		.flags = CLK_SET_RATE_NO_REPARENT | CLK_GET_RATE_NOCACHE,
+	};
+	struct clk_init_data pll_init = {
+		.name = "cv18xx-retune-pll",
+		.ops = &cv1800_clk_ipll_ops,
+		.num_parents = 1,
+		.flags = CLK_GET_RATE_NOCACHE,
+	};
+	unsigned int i;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx);
+	spin_lock_init(&ctx->lock);
+
+	for (i = 0; i < ARRAY_SIZE(rates); i++) {
+		char name[32];
+
+		if (!rates[i])
+			continue;
+		snprintf(name, sizeof(name), "cv18xx-retune-parent-%u", i);
+		ctx->parents[i] = clk_hw_register_fixed_rate(NULL, name, NULL,
+							    0, rates[i]);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ctx->parents[i]);
+		KUNIT_ASSERT_EQ(test, clk_prepare_enable(ctx->parents[i]->clk), 0);
+		kunit_add_action_or_reset(test, cv18xx_unregister_fixed,
+					  ctx->parents[i]);
+	}
+
+	/* MPLL: 25 MHz * 34 = 850 MHz, already locked. */
+	ctx->regs[RETUNE_PLL] = PLL_SET_PRE_DIV_SEL(0, 1);
+	ctx->regs[RETUNE_PLL] = PLL_SET_POST_DIV_SEL(ctx->regs[RETUNE_PLL], 1);
+	ctx->regs[RETUNE_PLL] = PLL_SET_DIV_SEL(ctx->regs[RETUNE_PLL], 34);
+	ctx->regs[RETUNE_STATUS] = BIT(16);
+
+	ctx->pll = (struct cv1800_clk_pll) {
+		.common = { .base = (void __iomem *)ctx->regs, .lock = &ctx->lock },
+		.pll_reg = RETUNE_PLL * 4,
+		.pll_status = CV1800_CLK_BIT(RETUNE_STATUS * 4, 0),
+		.pll_limit = retune_pll_limits,
+	};
+	pll_init.parent_hws = (const struct clk_hw *[]){ ctx->parents[0] };
+	ctx->pll.common.hw.init = &pll_init;
+	/* Against the KUnit device, so devm_clk_hw_get_clk() stays quiet. */
+	KUNIT_ASSERT_EQ(test, clk_hw_register(dev, &ctx->pll.common.hw), 0);
+	kunit_add_action_or_reset(test, cv18xx_unregister, &ctx->pll.common.hw);
+	ctx->parents[4] = &ctx->pll.common.hw;
+
+	ctx->mmux = (struct cv1800_clk_mmux) {
+		.common = { .base = (void __iomem *)ctx->regs, .lock = &ctx->lock },
+		.gate = CV1800_CLK_BIT(RETUNE_BYPASS * 4, 13),
+		.div = {
+			CV1800_CLK_REG(RETUNE_LANE0 * 4, 16, 4, 1, CLK_DIVIDER_ONE_BASED),
+			CV1800_CLK_REG(RETUNE_LANE1 * 4, 16, 4, 2, CLK_DIVIDER_ONE_BASED),
+		},
+		.mux = {
+			CV1800_CLK_REG(RETUNE_LANE0 * 4, 8, 2, 0, 0),
+			CV1800_CLK_REG(RETUNE_LANE1 * 4, 8, 2, 0, 0),
+		},
+		.bypass = CV1800_CLK_BIT(RETUNE_BYPASS * 4, 6),
+		.clk_sel = CV1800_CLK_BIT(RETUNE_SELECT * 4, 23),
+		.parent2sel = c906_parent2sel,
+		.sel2parent = { c906_sel2parent[0], c906_sel2parent[1] },
+		.retune_pll = &ctx->pll,
+	};
+	/* Lane zero, selector three (MPLL), divide by one. */
+	ctx->regs[RETUNE_LANE0] = BIT(16) | (3 << 8) | BIT(3);
+	ctx->regs[RETUNE_SELECT] = BIT(23);
+	mmux_init.parent_hws = (const struct clk_hw **)ctx->parents;
+	ctx->mmux.common.hw.init = &mmux_init;
+	KUNIT_ASSERT_EQ(test, clk_hw_register(dev, &ctx->mmux.common.hw), 0);
+	kunit_add_action_or_reset(test, cv18xx_unregister, &ctx->mmux.common.hw);
+
+	/*
+	 * __clk_notify() walks clk_notifier_list, which list_add() prepends
+	 * to, and each distinct struct clk handle gets its own chain. The
+	 * observer must therefore be registered *before* the driver's own
+	 * notifier for the driver's to run first.
+	 */
+	ctx->observer.notifier_call = cv18xx_retune_observe;
+	KUNIT_ASSERT_EQ(test, clk_notifier_register(ctx->pll.common.hw.clk,
+						    &ctx->observer), 0);
+	kunit_add_action_or_reset(test, cv18xx_retune_unobserve, ctx);
+
+	KUNIT_ASSERT_EQ(test, cv1800_clk_mmux_add_retune(dev, &ctx->mmux), 0);
+	KUNIT_ASSERT_EQ(test, clk_get_rate(ctx->mmux.common.hw.clk), 850000000UL);
+	return ctx;
+}
+
+static void cv18xx_pll_retune(struct kunit *test)
+{
+	struct device *dev = kunit_device_register(test, "cv18xx-retune");
+	struct cv18xx_retune_context *ctx;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	ctx = cv18xx_retune_setup(test, dev);
+
+	/* 25 MHz * 40. The CPU divider is one, so the CPU follows it. */
+	KUNIT_ASSERT_EQ(test, clk_set_rate(ctx->pll.common.hw.clk, 1000000000), 0);
+	KUNIT_EXPECT_EQ(test, PLL_GET_DIV_SEL(readl(&ctx->regs[RETUNE_PLL])), 40UL);
+	KUNIT_EXPECT_EQ(test, clk_get_rate(ctx->pll.common.hw.clk), 1000000000UL);
+	KUNIT_EXPECT_EQ(test, clk_get_rate(ctx->mmux.common.hw.clk), 1000000000UL);
+
+	/*
+	 * The CPU must have been off MPLL for the whole rewrite: parked on
+	 * the spare lane before it, still there after it, and at a divider
+	 * that keeps FPLL's 1500 MHz down to 850 MHz or less.
+	 */
+	KUNIT_EXPECT_EQ(test, ctx->seen_select[0], 0U);
+	KUNIT_EXPECT_EQ(test, ctx->seen_spare_div[0], 2U);
+	KUNIT_EXPECT_EQ(test, ctx->seen_pll_div[0], 34UL);
+	/* By POST the driver's own notifier has already brought it back. */
+	KUNIT_EXPECT_EQ(test, ctx->seen_select[1], BIT(23));
+	KUNIT_EXPECT_EQ(test, ctx->seen_pll_div[1], 40UL);
+
+	/* Back on lane zero, still selecting MPLL, spare lane left as found. */
+	KUNIT_EXPECT_EQ(test, ctx->regs[RETUNE_SELECT], BIT(23));
+	KUNIT_EXPECT_EQ(test, ctx->regs[RETUNE_LANE1], 0U);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.get_parent(&ctx->mmux.common.hw), 4);
+	KUNIT_EXPECT_EQ(test, ctx->mmux.retune_state, CV1800_MMUX_RUNNING);
+
+	/* CPUFreq still divides the new rate, and only through the spare lane. */
+	KUNIT_ASSERT_EQ(test, clk_set_rate(ctx->mmux.common.hw.clk, 250000000), 0);
+	KUNIT_EXPECT_EQ(test, clk_get_rate(ctx->mmux.common.hw.clk), 250000000UL);
+	KUNIT_EXPECT_EQ(test, clk_get_rate(ctx->pll.common.hw.clk), 1000000000UL);
+	KUNIT_EXPECT_EQ(test, ctx->regs[RETUNE_SELECT], BIT(23));
+}
+
+static void cv18xx_pll_retune_rollback(struct kunit *test)
+{
+	struct device *dev = kunit_device_register(test, "cv18xx-rollback");
+	struct cv18xx_retune_context *ctx;
+	u32 original;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	ctx = cv18xx_retune_setup(test, dev);
+	original = ctx->regs[RETUNE_PLL];
+
+	/*
+	 * A PLL that reports a permanently incomplete update. The framework
+	 * discards the resulting set_rate() error, so the mux has to notice.
+	 */
+	ctx->regs[RETUNE_STATUS] = BIT(0);
+	clk_set_rate(ctx->pll.common.hw.clk, 1000000000);
+
+	/* Rolled back to the setting that did lock, and never left parked. */
+	KUNIT_EXPECT_EQ(test, readl(&ctx->regs[RETUNE_PLL]), original);
+	KUNIT_EXPECT_EQ(test, ctx->mmux.retune_state, CV1800_MMUX_STRANDED);
+
+	/* Stranded: still executing, on the spare lane, and honest about it. */
+	KUNIT_EXPECT_EQ(test, ctx->regs[RETUNE_SELECT], 0U);
+	KUNIT_EXPECT_EQ(test, clk_get_rate(ctx->mmux.common.hw.clk), 750000000UL);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.set_rate(&ctx->mmux.common.hw,
+							   250000000, 1000000000),
+			-EIO);
+}
+
+static void cv18xx_mmux_park_unpark(struct kunit *test)
+{
+	struct cv18xx_test_context *ctx = test->priv;
+	struct cv1800_clk_mmux *mmux = &ctx->mmux;
+	u32 before[NUM_REGS];
+
+	memcpy(before, ctx->regs, sizeof(before));
+
+	/* FPLL is 1500 MHz; 850 MHz needs a divide by two, not by one. */
+	KUNIT_ASSERT_EQ(test, cv1800_clk_mmux_park(mmux, 850000000), 0);
+	KUNIT_EXPECT_EQ(test, mmux->retune_state, CV1800_MMUX_PARKED);
+	KUNIT_EXPECT_EQ(test, ctx->regs[SELECT], 0U);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_regfield_get(ctx->regs[MUX1],
+						      &mmux->div[1]), 2U);
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_ops.recalc_rate(&mmux->common.hw,
+							      1500000000), 750000000UL);
+
+	/* Parking twice would lose the saved lane. */
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_park(mmux, 850000000), -EBUSY);
+
+	KUNIT_ASSERT_EQ(test, cv1800_clk_mmux_unpark(mmux, -1), 0);
+	KUNIT_EXPECT_EQ(test, mmux->retune_state, CV1800_MMUX_RUNNING);
+	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_unpark(mmux, -1), -EINVAL);
+
+	/* No reachable divider can hold FPLL down to this rate. */
+	KUNIT_EXPECT_EQ(test, cv1800_clk_mmux_park(mmux, 85000000), -ERANGE);
+	KUNIT_EXPECT_MEMEQ(test, before, ctx->regs, sizeof(before));
+}
+
 static struct kunit_case cv18xx_clock_cases[] = {
 	KUNIT_CASE(cv18xx_mmux_parents),
 	KUNIT_CASE(cv18xx_mmux_missing_selector),
@@ -242,6 +575,11 @@ static struct kunit_case cv18xx_clock_cases[] = {
 	KUNIT_CASE(cv18xx_bypass_mux_parents),
 	KUNIT_CASE(cv18xx_mmux_cpufreq),
 	KUNIT_CASE(cv18xx_mmux_unsafe_temporary_rate),
+	KUNIT_CASE(cv18xx_pll_lock_status),
+	KUNIT_CASE(cv18xx_ipll_rates),
+	KUNIT_CASE(cv18xx_mmux_park_unpark),
+	KUNIT_CASE(cv18xx_pll_retune),
+	KUNIT_CASE(cv18xx_pll_retune_rollback),
 	{}
 };
 

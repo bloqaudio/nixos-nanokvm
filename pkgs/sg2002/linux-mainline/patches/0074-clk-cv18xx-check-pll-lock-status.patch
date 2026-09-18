@@ -1,0 +1,111 @@
+From: NanoKVM contributors
+Subject: [PATCH] clk: sophgo: cv18xx: check PLL lock and propagate failures
+
+PLL_G2_STATUS and PLL_G6_STATUS have update-in-progress flags in bits 0
+onwards and matching lock flags sixteen bits higher. Waiting for the
+update flag to become set can report success while the PLL is unstable,
+or time out after a successful update. Require both a completed update
+and the corresponding lock flag, and return the polling result.
+
+Also reject an unrepresentable integer PLL rate before writing registers,
+and initialize the scratch register value used by determine_rate.
+
+This does not make it safe to retune an active CPU parent: its consumers
+must still be moved to an independent stable clock before the update.
+
+References:
+  SG200X TRM, PLL_G2_STATUS and PLL_G6_STATUS register descriptions
+  https://github.com/sophgo/sophgo-doc/blob/main/SG200X/TRM/contents/cn/clock/pll_g6_registers_description.table.rst
+---
+diff --git a/drivers/clk/sophgo/clk-cv18xx-common.h b/drivers/clk/sophgo/clk-cv18xx-common.h
+--- a/drivers/clk/sophgo/clk-cv18xx-common.h
++++ b/drivers/clk/sophgo/clk-cv18xx-common.h
+@@ -78,2 +78,2 @@
+-void cv1800_clk_wait_for_lock(struct cv1800_clk_common *common,
+-			      u32 reg, u32 lock);
++int cv1800_clk_wait_for_lock(struct cv1800_clk_common *common,
++			     u32 reg, u32 update);
+diff --git a/drivers/clk/sophgo/clk-cv18xx-common.c b/drivers/clk/sophgo/clk-cv18xx-common.c
+--- a/drivers/clk/sophgo/clk-cv18xx-common.c
++++ b/drivers/clk/sophgo/clk-cv18xx-common.c
+@@ -6,7 +6,6 @@
+ #include <linux/io.h>
+ #include <linux/iopoll.h>
+ #include <linux/spinlock.h>
+-#include <linux/bug.h>
+ 
+ #include "clk-cv18xx-common.h"
+ 
+@@ -55,12 +54,15 @@
+-void cv1800_clk_wait_for_lock(struct cv1800_clk_common *common,
+-			      u32 reg, u32 lock)
++int cv1800_clk_wait_for_lock(struct cv1800_clk_common *common,
++			     u32 reg, u32 update)
+ {
+ 	void __iomem *addr = common->base + reg;
++	u32 lock = update << 16;
+ 	u32 regval;
+ 
+-	if (!lock)
+-		return;
++	if (!update)
++		return 0;
+ 
+-	WARN_ON(readl_relaxed_poll_timeout(addr, regval, regval & lock,
+-					   100, PLL_LOCK_TIMEOUT_US));
++	/* Each PLL has an update flag and a lock flag sixteen bits above it. */
++	return readl_relaxed_poll_timeout(addr, regval,
++					(regval & (update | lock)) == lock,
++					100, PLL_LOCK_TIMEOUT_US);
+ }
+diff --git a/drivers/clk/sophgo/clk-cv18xx-pll.c b/drivers/clk/sophgo/clk-cv18xx-pll.c
+--- a/drivers/clk/sophgo/clk-cv18xx-pll.c
++++ b/drivers/clk/sophgo/clk-cv18xx-pll.c
+@@ -87,7 +87,7 @@
+ 
+ static int ipll_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+ {
+-	u32 val;
++	u32 val = 0;
+ 	struct cv1800_clk_pll *pll = hw_to_cv1800_clk_pll(hw);
+ 
+ 	return ipll_find_rate(pll->pll_limit, req->best_parent_rate,
+@@ -133,8 +133,11 @@
+ 	u32 regval, detected = 0;
+ 	unsigned long flags;
+ 	struct cv1800_clk_pll *pll = hw_to_cv1800_clk_pll(hw);
++	int ret;
+ 
+-	ipll_find_rate(pll->pll_limit, parent_rate, &rate, &detected);
++	ret = ipll_find_rate(pll->pll_limit, parent_rate, &rate, &detected);
++	if (ret)
++		return ret;
+ 	pll_get_mode_ctrl(PLL_GET_DIV_SEL(detected),
+ 			  ipll_check_mode_ctrl_restrict,
+ 			  pll->pll_limit, &detected);
+@@ -148,10 +151,8 @@
+ 
+ 	spin_unlock_irqrestore(pll->common.lock, flags);
+ 
+-	cv1800_clk_wait_for_lock(&pll->common, pll->pll_status.reg,
+-			      BIT(pll->pll_status.shift));
+-
+-	return 0;
++	return cv1800_clk_wait_for_lock(&pll->common, pll->pll_status.reg,
++				      BIT(pll->pll_status.shift));
+ }
+ 
+ static int pll_enable(struct clk_hw *hw)
+@@ -377,10 +378,8 @@
+ 
+ 	spin_unlock_irqrestore(pll->common.lock, flags);
+ 
+-	cv1800_clk_wait_for_lock(&pll->common, pll->pll_status.reg,
+-			      BIT(pll->pll_status.shift));
+-
+-	return 0;
++	return cv1800_clk_wait_for_lock(&pll->common, pll->pll_status.reg,
++				      BIT(pll->pll_status.shift));
+ }
+ 
+ static u8 fpll_get_parent(struct clk_hw *hw)

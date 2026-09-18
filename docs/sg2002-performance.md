@@ -7,10 +7,11 @@ CPU code does not automatically mean faster SD, USB or hardware encoding.
 ## Compiler configuration
 
 The CV181x NixOS platform selects `gcc.tune = "thead-c906"`. This supplies
-GCC's scheduling/cost model throughout the target package set, including
-libc, without changing the instruction set or ABI. Native build tools keep
-their own target. Rust, Go, prebuilt binaries and the independently packaged
-C906L firmware are not implicitly retuned by this GCC setting.
+GCC's scheduling/cost model to target C/C++ packages using the compiler
+wrapper, including libc, without changing the instruction set or ABI. Native
+build tools keep their own target. Rust, Go, prebuilt binaries and the
+independently packaged C906L firmware are not implicitly retuned by this
+GCC setting.
 
 The pinned nixpkgs compiler wrapper omits RISC-V from its supported-tuning
 dispatch. `pkgs/sg2002/c906-tuning.nix` uses the wrapper's extension point to
@@ -19,6 +20,15 @@ so an explicit package override remains possible. The regression check
 inspects the final and libc-bootstrap wrappers, asks GCC which tuning is
 active, checks a caller override, and runs C and C++ programs under the C906
 QEMU model. It also checks that vector instructions were not enabled.
+
+The mainline kernel uses nixpkgs' unwrapped compiler and therefore needs
+the same platform setting passed explicitly through Kbuild's standard
+`KCFLAGS`. This covers built-in C code and modules compiled in the kernel
+build; it does not change host-tool flags. The regression check also builds
+a probe object through Kbuild using the kernel's actual compiler and make
+flags, and verifies that an untuned platform does not acquire this flag.
+Out-of-tree modules must use the target compiler wrapper or inherit the
+kernel's `commonMakeFlags` to receive the same tuning.
 
 This changes derivation identities across the target closure and therefore
 requires rebuilding packages that a generic RISC-V binary cache cannot supply.
@@ -230,32 +240,34 @@ the board was then returned to its known-good full-speed RAM image.
 This does not validate other carriers, cables or long-term operation. The
 existing full-speed default remains, especially given previous PicoClaw
 high-speed failures; the separate `sg2002-dtb-mainline-*-high-speed`
-packages remain opt-in diagnostics. Likewise, the
-CPU's 850 MHz ceiling is unchanged: the vendor higher-frequency mode
-also changes core voltage, and is not a safe device-tree-only optimization.
+packages remain opt-in diagnostics.
 
 ### CPU frequency and voltage scaling
 
 Mainline images include the standard `cpufreq-dt` driver, OPPs at
-212.5/425/850 MHz, the `schedutil` governor, and CPU thermal cooling above
+250/500/1000 MHz, the `schedutil` governor, and CPU thermal cooling above
 85 °C with 5 °C hysteresis. No board-specific enable option is required:
 the kernel configuration and carrier DTS provide this support directly.
 This applies to both RAM-only and persistent images, including C906L
-configurations. The firmware starts Linux's C906 at 850 MHz; the auxiliary
-C906L stays at 594 MHz. The existing critical thermal trip remains.
+configurations. The auxiliary C906L stays at 594 MHz. The existing critical
+thermal trip remains.
 
 The performance, powersave and userspace governors are also available
 through standard CPUFreq sysfs. Persistent systems can select their policy
 with NixOS's normal `powerManagement.cpuFreqGovernor` option.
 
-These are integer divisions of the existing MPLL clock, not PLL retuning.
-The driver retains that parent and uses the inactive divider lane during
-transitions, with an intermediate rate no higher than either endpoint.
-Peripheral clocks and the auxiliary-core clock are not retuned. Do not use
+The carrier DTS asks for a 1 GHz MPLL through `assigned-clock-rates`, and
+the OPPs are integer divisions of it. Runtime scaling is still
+divider-only: the driver keeps MPLL as the CPU's parent and uses the
+inactive divider lane during transitions, with an intermediate rate no
+higher than either endpoint. Peripheral clocks and the auxiliary-core clock
+are not retuned. The `sg2002-cpufreq` check rejects an OPP table whose
+entries are not exact integer divisions of the requested PLL rate, since
+that would silently mis-report every frequency Linux displays. Do not use
 this OPP table with a differently clocked third-party FIP.
 
-**This is DFS, not complete DVFS.** It does not change core voltage or
-enable 1 GHz. Sipeed's Nano 70415 and 70418 schematics mark R140/R141/C81,
+**This is DFS, not DVFS.** It does not change core voltage.
+Sipeed's Nano 70415 and 70418 schematics mark R140/R141/C81,
 the PWM-to-buck feedback circuit, **DNP**; the 70405 schematic has a fixed
 feedback divider without that circuit. The Claw schematic describes a
 Nano core-board carrier, not an independent adjustable core supply.
@@ -272,11 +284,98 @@ accounting for all consumers of the shared core supply. Describing an
 unconnected PWM as a regulator would make Linux's voltage reports misleading.
 
 The vendor RISC-V overdrive path sets the main CPU to 1,050 MHz, requests
-1.00 V through PWM and changes several other clocks. It is not a validated
-1 GHz CPU-only operating point for these board configurations. A future
-DVFS implementation needs board-specific supply information and validated
+1.00 V through PWM and changes several other clocks. It is not used. The
+1 GHz operating point below is a frequency-only change at the fixed supply
+these carriers provide, which the datasheet already rates for it. Any
+higher target needs board-specific supply information and validated
 voltage/frequency operating points, including the effects of the shared
 core supply on other engines. No voltage changes were attempted.
+
+### Reaching 1 GHz
+
+The vendor firmware leaves MPLL at 850 MHz and the CPU mux can only divide
+its parent, so the advertised 1 GHz needs the PLL itself retuned. MPLL runs
+in integer mode — `MPLL_CSR` read back `0x00448101`, which is `DIV_SEL=34`
+against the 25 MHz oscillator — so 1 GHz is exactly `DIV_SEL=40`, with no
+fractional synthesizer involved.
+
+Retuning a PLL that a CPU is executing from hangs that CPU. Register
+readback established that MPLL has exactly one live consumer: `CLK_SEL0`
+was `0x01800000`, putting the auxiliary C906L on DISPPLL/2 and the A53
+clock on lane one, FPLL/2. Only `clk_c906_0` selects MPLL. The CPU mux's
+other lane runs from FPLL at 1.5 GHz, which is left alone.
+
+`clk-cv18xx-park-cpu-during-pll-retune` therefore watches MPLL rather than
+the CPU. On `PRE_RATE_CHANGE` it parks the CPU on the spare lane at no more
+than either endpoint, and on `POST_RATE_CHANGE` it returns only after the
+hardware reports a completed update *and* a lock. Two common-clock
+behaviours make the obvious implementation wrong: `clk_change_rate()`
+discards `set_rate()` errors, so the PLL's own return value never reaches
+the caller, and it skips `POST_RATE_CHANGE` when the recalculated rate is
+unchanged, which would strand the CPU on the spare lane forever. The mux's
+`set_rate()` runs unconditionally afterwards and releases a still-parked
+mux. A PLL that was rewritten but never locked is rolled back to its
+previous setting; if that will not lock either, the CPU deliberately stays
+on the spare lane and the driver tells the clock framework its parent
+changed, so the reported rate stays true rather than becoming fiction.
+
+Eleven KUnit cases now pass, including the whole retune driven through the
+clock framework. A second notifier registered *before* the driver's own
+observes the mux mid-change, so the test distinguishes a real park from a
+mux that merely ended where it started — `__clk_notify()` walks a list that
+`list_add()` prepends to, and each `struct clk` handle gets its own chain,
+so registration order is the reverse of call order. Removing the park makes
+two cases fail with real assertion failures, not build errors. checkpatch
+reports no errors.
+
+On the PicoClaw, the default RAM image booted straight to 1 GHz:
+
+| Measurement | 850 MHz (previous) | 1 GHz |
+| --- | --- | --- |
+| `cpuinfo_cur_freq` | 850000 | 1000000 |
+| 100-frame conversion, CPU seconds | 2.618, 2.628 | 2.273, 2.283, 2.285 |
+| Userspace startup | 16.097 s | 15.518 s |
+| `initrd.target` | 13.541 s | 13.028 s |
+
+All conversion runs returned the expected checksum `60633ec7`. The 1.15×
+conversion speedup is close to the 1.176× clock ratio; boot time is not
+CPU-bound and barely moved. The 1 GHz boot also carried the Kbuild tuning
+fix, so its boot figures change two variables at once and are individual
+boots, not averages.
+
+`MPLL_CSR` read back `0x04508101` afterwards: `DIV_SEL=40`, with `SEL_MODE`
+and `ICTRL` at the values the driver's charge-pump heuristic selects for
+that divider, and `PLL_G6_STATUS` showing lock set and update clear. Six
+hundred deliberate OPP transitions produced no frequency mismatch, and the
+per-OPP conversion times scaled as the dividers predict: 2.277 s at 1 GHz,
+4.440 s at 500 MHz and 8.896 s at 250 MHz. Afterwards the spare lane
+register `C906_0_DIV1` was byte-identical to its firmware value, the
+auxiliary core was still at DISPPLL/2 and nothing was bypassed, so six
+hundred park/unpark cycles left no trace. Temperature stayed at 42–44 °C,
+the watchdog stayed active, `systemctl is-system-running` reported
+`running`, and the boot log contained no warning, oops or error.
+
+This is one board over roughly ten minutes. It does not establish
+long-duration stability, behaviour at temperature extremes, or silicon
+margin across parts.
+
+### CPU idle
+
+There is nothing to enable. `cpuidle-riscv-sbi` is the only RISC-V cpuidle
+driver, and it refuses to register a platform whose only state is WFI —
+upstream's own comment is that "the default architectural back-end already
+executes wfi on idle entry", which is what the kernel does today.
+
+A deeper state would have to come from SBI HSM suspend. The board reports
+SBI v3.0 with the HSM extension from OpenSBI 1.8, but OpenSBI's generic
+platform implements `hart_suspend` for exactly one SoC, Allwinner's
+sun20i-d1; every other platform, Sophgo included, falls through to
+`__sbi_hsm_suspend_default()`, which is a bare `wfi()`. Declaring a
+`riscv,idle-states` node here would therefore route the same WFI through an
+ecall and make idle slower, not cheaper. `CPU_IDLE` stays off.
+
+Real idle savings on this board come from CPUFreq instead: `schedutil`
+drops the CPU to 250 MHz when there is nothing to run.
 
 The CPU MMUX driver now translates a logical parent index through the
 selected lane's hardware selector table. Previously, requesting MPLL
@@ -293,7 +392,29 @@ fields, an unmapped parent, divider rates and the earlier bypass-mux fix.
 The earlier parent-selection regression failed three of four cases with
 the pre-fix driver. Two further cases exercise 96 divider transitions
 through the common clock framework and reject an unsafe intermediate rate
-before writing registers. All six cases pass with the current driver.
+before writing registers. Two PLL cases additionally cover completed and
+in-progress updates, lock timeouts, 1 GHz integer-rate arithmetic, reserved
+register bits and invalid-rate rejection. Three further cases cover the
+park/unpark pair directly and the whole parent-PLL retune, including its
+rollback, driven through the clock framework. All eleven cases pass.
+Restoring the old lock condition makes both PLL-status cases fail, and
+removing the park makes both retune cases fail.
+
+The PLL status check requires the update flag to clear and its corresponding
+lock flag (sixteen bits higher) to set. The original driver instead waited
+for the update flag to set. Read-only PicoClaw register inspection confirmed
+the documented steady state: `PLL_G6_STATUS=0x00070000` and
+`PLL_G2_STATUS=0x001f0000`. PLL operations now return timeout errors, but
+this alone is not a safe CPU PLL transition: consumers must leave that PLL
+first and must not switch back until lock has been verified, which is what
+the park/unpark notifier adds.
+
+The [SG2002 preliminary datasheet](https://dl.sipeed.com/LICHEE/LicheeRV_Nano/07_Datasheet/SG2002_Preliminary_Datasheet_V1.0-alpha_CN.pdf)
+lists a 1.0 GHz main C906 on page 9 and nominal 0.9 V core power, with a
+0.81–0.99 V recommended range, on page 31. This is distinct from the
+vendor's 1.05 GHz overdrive mode. The fixed-supply 1 GHz default rests on
+that rating plus the clock-switch sequence and physical validation
+recorded above.
 Test code is linked only into the test kernel, never board images.
 The default-DTB/configuration check covers all seven image variants,
 including the C906L contract; existing DT validators check peripheral
@@ -307,6 +428,9 @@ runs took 2.623, 2.634 and 2.621 CPU seconds with the expected checksum.
 SSH, service health and the host-health watchdog passed. This is a boot
 regression check, not a physical frequency-transition test; the board was
 returned to its known-good image afterward.
+
+The measurements in the rest of this section predate the 1 GHz default and
+were taken with MPLL at its firmware 850 MHz.
 
 A subsequent RAM-only camera boot enabled CPUFreq. The production
 100-frame conversion benchmark took 2.618/2.628 CPU seconds at 850 MHz,
@@ -350,14 +474,12 @@ transports reporting `fault=0`. Wi-Fi association, DHCP and SSH worked,
 with no failed services. Userspace startup took 16.097 s, reaching
 `initrd.target` at 13.541 s and leaving 9,084 KiB free in the root filesystem.
 
-### Higher clocks, auxiliary-core scaling and power measurements
+### Auxiliary-core scaling and power measurements
 
-[Sipeed advertises a 1 GHz main CPU](https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro),
-but the current firmware's 850 MHz MPLL
-and divider-only policy cannot reach it. Raising the ceiling needs a safe
-PLL-rate transition and a validated voltage/frequency operating point,
-not merely another OPP entry. The vendor's 1,050 MHz overdrive sequence is
-not an independently validated 1 GHz policy for this board.
+[Sipeed advertises a 1 GHz main CPU](https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro).
+Reaching it needed a safe PLL-rate transition rather than merely another
+OPP entry; see "Reaching 1 GHz" above. The vendor's 1,050 MHz overdrive
+sequence remains unused.
 
 C906L has a separate CPU divider; its current 594 MHz is DISPPLL / 2.
 That PLL also feeds multimedia clocks, so changing it blindly would affect
