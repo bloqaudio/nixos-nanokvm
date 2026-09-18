@@ -114,3 +114,10 @@ USB bundle as above; its kernel, firmware and tools can reuse CI's cache.
 For application patches, update `patches/nanokvm/`; kernel and bootloader
 patches live under `pkgs/sg2002/`. Keep reusable hardware fixes here and
 machine-specific policy in the consuming flake.
+
+The mainline kernel follows nixpkgs' 7.2 series rather than a tarball
+pinned in this repo, so stable 7.2.x updates arrive with a flake lock bump
+instead of a hand-edited hash. `pkgs/sg2002/linux-mainline/source.nix` is
+the single place the kernel package, the DTB build and the clock KUnit
+suite agree on that version.
+

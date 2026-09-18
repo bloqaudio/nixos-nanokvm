@@ -1,6 +1,6 @@
 # Mainline Linux for the SG2002.
 #
-# This uses nixpkgs' `linux_latest` source/build machinery with the RISC-V
+# This uses nixpkgs' 7.2 source/build machinery with the RISC-V
 # defconfig as its small base.  NixOS's generic common config is deliberately
 # disabled: it enables thousands of unrelated modules on this 256 MiB SoC.
 # Two SG2002-specific pieces are layered on via `.override`:
@@ -18,8 +18,7 @@
 {
   lib,
   stdenv,
-  fetchurl,
-  linux_latest,
+  linux_7_2,
   audio ? false,
   bluetooth ? false,
   # Diagnostic builds retain the same hardware configuration and safety
@@ -29,19 +28,15 @@
   # any extra args callPackage / linuxPackagesFor threads through.
   ...
 }:
-let
-  source = import ./source.nix {inherit fetchurl;};
-in
 # Standard nixpkgs riscv64 kernel: buildLinux installs the uncompressed
 # `Image` (kernelFile default) into $out on its own — no compress/install
 # dance needed. We only layer on the SG2002 patch queue + config delta.
-(linux_latest.override {
+(linux_7_2.override {
   defconfig = "defconfig";
   enableCommonConfig = false;
   autoModules = false;
   argsOverride = {
-    inherit (source) src version modDirVersion;
-    extraMeta.branch = "7.2-rc";
+    extraMeta.branch = "7.2";
   };
   structuredExtraConfig = (import ./config.nix {inherit lib;})
     // lib.optionalAttrs profiling {

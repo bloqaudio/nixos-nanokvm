@@ -1,10 +1,16 @@
-{ fetchurl }:
-
-rec {
-  version = "7.2-rc5";
-  modDirVersion = "7.2.0-rc5";
-  src = fetchurl {
-    url = "https://git.kernel.org/torvalds/t/linux-${version}.tar.gz";
-    hash = "sha256-i+W/JFxbyJkn8VqfV1wEhpwlqNUR2LgQ7NimflsN1R4=";
-  };
+# Single source of truth for the mainline kernel the SG2002 targets.
+#
+# This tracks nixpkgs' 7.2 series rather than pinning a tarball and hash
+# here. Stable 7.2.x updates then arrive with a flake lock bump, which is
+# reviewable and reproducible, instead of a hand-edited hash pointing at a
+# release candidate in torvalds/t/ that kernel.org eventually deletes.
+#
+# It stays a separate file because three places need to agree on it: the
+# kernel package, the DTB build (which compiles the in-tree carrier DTS)
+# and the clock KUnit suite (which builds an x86 test kernel from the same
+# tree, so the driver under test is the one the board runs).
+{ linux_7_2 }:
+{
+  inherit (linux_7_2) src version modDirVersion;
+  kernel = linux_7_2;
 }
