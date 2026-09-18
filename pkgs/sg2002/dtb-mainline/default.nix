@@ -3,9 +3,10 @@
 # Starts from the upstream `sg2002-licheerv-nano-b.dts` in the mainline
 # kernel tree (passed in as `linuxSrc`) and concatenates one or more
 # overlay dtsi files — dtc merges nodes, so later properties replace
-# earlier ones. Two flavours:
+# earlier ones. All variants include the shared CPUFreq/thermal description.
+# The basic outputs are:
 #
-#   .dtb     — bw.dtsi only (default: WiFi/SDIO1 enabled).
+#   .dtb     — bw.dtsi (default: WiFi/SDIO1 enabled).
 #   .dtbOled — bw.dtsi + bw-oled.dtsi (SDIO1 disabled, IIC1 + SH1107
 #              child on the freed-up SD1 pads). Pair with builds that
 #              also turn sg2002.wifi.enable off.
@@ -35,7 +36,8 @@ let
       SRC=$(echo linux-*/)
       DTS=$SRC/arch/riscv/boot/dts/sophgo/sg2002-licheerv-nano-b.dts
 
-      cat "$DTS" ${lib.concatMapStringsSep " " (p: "${p}") overlays} > merged.dts
+      cat "$DTS" ${lib.concatMapStringsSep " " (p: "${p}") overlays} \
+        ${./sg2002-cpufreq.dtsi} > merged.dts
 
       cpp -nostdinc -undef -x assembler-with-cpp \
         -I "$SRC/include" \
@@ -189,8 +191,8 @@ let
     ./sg2002-licheerv-eth.dtsi
   ];
 
-  # Experimental USB handoff A/Bs.  The high-speed override is always
-  # concatenated last, leaving the full-speed production DTBs untouched.
+  # Experimental USB handoff A/Bs. The high-speed override follows the
+  # carrier description, leaving the full-speed production DTBs untouched.
   dtbHighSpeed = buildDtb "sg2002-licheerv-nano-bw-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-usb-high-speed.dtsi

@@ -1,4 +1,4 @@
-"""Check the composed DTB, including unchanged carrier/C906L properties."""
+"""Check CPUFreq and thermal integration in each default carrier DTB."""
 import subprocess
 import sys
 
@@ -18,15 +18,10 @@ def tree(blob, node="/"):
     return result
 
 
-baseline, scaling = sys.argv[1:]
-before, after = tree(baseline), tree(scaling)
-for node, properties in before.items():
-    assert node in after, f"lost carrier node {node}"
-    for prop, value in properties.items():
-        assert after[node].get(prop) == value, f"changed carrier property {node}:{prop}"
+scaling, = sys.argv[1:]
+after = tree(scaling)
 
 cpu = "/cpus/cpu@0"
-assert "operating-points-v2" not in before[cpu]
 assert "cpu-supply" not in after[cpu], "must not invent voltage control"
 clock_provider, clock_id = get(scaling, cpu, "clocks").split()
 assert clock_provider == get(scaling, "/soc/clock-controller@3002000", "phandle")
@@ -52,4 +47,4 @@ assert get(scaling, cooling, "trip") == get(scaling, trip, "phandle")
 assert get(scaling, cooling, "cooling-device").split() == [
     get(scaling, cpu, "phandle"), "4294967295", "4294967295"
 ]
-print("CPUFreq DT: exact OPPs, thermal link, carrier properties preserved")
+print("Default CPUFreq DT: exact OPPs and CPU thermal link")

@@ -312,13 +312,20 @@ with lib.kernel; {
   ACPI = no;
   DMI = no;
 
-  # No suspend/resume or frequency/idle policy is exposed by the SG2002 DT
-  # used here. Keep the always-on PM core (clock/reset/regulator drivers
-  # still need it), but drop the generic policy subsystems and unused
-  # governors.
+  # The board DT supplies divider-only operating points and CPU cooling.
+  # Keep standard CPUFreq policy; suspend and CPU idle are not implemented.
   SUSPEND = no;
-  CPU_FREQ = no;
   CPU_IDLE = no;
+  CPU_FREQ = yes;
+  CPUFREQ_DT = yes;
+  CPU_FREQ_STAT = yes;
+  CPU_FREQ_DEFAULT_GOV_SCHEDUTIL = yes;
+  CPU_FREQ_DEFAULT_GOV_PERFORMANCE = no;
+  CPU_FREQ_GOV_PERFORMANCE = yes;
+  CPU_FREQ_GOV_POWERSAVE = yes;
+  CPU_FREQ_GOV_USERSPACE = yes;
+  CPU_FREQ_GOV_SCHEDUTIL = yes;
+  CPU_THERMAL = yes;
 
   # RISC-V defconfig enables these observability/large-memory
   # facilities even on this 256 MiB appliance. No board service uses eBPF,

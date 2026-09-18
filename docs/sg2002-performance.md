@@ -209,7 +209,7 @@ The Bluetooth-enabled factory accepts the same argument. The
 `sg2002-wifi-ack-filter` check builds both settings for both variants and
 inspects the compiled modules to verify that the filter code is absent
 by default and present only when requested. No Wi-Fi power-saving,
-SDIO clock, CPU frequency or voltage default changed.
+SDIO clock, CPU frequency or voltage default changed in that experiment.
 
 The CV18xx bypass-mux driver now programs the selected PLL mux as well as
 the bypass bit. A RAM-only camera experiment using standard assigned clocks
@@ -231,28 +231,22 @@ This does not validate other carriers, cables or long-term operation. The
 existing full-speed default remains, especially given previous PicoClaw
 high-speed failures; the separate `sg2002-dtb-mainline-*-high-speed`
 packages remain opt-in diagnostics. Likewise, the
-CPU's 850 MHz normal setting is unchanged: the vendor higher-frequency mode
+CPU's 850 MHz ceiling is unchanged: the vendor higher-frequency mode
 also changes core voltage, and is not a safe device-tree-only optimization.
 
 ### CPU frequency and voltage scaling
 
-The default clock configuration is 850 MHz for the Linux C906 and 594 MHz
-for the auxiliary C906. CPUFreq remains opt-in; unmodified image profiles
-do not change clocks, governor policy or voltage.
+Mainline images include the standard `cpufreq-dt` driver, OPPs at
+212.5/425/850 MHz, the `schedutil` governor, and CPU thermal cooling above
+85 °C with 5 °C hysteresis. No board-specific enable option is required:
+the kernel configuration and carrier DTS provide this support directly.
+This applies to both RAM-only and persistent images, including C906L
+configurations. The firmware starts Linux's C906 at 850 MHz; the auxiliary
+C906L stays at 594 MHz. The existing critical thermal trip remains.
 
-For the mainline kernel with this repository's normal 850 MHz FIP:
-
-```nix
-sg2002.cpuFreq.enable = true;
-```
-
-This enables the standard `cpufreq-dt` driver, OPPs at 212.5/425/850 MHz,
-the `schedutil` governor, and CPU thermal cooling above 85 °C with 5 °C
-hysteresis. It applies to both RAM-only and persistent images and retains
-the selected carrier and C906L device tree. The existing critical trip
-remains. The performance, powersave and userspace governors are also
-available through the standard CPUFreq sysfs interface; stage 2 can set
-`powerManagement.cpuFreqGovernor` normally.
+The performance, powersave and userspace governors are also available
+through standard CPUFreq sysfs. Persistent systems can select their policy
+with NixOS's normal `powerManagement.cpuFreqGovernor` option.
 
 These are integer divisions of the existing MPLL clock, not PLL retuning.
 The driver retains that parent and uses the inactive divider lane during
@@ -301,8 +295,9 @@ the pre-fix driver. Two further cases exercise 96 divider transitions
 through the common clock framework and reject an unsafe intermediate rate
 before writing registers. All six cases pass with the current driver.
 Test code is linked only into the test kernel, never board images.
-The composed-DTB/configuration check covers all seven image variants,
-including unchanged carrier properties and the C906L contract. These are
+The default-DTB/configuration check covers all seven image variants,
+including the C906L contract; existing DT validators check peripheral
+ownership and carrier configuration. These are
 software checks, not proof of analog voltage behaviour or silicon timing.
 
 A guarded, RAM-only camera boot with the clock fixes retained the existing
@@ -322,15 +317,61 @@ passed frequency readback checks. Clock-framework readback retained the
 the five benchmark runs. PWM readback was unchanged.
 
 The standard `schedutil` governor booted and ran the workload successfully.
-A diagnostic kernel with both `cpuFreq` and `profiling` enabled exposes
+A diagnostic kernel with `profiling` enabled exposes
 thermal emulation: a simulated 90 °C reading capped the CPU at 425 MHz,
 and clearing it restored the 850 MHz ceiling. This tests the cooling map
 without overheating the board; it does not measure cooling effectiveness.
 The declared 100 µs transition latency is a conservative policy budget,
 not a measured silicon timing result. Watchdog and service-health checks
 passed before the camera was returned to its known-good image. No SD
-contents changed. CPUFreq remains opt-in pending wider carrier/peripheral
-and long-duration testing; no voltage or power-consumption claim is made.
+contents changed. These bounded tests do not establish long-duration
+stability, voltage behaviour or power consumption.
+
+On PicoClaw, a second test exercised all three frequencies with concurrent
+Wi-Fi traffic, DRM scanout and C906L RPMsg. Four 100-frame conversion runs
+returned the expected checksum; 300 deliberate transitions passed, as did
+20 acknowledged DRM frames and 2,200 496-byte RPMsg exchanges. The three-minute
+5 GHz bidirectional Wi-Fi run completed at 6.32 Mbit/s received by the board
+and 83.1 Mbit/s received by the host. This is a coexistence test, not a Wi-Fi
+speedup claim. RPMsg p99 ranged from 8.59 to 13.78 ms during the fixed-rate
+traffic runs; the subsequent scheduler-governed sample was 2.60 ms.
+The display mode was restored, both peripheral transports reported
+`fault=0`, and watchdog/service checks passed. An earlier, longer display
+sequence exceeded the test harness's 240-second deadline; interrupting
+scanout latched the driver's expected `ERESTARTSYS` fault. The board was
+rebooted before the complete repeat, which exited successfully. No optical
+confirmation is claimed.
+
+The final default PicoClaw RAM image was then booted without a CPUFreq
+override or benchmark additions. All three frequencies passed readback;
+four DRM frames and 300 RPMsg exchanges completed, with both peripheral
+transports reporting `fault=0`. Wi-Fi association, DHCP and SSH worked,
+`schedutil` remained selected, and the hardware watchdog stayed active
+with no failed services. Userspace startup took 16.097 s, reaching
+`initrd.target` at 13.541 s and leaving 9,084 KiB free in the root filesystem.
+
+### Higher clocks, auxiliary-core scaling and power measurements
+
+[Sipeed advertises a 1 GHz main CPU](https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro),
+but the current firmware's 850 MHz MPLL
+and divider-only policy cannot reach it. Raising the ceiling needs a safe
+PLL-rate transition and a validated voltage/frequency operating point,
+not merely another OPP entry. The vendor's 1,050 MHz overdrive sequence is
+not an independently validated 1 GHz policy for this board.
+
+C906L has a separate CPU divider; its current 594 MHz is DISPPLL / 2.
+That PLL also feeds multimedia clocks, so changing it blindly would affect
+other devices. Linux CPUFreq controls the Linux hart, not the RTOS core.
+Auxiliary-core scaling would need coordinated clock ownership and firmware
+timing/latency validation. These tests leave C906L at its original rate.
+
+The tested PicoClaw exposes SoC temperature and three generic SAR-ADC
+voltage channels through hwmon. It does not expose current, power or energy
+measurements; those ADC inputs are not calibrated CPU-rail telemetry.
+An external input-power meter can measure whole-board consumption, including
+Wi-Fi and the display. CPU-rail power requires voltage/current measurement
+on that rail. Frequency residency, temperature and estimates from software
+are not substitutes for measured watts.
 
 ## Profiling and recovery
 

@@ -704,17 +704,7 @@
             pkgs.callPackage ./pkgs/sg2002/linux-mainline/tests/clock-kunit.nix { };
           sg2002-cpufreq = import ./tests/sg2002-cpufreq.nix {
             inherit pkgs;
-            configurations = map (entry: {
-              baseline = checkedConfig entry;
-              scaling = (mkBoard {
-                board = entry.boardName;
-                inherit (entry) kernel profile mixins;
-                extraModules = (entry.modules or [ ]) ++ [
-                  testCredentials
-                  { sg2002.cpuFreq.enable = true; }
-                ];
-              }).config;
-            }) catalog;
+            configurations = map checkedConfig catalog;
           };
           sg2002-c906l-module-eval = import ./tests/sg2002-c906l-eval.nix {
             inherit
