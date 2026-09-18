@@ -1,9 +1,10 @@
 //! SG2002 DW SPI, bounded polled master transactions on hardware CS0.
 //!
-//! TRM v1.02 specifies eight entries in each FIFO and only SER bit 0. Entire
+//! TRM v1.02 specifies eight entries in each FIFO and only SER bit 0. Byte
 //! transactions are preloaded before selecting CS, avoiding FIFO starvation
-//! and the resulting mid-transaction CS deassertion. Longer transfers need a
-//! separate reviewed streaming/DMA or GPIO-CS implementation.
+//! and the resulting mid-transaction CS deassertion. Frame data uses the
+//! transmit-only word stream, whose only underrun cost is a CS pause between
+//! complete words. DMA remains unused: the AXI DMAC and its mux are Linux-owned.
 
 use core::ptr::NonNull;
 use embedded_hal::spi::{Mode, Phase, Polarity};
@@ -69,6 +70,13 @@ pub enum Error {
     Hardware(u32),
 }
 
+/// TX FIFO depth from the TRM; also the largest burst `tx_level` can report.
+const FIFO_DEPTH: u32 = 8;
+/// CTRLR0: 8-bit frames, full duplex.
+const CONTROL_8BIT_DUPLEX: u32 = 7;
+/// CTRLR0: 16-bit frames, transmit-only (TMOD=01) so the RX FIFO never fills.
+const CONTROL_16BIT_TX_ONLY: u32 = 0xf | 1 << 8;
+
 trait Io {
     fn enable(&mut self, value: u32);
     fn select(&mut self, value: u32);
@@ -81,6 +89,10 @@ trait Io {
     fn errors(&self) -> u32;
     fn write(&mut self, byte: u8);
     fn read(&mut self) -> u8;
+    fn tx_level(&self) -> u32;
+    /// Unfenced data-register write for FIFO bursts; the burst ends with
+    /// `io_fence` before the next status read.
+    fn write_word(&mut self, word: u16);
 }
 struct Mmio<'a>(UniqueMmioPointer<'a, Registers>);
 impl Io for Mmio<'_> {
@@ -117,11 +129,19 @@ impl Io for Mmio<'_> {
     fn read(&mut self) -> u8 {
         crate::ordered_read(|| field!(self.0, data).read()) as u8
     }
+    fn tx_level(&self) -> u32 {
+        crate::ordered_read(|| field_shared!(self.0, tx_level).read())
+    }
+    fn write_word(&mut self, word: u16) {
+        field!(self.0, data).write(u32::from(word));
+    }
 }
 
 struct Driver<I> {
     io: I,
     configured: bool,
+    /// CPOL/CPHA bits of the configured mode, reapplied on every CTRLR0 write.
+    mode_bits: u32,
 }
 impl<I: Io> Driver<I> {
     fn configure(&mut self, divider: Divider, mode: Mode) {
@@ -140,9 +160,78 @@ impl<I: Io> Driver<I> {
         } else {
             0
         };
-        self.io.control(7 | cpol | cpha); // 8 bits, Motorola full duplex.
+        self.mode_bits = cpol | cpha;
+        self.io.control(CONTROL_8BIT_DUPLEX | self.mode_bits);
         self.io.clear();
         self.configured = true;
+    }
+    /// Stream 16-bit words MSB-first under hardware CS0, transmit only. The
+    /// FIFO is refilled in bursts sized from TXFLR; if the CPU falls behind,
+    /// the controller merely deasserts CS between complete words, which the
+    /// ST7789 tolerates inside a RAM write. `polls` bounds each wait for FIFO
+    /// space and the final drain, not total time.
+    fn stream(&mut self, words: impl Iterator<Item = u16>, polls: u32) -> Result<(), Error> {
+        if !self.configured {
+            return Err(Error::Unconfigured);
+        }
+        if polls == 0 {
+            return Err(Error::Timeout);
+        }
+        self.io.control(CONTROL_16BIT_TX_ONLY | self.mode_bits);
+        self.io.clear();
+        self.io.enable(1);
+        let result = self.pump(words, polls);
+        // Same halt sequence as transfer(): SPIENR=0 stops the clock and
+        // clears the FIFOs, then restore the byte-transaction configuration.
+        self.io.enable(0);
+        self.io.select(0);
+        self.io.control(CONTROL_8BIT_DUPLEX | self.mode_bits);
+        self.io.clear();
+        result
+    }
+    fn pump(&mut self, mut words: impl Iterator<Item = u16>, polls: u32) -> Result<(), Error> {
+        let mut selected = false;
+        loop {
+            let mut waited = 0;
+            let room = loop {
+                let room = FIFO_DEPTH.saturating_sub(self.io.tx_level());
+                if room != 0 {
+                    break room;
+                }
+                waited += 1;
+                if waited == polls {
+                    return Err(Error::Timeout);
+                }
+            };
+            let mut written = 0;
+            while written < room {
+                match words.next() {
+                    Some(word) => self.io.write_word(word),
+                    None => break,
+                }
+                written += 1;
+            }
+            crate::io_fence();
+            if !selected {
+                // Preload the first burst before selecting, as transfer() does.
+                self.io.select(1);
+                selected = true;
+            }
+            if written < room {
+                break;
+            }
+        }
+        for _ in 0..polls {
+            let errors = self.io.errors();
+            if errors != 0 {
+                return Err(Error::Hardware(errors));
+            }
+            // TFE set and BUSY clear: every queued word has been clocked out.
+            if self.io.status() & 5 == 4 {
+                return Ok(());
+            }
+        }
+        Err(Error::Timeout)
     }
     fn transfer(&mut self, bytes: &mut [u8], polls: u32) -> Result<(), Error> {
         if !self.configured {
@@ -214,6 +303,7 @@ impl Spi<'static> {
             driver: Driver {
                 io: Mmio(unsafe { UniqueMmioPointer::new(base.cast()) }),
                 configured: false,
+                mode_bits: 0,
             },
         }
     }
@@ -229,6 +319,17 @@ impl Spi<'_> {
     /// a prefix in `bytes` and on the wire; controller ends disabled every time.
     pub fn transfer_in_place(&mut self, bytes: &mut [u8], polls: u32) -> Result<(), Error> {
         self.driver.transfer(bytes, polls)
+    }
+    /// Stream any number of 16-bit words, MSB first, transmit-only, under one
+    /// logical CS0 assertion (see `Driver::stream` for the underrun caveat).
+    /// Failure can leave a prefix on the wire; controller ends disabled and
+    /// back in 8-bit full-duplex mode every time.
+    pub fn stream_words(
+        &mut self,
+        words: impl Iterator<Item = u16>,
+        polls: u32,
+    ) -> Result<(), Error> {
+        self.driver.stream(words, polls)
     }
 }
 
@@ -246,6 +347,8 @@ mod tests {
         stuck: bool,
         full: bool,
         errors: u32,
+        words: Vec<u16>,
+        level: std::cell::Cell<u32>,
     }
     impl Io for Fake {
         fn enable(&mut self, v: u32) {
@@ -295,11 +398,25 @@ mod tests {
         fn read(&mut self) -> u8 {
             self.rx.pop_front().unwrap()
         }
+        fn tx_level(&self) -> u32 {
+            // Report the level, then model the shifter draining four words
+            // before the next poll.
+            let level = self.level.get();
+            self.level.set(level.saturating_sub(4));
+            level
+        }
+        fn write_word(&mut self, word: u16) {
+            assert!(self.level.get() < 8, "FIFO overrun");
+            self.events.push(("word", u32::from(word)));
+            self.words.push(word);
+            self.level.set(self.level.get() + 1);
+        }
     }
     fn driver() -> Driver<Fake> {
         Driver {
             io: Fake::default(),
             configured: true,
+            mode_bits: 0,
         }
     }
     fn stopped(d: &Driver<Fake>) {
@@ -345,6 +462,57 @@ mod tests {
         d.io.errors = 8;
         assert_eq!(d.transfer(&mut [0], 5), Err(Error::Hardware(8)));
         stopped(&d);
+    }
+    #[test]
+    fn stream_preloads_selects_and_restores_byte_mode() {
+        let mut d = driver();
+        d.configure(Divider::new(4).unwrap(), embedded_hal::spi::MODE_0);
+        d.io.events.clear();
+        d.stream((0..20_u16).map(|w| w | 0x8000), 100).unwrap();
+        let e = &d.io.events;
+        // Transmit-only 16-bit mode is set while disabled, then enabled.
+        assert_eq!(e[0], ("control", CONTROL_16BIT_TX_ONLY));
+        assert_eq!(e[2], ("enable", 1));
+        // A full FIFO burst is queued before CS is asserted.
+        let first_select = e.iter().position(|x| *x == ("select", 1)).unwrap();
+        assert_eq!(e[3..first_select].len(), 8);
+        assert!(e[3..first_select].iter().all(|x| x.0 == "word"));
+        assert_eq!(e.iter().filter(|x| x.0 == "word").count(), 20);
+        // Halted and restored to 8-bit full duplex afterwards.
+        assert_eq!(
+            &e[e.len() - 4..],
+            &[
+                ("enable", 0),
+                ("select", 0),
+                ("control", CONTROL_8BIT_DUPLEX),
+                ("clear", 0)
+            ]
+        );
+        assert_eq!(d.stream(core::iter::empty(), 0), Err(Error::Timeout));
+        d.configured = false;
+        assert_eq!(d.stream(core::iter::empty(), 1), Err(Error::Unconfigured));
+    }
+    #[test]
+    fn stream_reports_hardware_errors_after_draining() {
+        let mut d = driver();
+        d.io.errors = 8;
+        assert_eq!(d.stream([1_u16, 2].into_iter(), 5), Err(Error::Hardware(8)));
+        stopped_in_byte_mode(&d);
+        d.io.errors = 0;
+        d.io.stuck = true;
+        d.io.selected = true;
+        assert_eq!(d.stream([1_u16].into_iter(), 5), Err(Error::Timeout));
+    }
+    fn stopped_in_byte_mode(d: &Driver<Fake>) {
+        assert_eq!(
+            &d.io.events[d.io.events.len() - 4..],
+            &[
+                ("enable", 0),
+                ("select", 0),
+                ("control", CONTROL_8BIT_DUPLEX),
+                ("clear", 0)
+            ]
+        );
     }
     #[test]
     fn configuration_disables_dma_interrupts_and_encodes_mode() {
