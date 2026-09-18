@@ -10,6 +10,25 @@ static AUTHORIZED: AtomicBool = AtomicBool::new(false);
 static FAULTED: AtomicBool = AtomicBool::new(false);
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
+// Snapshot for the RPMsg status reply, published by the scanout task after
+// every step so the reply never touches the panel or its task's state.
+static SNAPSHOT_STATE: AtomicU32 = AtomicU32::new(0);
+static SNAPSHOT_FRAMES: AtomicU32 = AtomicU32::new(0);
+static SNAPSHOT_COMPLETED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// Scanout task body: whole-frame SPI streams run here, below the control
+/// and RPMsg task priorities, so they are preempted by mailbox and RPMsg work.
+pub(crate) fn run() -> ! {
+    let mut service = Service::new();
+    loop {
+        // SAFETY: this function runs only inside the live FreeRTOS task.
+        service.step(unsafe { crate::c906l_ticks() });
+        service.publish_snapshot();
+        // SAFETY: yielding this task is valid after scheduler startup.
+        unsafe { crate::c906l_delay(1) };
+    }
+}
+
 /// Set once before starting either task. Never invalidate the control task's
 /// locally written status cacheline from the LCD/RPMsg task.
 pub(crate) fn initialize_generation(generation: u32) {
@@ -205,13 +224,7 @@ impl Service {
         }
     }
 
-    /// Tiny diagnostic reply; pixel data never passes through RPMsg.
-    pub(crate) fn reply(&self, request: &[u8]) -> [u8; 32] {
-        let mut reply = [0_u8; 32];
-        reply[..4].copy_from_slice(b"LCS1");
-        let valid = request.len() == 8
-            && &request[..4] == b"LCQ1"
-            && u32::from_le_bytes(request[4..8].try_into().unwrap()) == self.generation;
+    fn publish_snapshot(&self) {
         let state = match self.panel.as_ref().map(Panel::status).map(|s| s.state) {
             None => 0_u32,
             Some(State::Initializing) => 1,
@@ -219,19 +232,34 @@ impl Service {
             Some(State::Busy) => 3,
             Some(State::Fault) => 4,
         };
-        for (offset, value) in [
-            (4, self.generation),
-            (8, state),
-            (12, self.frames),
-            (16, self.completed[0]),
-            (20, self.completed[1]),
-            (24, u32::from(faulted())),
-            (28, u32::from(!valid)),
-        ] {
-            reply[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-        }
-        reply
+        SNAPSHOT_STATE.store(state, Ordering::Relaxed);
+        SNAPSHOT_FRAMES.store(self.frames, Ordering::Relaxed);
+        SNAPSHOT_COMPLETED[0].store(self.completed[0], Ordering::Relaxed);
+        SNAPSHOT_COMPLETED[1].store(self.completed[1], Ordering::Relaxed);
     }
+}
+
+/// Tiny diagnostic reply from the RPMsg task; pixel data never passes
+/// through RPMsg and nothing here waits on the scanout task.
+pub(crate) fn reply(request: &[u8]) -> [u8; 32] {
+    let generation = GENERATION.load(Ordering::Acquire);
+    let mut reply = [0_u8; 32];
+    reply[..4].copy_from_slice(b"LCS1");
+    let valid = request.len() == 8
+        && &request[..4] == b"LCQ1"
+        && u32::from_le_bytes(request[4..8].try_into().unwrap()) == generation;
+    for (offset, value) in [
+        (4, generation),
+        (8, SNAPSHOT_STATE.load(Ordering::Relaxed)),
+        (12, SNAPSHOT_FRAMES.load(Ordering::Relaxed)),
+        (16, SNAPSHOT_COMPLETED[0].load(Ordering::Relaxed)),
+        (20, SNAPSHOT_COMPLETED[1].load(Ordering::Relaxed)),
+        (24, u32::from(faulted())),
+        (28, u32::from(!valid)),
+    ] {
+        reply[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    reply
 }
 
 #[cfg(test)]

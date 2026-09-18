@@ -400,7 +400,8 @@ void c906l_timer_irq_disable(uint32_t channel, uint32_t irq)
 }
 #endif
 
-int c906l_platform_start(rust_task_t control_task, rust_task_t rpmsg_task)
+int c906l_platform_start(rust_task_t control_task, rust_task_t rpmsg_task,
+			 rust_task_t lcd_task)
 {
 	BaseType_t task_result;
 	struct mailbox_lock_guard guard;
@@ -447,6 +448,15 @@ int c906l_platform_start(rust_task_t control_task, rust_task_t rpmsg_task)
 				  tskIDLE_PRIORITY + 2U, NULL);
 	if (task_result != pdPASS)
 		return -5;
+
+	/* Scanout streams whole frames; it must never delay mailbox or RPMsg
+	 * service, so it runs one priority below both. */
+	if (lcd_task != NULL) {
+		task_result = xTaskCreate(lcd_task, "c906l-lcd", 2048U, NULL,
+					  tskIDLE_PRIORITY + 1U, NULL);
+		if (task_result != pdPASS)
+			return -9;
+	}
 
 	vTaskStartScheduler();
 	return -6;
