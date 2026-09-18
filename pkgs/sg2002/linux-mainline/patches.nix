@@ -42,6 +42,10 @@ let
 
   patches = [
     (patch {
+      name = "clk-cv18xx-program-bypass-mux-parent";
+      patch = ./patches/0071-clk-cv18xx-program-bypass-mux-parent.patch;
+    })
+    (patch {
       name = "usb-dwc2-cv1800-let-dt-drive-g_dma-host_dma";
       patch = ./patches/0001-usb-dwc2-cv1800-let-DT-drive-g_dma-host_dma.patch;
     })
@@ -300,6 +304,16 @@ let
   ];
 
   meta = {
+    "clk-cv18xx-program-bypass-mux-parent" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "cv1800_clk_bypass_mux_ops.set_parent programs the PLL mux as well as the bypass bit";
+      notes = ''
+        Match get_parent's one-based PLL parent indexing. Without this,
+        assigned-clock-parents changes the cached parent but not the hardware
+        source, invalidating divider calculations for SD and other clocks.
+      '';
+    };
     "mmc-cv18xx-enable-sdio-reference-clock" = {
       origin = "local";
       upstreamStatus = "draft";

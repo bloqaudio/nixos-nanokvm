@@ -86,7 +86,12 @@
   # module — make it available + loaded in stage-1 so /dev/mmcblk0 shows
   # up for both writing the card (live-writer initrd) and mounting root
   # from it (SD-image boot).
-  sg2002.initrd.availableKernelModules = [ "mmc_block" ];
+  sg2002.initrd.availableKernelModules = [ "mmc_block" ]
+    # The VPSS device is enumerated during initrd coldplug. Without its
+    # module there, that event is consumed before the driver is available
+    # and the stage-2 hardware video pipeline has no scaler node.
+    ++ lib.optional (config.sg2002.kernel == "mainline") "sg2002-vpss";
   sg2002.initrd.kernelModules = [ "mmc_block" ];
+  boot.kernelModules = lib.optional (config.sg2002.kernel == "mainline") "sg2002-vpss";
 
 }

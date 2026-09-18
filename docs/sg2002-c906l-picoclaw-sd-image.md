@@ -76,7 +76,7 @@ For a preconfigured card, create an ignored `wpa_supplicant.conf`-format file
 with mode 0600, then build impurely:
 
 ```conf
-ctrl_interface=DIR=/run/wpa_supplicant GROUP=wheel
+ctrl_interface=DIR=/run/wpa_supplicant/control GROUP=wheel
 network={
   ssid="example-ssid"
   psk="example-passphrase"

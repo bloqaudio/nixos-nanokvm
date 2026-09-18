@@ -21,6 +21,9 @@
   linux_latest,
   audio ? false,
   bluetooth ? false,
+  # Diagnostic builds retain the same hardware configuration and safety
+  # checks, but expose perf and pressure metrics for workload profiling.
+  profiling ? false,
   # nixpkgs re-.override's kernels with `features` / friends; tolerate
   # any extra args callPackage / linuxPackagesFor threads through.
   ...
@@ -40,6 +43,11 @@ in
     extraMeta.branch = "7.2-rc";
   };
   structuredExtraConfig = (import ./config.nix {inherit lib;})
+    // lib.optionalAttrs profiling {
+      PERF_EVENTS = lib.kernel.yes;
+      PSI = lib.kernel.yes;
+      PSI_DEFAULT_DISABLED = lib.kernel.no;
+    }
     // lib.optionalAttrs audio {
       # The common Nano carrier DT already describes the internal RXADC on
       # I2S0 and TXDAC on I2S3 as the sg2002-onboard simple card.  Keep the

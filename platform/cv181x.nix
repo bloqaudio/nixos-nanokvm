@@ -16,7 +16,11 @@
     ./sg2002-board-support.nix
   ];
 
-  nixpkgs.hostPlatform = "riscv64-linux";
+  nixpkgs.hostPlatform = lib.mkDefault {
+    system = "riscv64-linux";
+    # Scheduling/cost-model tuning only; retain the baseline ISA and ABI.
+    gcc.tune = "thead-c906";
+  };
   nixpkgs.buildPlatform = "x86_64-linux";
   nixpkgs.config.allowUnfreePredicate = allowUnfreePredicate;
   nixpkgs.overlays = lib.mkAfter [selfOverlay];

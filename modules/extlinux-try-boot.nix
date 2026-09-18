@@ -50,6 +50,7 @@
       set-default <label>
       arm <candidate-label> [fallback-label]
       early-rollback
+      is-candidate
       bless
       rollback-now
       cancel
@@ -270,6 +271,17 @@
       fi
     }
 
+    cmd_is_candidate() {
+      local booted booted_init_path
+      [ -s "$state" ] || return 1
+      # ExecCondition distinguishes a non-candidate (1) from corrupt state
+      # (255). Never turn malformed rollback metadata into a successful check.
+      read_state || { log "invalid state in $state"; return 255; }
+      booted="$(booted_label 2>/dev/null || true)"
+      booted_init_path="$(booted_init 2>/dev/null || true)"
+      init_matches_state "$booted" "$booted_init_path" "$candidate" "$candidate_init"
+    }
+
     cmd_bless() {
       local booted booted_init_path state_dir
       [ -s "$state" ] || exit 0
@@ -320,6 +332,7 @@
         ;;
       arm) cmd_arm "$@" ;;
       early-rollback) cmd_early_rollback "$@" ;;
+      is-candidate) cmd_is_candidate "$@" ;;
       bless) cmd_bless "$@" ;;
       rollback-now) cmd_rollback_now "$@" ;;
       cancel) cmd_cancel "$@" ;;
@@ -417,6 +430,10 @@ in {
       serviceConfig = {
         Type = "oneshot";
         TimeoutStartSec = "0";
+        # Normal boots and boots of the fallback have nothing to bless. Skip
+        # the health window before spawning sleep or running health commands;
+        # units ordered after this one can then start immediately.
+        ExecCondition = "${tryBoot}/bin/extlinux-try-boot is-candidate";
       };
       script = ''
         sleep ${lib.escapeShellArg (toString cfg.timeoutSec)}

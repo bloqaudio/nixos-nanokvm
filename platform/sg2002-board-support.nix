@@ -32,10 +32,10 @@
     if !cfg.wifi.enable
     then null
     else if cfg.kernel == "vendor"
-    then pkgs.sg2002-aic8800-vendor-for kernelPkg
+    then pkgs.sg2002-aic8800-vendor-for config.boot.kernelPackages.kernel
     else if cfg.bluetooth.enable
-    then pkgs.sg2002-aic8800-mainline-bluetooth-for kernelPkg
-    else pkgs.sg2002-aic8800-mainline-for kernelPkg;
+    then pkgs.sg2002-aic8800-mainline-bluetooth-for config.boot.kernelPackages.kernel
+    else pkgs.sg2002-aic8800-mainline-for config.boot.kernelPackages.kernel;
 
   # systemd's pivot_root success path used to detach the initrd root mount
   # without emptying its ramfs superblock.  The decompressed cpio then stayed
@@ -232,6 +232,12 @@ in {
       hardware.enableAllHardware = lib.mkForce false;
 
       boot.kernelPackages = pkgs.linuxPackagesFor kernelPkg;
+      # nowayout protects against closing /dev/watchdog, not the kernel's
+      # reboot notifier. dw_wdt otherwise stops the counter before kexec,
+      # leaving a failed handoff without a hardware reset. Use the standard
+      # watchdog-core policy rather than a driver or register workaround.
+      boot.kernelParams = lib.optional (cfg.kernel == "mainline")
+        "watchdog.stop_on_reboot=0";
       systemd.package = lib.mkDefault systemdWithOldRootCleanup;
       system.build.fip = fipPkg;
 

@@ -532,11 +532,14 @@
           nanokvm-server = self.packages.x86_64-linux.nanokvm-server;
         };
         checks = lib.getAttrs [
+          "extlinux-try-boot"
           "sg2002-initrd-eval"
           "sg2002-initrd-boot"
           "sg2002-c906l-picoclaw-sd-module-eval"
           "sg2002-usb-boot-runner"
           "sg2002-h264-bridge-colour"
+          "sg2002-h264-bridge-c906"
+          "sg2002-c906-tuning"
           "sg2002-vpss-state"
           "sg2002-c906l-module-eval"
           "sg2002-c906l-picoclaw-module-eval"
@@ -639,9 +642,19 @@
           );
         in
         lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          extlinux-try-boot = import ./tests/extlinux-try-boot.nix { inherit pkgs; };
           sg2002-initrd-eval = import ./tests/usb-initrd-eval.nix {
             inherit pkgs lib;
             configs = map checkedConfig (builtins.filter (entry: entry.artifact == "initrd") catalog);
+            profilingConfig = (boardSystems.licheerv.mainline.initrd.default.extendModules {
+              modules = [ ({ config, lib, pkgs, ... }: {
+                boot.kernelPackages = lib.mkForce (pkgs.linuxPackagesFor
+                  (pkgs.sg2002-kernel-mainline.override {
+                    profiling = true;
+                    audio = config.sg2002.audio.enable;
+                  }));
+              }) ];
+            }).config;
           };
           sg2002-c906l-picoclaw-sd-module-eval =
             import ./tests/sg2002-c906l-picoclaw-sd-eval.nix {
@@ -658,6 +671,25 @@
           sg2002-usb-boot-runner = pkgs.sg2002-usb-boot.tests.mainlineRunner;
           sg2002-h264-bridge-colour =
             pkgs.callPackage ./pkgs/sg2002/h264-bridge/test-colour.nix { };
+          sg2002-c906-tuning = import ./tests/sg2002-c906-tuning.nix {
+            inherit pkgs;
+            targetPkgs = boardSystems.pcie.mainline.sd.pkgs;
+          };
+          sg2002-h264-bridge-c906 =
+            let
+              bridge = boardSystems.pcie.mainline.sd.pkgs.sg2002-h264-bridge;
+              baseline = pkgs.pkgsCross.riscv64.sg2002-h264-bridge.benchmark;
+            in pkgs.runCommand "sg2002-h264-bridge-c906-tests" {
+              nativeBuildInputs = [ pkgs.qemu pkgs.gnugrep ];
+            } ''
+              # QEMU verifies baseline ISA compatibility and output, not
+              # performance. Timing comparisons must run on the real C906.
+              for bench in ${baseline} ${bridge.benchmark}; do
+                qemu-riscv64 -cpu thead-c906 "$bench/bin/bench-convert" > result
+                grep -Eq '^frames=100 cpu_seconds=[0-9.]+ checksum=60633ec7$' result
+              done
+              touch "$out"
+            '';
           sg2002-vpss-state =
             pkgs.callPackage ./pkgs/sg2002/linux-mainline/tests/vpss-state.nix { };
           sg2002-c906l-module-eval = import ./tests/sg2002-c906l-eval.nix {

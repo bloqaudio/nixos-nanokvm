@@ -61,7 +61,7 @@ let
   c906lMemoryMap = import ./sg2002/c906l-memory-map.nix { inherit lib; };
 
 in
-{
+(import ./sg2002/c906-tuning.nix final prev) // {
   # -----------------------------------------------------------------
   # nixpkgs adjustments
   # -----------------------------------------------------------------
