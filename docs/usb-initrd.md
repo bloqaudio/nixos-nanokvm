@@ -39,7 +39,7 @@ over authenticated USB SSH to `/run/wpa_supplicant.conf`, then run
 
 ## Upload from another machine (no Nix required)
 
-Copy the **contents** of `result` to your friend's computer (e.g.
+Copy the **contents** of `result` to the USB host (e.g.
 `tar -C result -czf nanokvm-usb.tar.gz .`). It contains no runtime references to
 the builder's Nix store. Extract it, then verify `sha256sum -c SHA256SUMS`.
 

@@ -6,10 +6,10 @@ SD card, NFS, NBD, or exported Nix store**.
 
 ## USB boot
 
-Build on x86_64 Linux with Nix, supplying your friend's **public** SSH key:
+Build on x86_64 Linux with Nix, supplying an authorized **public** SSH key:
 
 ```sh
-NANOKVM_AUTHORIZED_KEYS=/absolute/path/friend.pub \
+NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/id_ed25519.pub" \
   nix build --impure .#boards.picoclaw.mainline.initrd.default.bundle
 tar -C result -czf nanokvm-usb.tar.gz .
 ```
