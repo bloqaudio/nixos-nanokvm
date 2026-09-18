@@ -122,6 +122,28 @@ at the host. These are individual 2.4 GHz network measurements, not a
 before/after optimization comparison. Do not attribute the asymmetry to
 the LCD or the CPU compiler setting without further controlled tests.
 
+A later 5 GHz comparison kept the same access point, channel and test tool,
+and changed only runtime Wi-Fi power saving between 15-second bidirectional
+tests. The initial setting was restored after each test:
+
+| Power saving | Received by board | Received by host | Mean pre-test ping RTT |
+| --- | --- | --- | --- |
+| On, first run | 3.48 Mbit/s | 101 Mbit/s | 1.357 ms |
+| Off | 8.38 Mbit/s | 85.1 Mbit/s | 1.414 ms |
+| On, repeated | 10.6 Mbit/s | 78.0 Mbit/s | 1.363 ms |
+
+These short runs do not establish a repeatable benefit from disabling power
+saving. No default changed. Read-only MMC diagnostics on the PicoClaw showed
+an actual 50 MHz, four-bit SDIO link; the earlier 25 MHz SD-card observation
+on another carrier must not be assumed to describe its Wi-Fi connection.
+
+Separate 15-second transfers on that 5 GHz connection, with power saving
+restored, received 21.6 Mbit/s at the board (189 sender retransmissions) and
+109 Mbit/s at the host (none). CPU-accounting snapshots bracketing those
+tests were approximately 67% and 56% idle respectively. The receive-side
+limitation therefore remains under investigation; these measurements do
+not support treating it as simple CPU saturation or fixing it by overclocking.
+
 The CV18xx bypass-mux driver now programs the selected PLL mux as well as
 the bypass bit. A RAM-only camera experiment using standard assigned clocks
 read back `0x00040009` for both SD clock registers and reported 375 MHz card
@@ -133,6 +155,11 @@ An opt-in high-speed DT on the camera negotiated 480 Mbit/s and sustained
 30 seconds of simultaneous TCP traffic: 97.7 Mbit/s received by the board
 and 61.7 Mbit/s received by the host, with no sender retransmissions. The
 test used a host-connectivity watchdog and a known-good ROM/RAM fallback.
+A second camera run with the tuned closure and the unwind-library fix
+completed 120 seconds of bidirectional TCP traffic at 97.4 Mbit/s received
+by the board and 61.8 Mbit/s received by the host, again with zero sender
+retransmissions. SSH, the watchdog and service health checks passed afterward;
+the board was then returned to its known-good full-speed RAM image.
 This does not validate other carriers, cables or long-term operation. The
 existing full-speed default remains, especially given previous PicoClaw
 high-speed failures; the separate `sg2002-dtb-mainline-*-high-speed`
