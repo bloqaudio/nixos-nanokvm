@@ -43,15 +43,20 @@
         - "ecm": CDC-ECM (vendor-neutral, vanilla). Linux host binds
           `cdc_ether`. One Ethernet frame per USB bulk transfer.
         - "rndis": Microsoft RNDIS. Linux host binds `rndis_host`.
-          Microsoft-style message framing; different f_*-driver code
-          path in dwc2 than ECM.
+          Microsoft-style message framing; needed for Windows hosts
+          without a CDC driver.
         - "ncm": CDC-NCM (Network Control Model). Linux host binds
-          `cdc_ncm`. Aggregates multiple Ethernet frames per USB
-          transfer (NDP -- Network Datagram Pointer block). Lowest
-          per-frame overhead of the three for high-throughput
-          traffic.
+          `cdc_ncm`. Aggregates multiple Ethernet frames per 16 KiB
+          USB transfer.
 
-        Try all three under NBD load; the answer's empirical.
+        Measured on a LicheeRV Nano W at high-speed with the shipped
+        kernel and FIFO layout, 20 s iperf3 TCP runs, single samples,
+        board CPU saturated in every case
+        (docs/sg2002-usb-validation-20260919.md): host->board ECM 222,
+        NCM 231 Mbit/s; board->host ECM 188, NCM 261 Mbit/s. RNDIS was
+        only measured before the RX-buffer patch and FIFO change (191
+        and 134 Mbit/s). ECM remains the default; pick NCM when traffic
+        is mostly out of the board.
       '';
     };
     controlFile = lib.mkOption {
@@ -71,6 +76,19 @@
     default = config.sg2002.usbGadget.network.enable;
     defaultText = lib.literalExpression "config.sg2002.usbGadget.network.enable";
     description = "Include the network function in the initrd gadget. Disable this for normal SD boots where stage 2 owns USB networking.";
+  };
+
+  options.sg2002.usbGadget.initrd.resetController = lib.mkOption {
+    type = lib.types.bool;
+    default = true;
+    description = ''
+      Unbind and rebind the dwc2 platform driver before the initrd claims
+      the UDC. Unlike a configfs detach or the core's own soft reset, a
+      driver rebind pulses the RST_USB reset line and re-initialises the
+      PHY, which is what recovers a controller inherited from U-Boot's
+      fastboot gadget with a dead bulk-OUT path. Only disable this for
+      handoff experiments.
+    '';
   };
 
   options.sg2002.usbGadget.stage2.enable = lib.mkOption {
@@ -94,9 +112,13 @@
     type = lib.types.bool;
     default = false;
     description = ''
-      Detect the SG2002 DWC2 bulk-OUT runtime wedge by probing the USB host,
-      then re-probe the controller after two transmitted probes make no
-      receive progress. The guard stays idle while USB has no carrier.
+      Safety net: probe the USB host and re-probe the dwc2 controller
+      after two transmitted probes make no receive progress (the
+      signature of a dead bulk-OUT path). The guard stays idle while
+      USB has no carrier. The 2026-09-19 validation did not reproduce
+      the wedge at runtime on a LicheeRV Nano W with the current kernel
+      and DT; the guard is kept for carriers and hosts that have not
+      been soaked.
     '';
   };
 
