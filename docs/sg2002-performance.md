@@ -213,15 +213,23 @@ A subsequent baseline run associated on 2.4 GHz and is excluded from the
 Bluetooth coexistence performance. The original driver was restored and
 temporary recovery/network settings removed after testing.
 
-A later code-reading pass, [recorded separately](sg2002-wifi-rx-analysis-20260919.md),
-traced the SDIO receive path and found two candidate mechanisms for the
-bidirectional collapse: the driver's transmit thread runs SCHED_FIFO and
-busy-polls firmware flow control with `udelay` while the card's receive
-FIFO is drained by an ordinary CFS kworker on the single hart, and the
-kernel has no network scheduler, so the board's own TCP ACKs queue behind
-bulk data. Neither has been measured; they remain hypotheses, and that
-session took no new throughput figures because the local access-point
-credential had become stale.
+A later session on the same PicoClaw, AP and 5180 MHz channel measured
+the mechanisms rather than the symptoms; the
+[2026-09-19 report](sg2002-wifi-validation-20260919.md) has the runs,
+counters and identities. In short: the bidirectional collapse is airtime,
+not software. The board's uplink runs at 100–110 Mbit/s on a 162 Mbit/s
+single-stream PHY, and with both directions capped at 50 Mbit/s the board
+received 27.2 Mbit/s at 10.7 ms RTT instead of 4–16 Mbit/s at 30–96 ms.
+Receive-only TCP is bounded by the air path at roughly 74 Mbit/s for a TCP
+flow at this signal: UDP arrived at 90 Mbit/s offered, a sender paced at
+60 Mbit/s delivered 59.8 Mbit/s with no retransmissions, and unpaced cubic
+averages 54 because it overruns that bottleneck and halves. Sender-side
+counters showed the retransmitted segments were genuinely lost, not
+reordered by the driver. Tests that changed nothing (A/B/A/B, 20 s runs):
+`tcp_limit_output_bytes`, `txqueuelen`, and the driver's `reorder_timeout`;
+per-thread CPU and interrupt counters did not support the idea that the
+SCHED_FIFO transmit thread starves the receive path. No code change was
+found that improves these cases, and none was made.
 
 For an explicit comparison build, use
 `(pkgs.sg2002-aic8800-mainline-for kernel).override { tcpAckFilter = true; }`.
