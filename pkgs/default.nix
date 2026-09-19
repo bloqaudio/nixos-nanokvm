@@ -597,7 +597,7 @@ in
   # one flat top-level attr per concrete output the overlay exposes.
   sg2002-dtb-mainline = dtbMainline.dtb;
   sg2002-dtbs-mainline = dtbMainline.dtbs;
-  sg2002-dtb-mainline-high-speed = dtbMainline.high-speed;
+  sg2002-dtb-mainline-full-speed = dtbMainline.full-speed;
   sg2002-dtb-mainline-eth = dtbMainline.eth;
   sg2002-dtb-mainline-nowifi = dtbMainline.nowifi;
   sg2002-dtb-mainline-nowifi-c906l-for = contract:
@@ -619,7 +619,7 @@ in
   sg2002-dtb-mainline-nowifi-c906l-all-timers =
     final.sg2002-dtb-mainline-nowifi-c906l-for
       final.sg2002-c906l-contract-all-timers;
-  sg2002-dtb-mainline-nowifi-high-speed = dtbMainline.nowifi-high-speed;
+  sg2002-dtb-mainline-nowifi-full-speed = dtbMainline.nowifi-full-speed;
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
   sg2002-dtb-mainline-picoclaw-lcd-wifi = dtbMainline.picoclaw-lcd-wifi;
@@ -648,7 +648,7 @@ in
   sg2002-dtb-mainline-pcie-nowifi-c906l-all-timers =
     final.sg2002-dtb-mainline-pcie-nowifi-c906l-for
       final.sg2002-c906l-contract-all-timers;
-  sg2002-dtb-mainline-pcie-high-speed = dtbMainline.pcie-high-speed;
+  sg2002-dtb-mainline-pcie-full-speed = dtbMainline.pcie-full-speed;
   sg2002-dtb-mainline-cam = dtbMainline.cam;
   sg2002-dtb-vendor = dtbVendor.boot;
   sg2002-dtb-vendor-gadget = dtbVendor.gadget;

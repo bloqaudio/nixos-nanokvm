@@ -66,6 +66,10 @@ let
       patch = ./patches/0001-usb-dwc2-cv1800-let-DT-drive-g_dma-host_dma.patch;
     })
     (patch {
+      name = "usb-dwc2-gadget-ask-u_ether-for-dma-friendly-rx-buffers";
+      patch = ./patches/0076-usb-dwc2-gadget-ask-u_ether-for-DMA-friendly-RX-buffers.patch;
+    })
+    (patch {
       name = "mmc-sdhci-of-dwcmshc-sg2002-sdio1-init";
       patch = ./patches/0002-mmc-sdhci-of-dwcmshc-SG2002-SDIO1-init-pinmux-readba.patch;
     })
@@ -442,11 +446,28 @@ let
     "usb-dwc2-cv1800-let-dt-drive-g_dma-host_dma" = {
       origin = "local";
       upstreamStatus = "local-only";
-      dropWhen = "DWC2 cv1800/SG2002 DMA quirks land upstream";
+      dropWhen = "upstream dwc2_set_cv1800_params() stops forcing g_dma/host_dma off";
       notes = ''
-        Without this, dwc2 forces DMA off on cv1800 because the IP
-        cap register reports HW_DMA_DESC=0 even though descriptor DMA
-        works fine after a g_dma+host_dma override.
+        Upstream hard-codes g_dma = host_dma = false for cv1800, which
+        leaves the gadget in slave/PIO mode. With the assignments gone the
+        DT's g-use-dma property enables DMA and, because the SG2002 core
+        (DWC_otg 4.20a, hw_params.dma_desc_enable = 1) reports descriptor
+        DMA, dwc2 autoselects g_dma_desc = 1 -- the same buffer+descriptor
+        DMA mode the vendor 5.10 kernel forces in dwc2_set_cv182x_params().
+        Verified on hardware from debugfs hw_params/params, 2026-09-19.
+      '';
+    };
+    "usb-dwc2-gadget-ask-u_ether-for-dma-friendly-rx-buffers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dwc2 sets quirk_avoids_skb_reserve/quirk_ep_out_aligned_size upstream";
+      notes = ''
+        dwc2 in DMA mode bounces every 4-byte-misaligned request through a
+        GFP_ATOMIC kmalloc plus memcpy. u_ether's NET_IP_ALIGN skb_reserve
+        made every RX frame take that path on the SG2002; the two gadget
+        quirks (as set by dwc3, cdns3 and renesas_usbf) make u_ether hand
+        over aligned, packet-multiple buffers instead. Generic dwc2 change,
+        not SoC-specific; hardware A/B in docs/sg2002-usb-validation-20260919.md.
       '';
     };
     "mmc-sdhci-of-dwcmshc-sg2002-sdio1-init" = {

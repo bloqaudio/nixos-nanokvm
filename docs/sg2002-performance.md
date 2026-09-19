@@ -235,12 +235,31 @@ test used a host-connectivity watchdog and a known-good ROM/RAM fallback.
 A second camera run with the tuned closure and the unwind-library fix
 completed 120 seconds of bidirectional TCP traffic at 97.4 Mbit/s received
 by the board and 61.8 Mbit/s received by the host, again with zero sender
-retransmissions. SSH, the watchdog and service health checks passed afterward;
-the board was then returned to its known-good full-speed RAM image.
-This does not validate other carriers, cables or long-term operation. The
-existing full-speed default remains, especially given previous PicoClaw
-high-speed failures; the separate `sg2002-dtb-mainline-*-high-speed`
-packages remain opt-in diagnostics.
+retransmissions.
+
+### USB gadget: high-speed default, FIFO layout and RX buffer alignment
+
+The 2026-09-19 LicheeRV Nano W validation
+([report](sg2002-usb-validation-20260919.md)) made high-speed the default
+for the bare Nano and NanoKVM-PCIe descriptions, changed the dwc2 FIFO
+layout to use the core's full 3072 words, and added a dwc2 patch that stops
+u_ether's `NET_IP_ALIGN` skb reserve from forcing every received frame
+through a bounce buffer. Twenty-second single-stream iperf3 results, one
+sample each, all with the board CPU at or near 100%:
+
+| Configuration | Host to board | Board to host |
+| --- | ---: | ---: |
+| Full-speed, CDC-ECM (previous default) | 7.7 Mbit/s | 8.4 Mbit/s |
+| High-speed, CDC-ECM, as shipped before | 208 Mbit/s | 152 Mbit/s |
+| High-speed, CDC-ECM, aligned RX buffers | 222 Mbit/s | 154 Mbit/s |
+| High-speed, CDC-ECM, aligned RX + new FIFOs (default) | 222 Mbit/s | 184-188 Mbit/s |
+| High-speed, CDC-NCM, aligned RX + new FIFOs | 231 Mbit/s | 261 Mbit/s |
+
+The PicoClaw compositions keep full-speed through `sg2002-usb-full-speed.dtsi`
+because that carrier's earlier high-speed link errors were not retested.
+The receive-side limit at high-speed is the single C906 core: softirq time
+dominates, so further gains need fewer packets per byte (NCM with
+`sg2002.usbGadget.network.ncmMaxSegmentSize`) rather than more USB bandwidth.
 
 ### CPU frequency and voltage scaling
 

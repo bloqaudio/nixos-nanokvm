@@ -873,7 +873,7 @@
           default = pkgs.mkShell {
             packages = with pkgs;
               [
-                go_1_25
+                go
                 nodejs_24
                 pnpm_10
                 patchelf

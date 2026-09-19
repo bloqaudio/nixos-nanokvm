@@ -1,0 +1,61 @@
+From 7576e863090ec8ec1ed991b091939ab93684eff3 Mon Sep 17 00:00:00 2001
+From: George Watson <george@hellas.ai>
+Date: Sat, 19 Sep 2026 00:31:17 +0200
+Subject: [PATCH] usb: dwc2: gadget: ask u_ether for DMA-friendly RX buffers
+
+In DMA mode the core needs 32-bit aligned buffers, and any request whose
+buffer is not aligned is bounced: dwc2_hsotg_handle_unaligned_buf_start()
+kmalloc()s a copy with GFP_ATOMIC, the DMA lands there, and the data is
+copied into the real buffer on completion. u_ether reserves NET_IP_ALIGN
+(2) bytes at the head of every RX skb so the IP header ends up aligned,
+which makes every single RX request take that bounce path: an atomic
+allocation, a cache invalidate of the bounce buffer and a full-frame
+memcpy per received packet. On a 1 GHz single-core C906 (SG2002) that
+is a visible slice of the softirq time that saturates the CPU at
+high-speed.
+
+The DDMA OUT path also rounds the programmed transfer length up to a
+multiple of the endpoint's maximum packet size without checking that the
+request buffer is that large; u_ether only sizes RX buffers that way
+when the UDC asks for it.
+
+Set quirk_avoids_skb_reserve and quirk_ep_out_aligned_size whenever the
+gadget runs with DMA, as renesas_usbf, cdns3 and dwc3 do for the same
+reasons. The quirks are consumed only by u_ether, so other functions are
+unaffected.
+
+Signed-off-by: George Watson <george@hellas.ai>
+---
+ drivers/usb/dwc2/gadget.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 102169b..c5e960a 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -5021,6 +5021,22 @@ int dwc2_gadget_init(struct dwc2_hsotg *hsotg)
+ 	hsotg->gadget.otg_caps = &hsotg->params.otg_caps;
+ 	hsotg->remote_wakeup_allowed = 0;
+ 
++	/*
++	 * In DMA mode the core needs 32-bit aligned buffers and OUT transfer
++	 * sizes that are a multiple of the endpoint's maximum packet size.
++	 * Unaligned requests fall back to a kmalloc()ed bounce buffer plus a
++	 * copy on every transfer (dwc2_hsotg_handle_unaligned_buf_start()),
++	 * and the DDMA OUT path silently rounds the programmed length up to a
++	 * packet boundary. The Ethernet gadgets reserve NET_IP_ALIGN bytes in
++	 * every RX skb, which makes every RX request unaligned. Ask u_ether
++	 * for aligned, packet-sized buffers instead; an unaligned IP header
++	 * costs far less than bouncing every frame.
++	 */
++	if (using_dma(hsotg)) {
++		hsotg->gadget.quirk_avoids_skb_reserve = 1;
++		hsotg->gadget.quirk_ep_out_aligned_size = 1;
++	}
++
+ 	if (hsotg->params.lpm)
+ 		hsotg->gadget.lpm_capable = true;
+ 
+-- 
+2.55.0
+

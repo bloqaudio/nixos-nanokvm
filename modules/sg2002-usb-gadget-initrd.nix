@@ -5,13 +5,19 @@
 # should leave initrd networking off and let stage 2 recreate the gadget;
 # networkd then owns usb0 like every other stage-2 interface.
 #
-# `sg2002.usbGadget.network.transport` picks the framing:
-#   - "ecm"   — vendor-neutral CDC-ECM. Linux `cdc_ether` driver. Vanilla
-#               and simple; what we used historically.
-#   - "rndis" — Microsoft RNDIS. Linux `rndis_host` driver. Different
-#               code path in dwc2 + the f_*. Worth A/B-ing under NBD
-#               throughput because vendor 5.10's `f_ecm` has known
-#               transmit-queue stalls.
+# `sg2002.usbGadget.network.transport` picks the framing. All three were
+# measured on a LicheeRV Nano W at high-speed on 2026-09-19 (see
+# docs/sg2002-usb-validation-20260919.md); none of them wedged.
+#   - "ecm"   — vendor-neutral CDC-ECM, Linux `cdc_ether`. One frame per
+#               bulk transfer. Default: simplest, and the fastest into
+#               the board.
+#   - "rndis" — Microsoft RNDIS, Linux `rndis_host`. No measured advantage
+#               over ECM on Linux hosts; kept for Windows hosts.
+#   - "ncm"   — CDC-NCM, Linux `cdc_ncm`. Several frames per 16 KiB bulk
+#               transfer: fastest out of the board. (f_ncm's
+#               max_segment_size knob was tried at 8000: ICMP of every
+#               size crossed but TCP sessions stalled after ~10 KB, so it
+#               is not exposed here.)
 {
   config,
   lib,
@@ -83,8 +89,10 @@
     # SG2002 that handoff intermittently leaves the net function's data
     # path dead: enumeration and the ACM console keep working, but the
     # host sees `cdc_ether/cdc_ncm transmit queue 0 timed out` — zero
-    # frames cross. A driver-level unbind/bind resets the core cleanly;
-    # a gadget-level "" > UDC does not.
+    # frames cross. A driver-level unbind/bind pulses the RST_USB reset
+    # line and re-initialises the PHY (dwc2_lowlevel_hw_init); a
+    # gadget-level "" > UDC only soft-resets the core and does not.
+    # See sg2002.usbGadget.initrd.resetController.
     if [ -d /sys/bus/platform/drivers/dwc2 ]; then
       for udc0 in /sys/class/udc/*; do
         [ -e "$udc0" ] || continue
@@ -193,7 +201,7 @@
     echo "$udc" > "$G/UDC"
   '';
 
-  setupInitrd = mkSetup initrdNetworkEnable null true;
+  setupInitrd = mkSetup initrdNetworkEnable null gadgetCfg.initrd.resetController;
   teardownInitrd = mkTeardown initrdNetworkEnable;
   # The initrd has already reset the controller. A second driver-level
   # unbind while ttyGS0 is the active console can wedge stage-2 sysinit and,
