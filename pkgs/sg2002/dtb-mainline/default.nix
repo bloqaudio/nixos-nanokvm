@@ -191,25 +191,30 @@ let
     ./sg2002-licheerv-eth.dtsi
   ];
 
-  # Experimental USB handoff A/Bs. The high-speed override follows the
-  # carrier description, leaving the full-speed production DTBs untouched.
-  dtbHighSpeed = buildDtb "sg2002-licheerv-nano-bw-high-speed" [
+  # Full-speed USB fallbacks for the bare Nano. The carrier description
+  # runs high-speed (validated on the Nano W, 2026-09-19); these keep the
+  # old 12 Mbit/s link for A/B diagnostics and for host ports that fail
+  # high-speed enumeration.
+  dtbFullSpeed = buildDtb "sg2002-licheerv-nano-bw-full-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
-    ./sg2002-usb-high-speed.dtsi
+    ./sg2002-usb-full-speed.dtsi
   ];
 
-  dtbNoWifiHighSpeed = buildDtb "sg2002-licheerv-nano-bw-nowifi-high-speed" [
+  dtbNoWifiFullSpeed = buildDtb "sg2002-licheerv-nano-bw-nowifi-full-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
-    ./sg2002-usb-high-speed.dtsi
+    ./sg2002-usb-full-speed.dtsi
   ];
 
   # PicoClaw: keep the proven no-WiFi USB/NFS base, then add the onboard
-  # ST7789 SPI panel and its three GPIO control lines.
+  # ST7789 SPI panel and its three GPIO control lines. The carrier stays
+  # at full-speed: its 2026-08 high-speed bring-up showed link errors and
+  # the 2026-09-19 high-speed validation ran on the bare Nano W only.
   dtbPicoClawLcd = buildDtb "sg2002-licheerv-nano-picoclaw-lcd" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+    ./sg2002-usb-full-speed.dtsi
   ];
 
   # PicoClaw WiFi-root variant: retain the B-W board's SDIO1/AIC8800
@@ -218,13 +223,14 @@ let
   dtbPicoClawLcdWifi = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-wifi" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
+    ./sg2002-usb-full-speed.dtsi
   ];
 
+  # Opt-in high-speed PicoClaw for retesting that carrier.
   dtbPicoClawLcdHighSpeed = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-high-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
-    ./sg2002-usb-high-speed.dtsi
   ];
 
   # Dedicated auxiliary-core LCD image.  This deliberately does not compose
@@ -272,6 +278,7 @@ let
           ./sg2002-licheerv-nano-bw-nowifi.dtsi
           ./sg2002-licheerv-nano-picoclaw-c906l-lcd.dtsi
           framebufferContractOverlay
+          ./sg2002-usb-full-speed.dtsi
         ]
         contract;
     in
@@ -425,10 +432,12 @@ let
       test "$(fdtget -t s "$out" /vpss@a080000 status)" = okay
     '';
 
-  dtbPcieHighSpeed = buildDtb "sg2002-nanokvm-pcie-high-speed" [
+  # NanoKVM-PCIe full-speed fallback; the carrier's high-speed link has
+  # not been separately validated, so this remains available for A/Bs.
+  dtbPcieFullSpeed = buildDtb "sg2002-nanokvm-pcie-full-speed" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-nanokvm-pcie.dtsi
-    ./sg2002-usb-high-speed.dtsi
+    ./sg2002-usb-full-speed.dtsi
   ];
 
   dtbs = runCommand "sg2002-dtbs" { } ''
@@ -438,12 +447,12 @@ let
 in
 {
   inherit dtb dtbs;
-  high-speed = dtbHighSpeed;
+  full-speed = dtbFullSpeed;
   eth = dtbEth;
   oled = dtbOled;
   nowifi = dtbNoWifi;
   nowifi-c906l-for = dtbNoWifiC906LFor;
-  nowifi-high-speed = dtbNoWifiHighSpeed;
+  nowifi-full-speed = dtbNoWifiFullSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
   picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
@@ -451,6 +460,6 @@ in
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
   pcie-nowifi-c906l-for = dtbPcieNoWifiC906LFor;
-  pcie-high-speed = dtbPcieHighSpeed;
+  pcie-full-speed = dtbPcieFullSpeed;
   cam = dtbCam;
 }

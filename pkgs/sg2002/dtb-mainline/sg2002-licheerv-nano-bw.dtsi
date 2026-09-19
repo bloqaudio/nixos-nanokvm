@@ -27,41 +27,41 @@
 
 	/* Turn the dwc2 internal DMA on. Kernel patch 0001 removed
 	 * upstream's hard-coded g_dma=false for cv1800, which left the
-	 * gadget in slave/PIO mode — where the data path wedges after a
+	 * gadget in slave/PIO mode -- where the data path wedges after a
 	 * handful of packets (host sees `cdc_* transmit queue 0 timed
-	 * out`, link dead from the first ARP). The vendor 5.10 kernel
-	 * always ran with DMA on. Buffer DMA only, no descriptor DMA —
-	 * that's the configuration the vendor tree uses. */
+	 * out`, link dead from the first ARP). With DMA on, dwc2 also
+	 * autodetects descriptor DMA from GHWCFG4 (this core reports
+	 * dma_desc_enable=1, DWC_otg 4.20a) and runs g_dma_desc=1: the
+	 * same mode the vendor 5.10 kernel forces in its cv182x params.
+	 * Verified from debugfs hw_params/params on the Nano W. */
 	g-use-dma;
 
-	/* Cap at full-speed. At high-speed the link shows signal-level
-	 * errors (-71 EPROTO at enumeration) and the gadget RX path
-	 * wedges after a few dozen packets on the PicoClaw carrier —
-	 * the host stops getting replies, NETDEV WATCHDOG fires, and
-	 * usb0 dies ~60 s into every boot. FS has vastly larger signal
-	 * margins; it's slow (~5 Mbps) but reliable enough for the
-	 * NFS-rooted bring-up. Revisit once the PHY tuning knobs are
-	 * known (or with a different cable/host port). */
-	maximum-speed = "full-speed";
+	/* High-speed. Measured on a LicheeRV Nano W on 2026-09-19 (see
+	 * docs/sg2002-usb-validation-20260919.md): full-speed tops out at
+	 * ~7.7 Mbit/s each way; high-speed carries ~220 Mbit/s into the
+	 * board and ~190 Mbit/s out with CDC-ECM. The old full-speed cap
+	 * dated from PicoClaw-carrier link errors (-71 EPROTO) that have
+	 * not been reproduced on this carrier; the PicoClaw compositions
+	 * keep full-speed via sg2002-usb-full-speed.dtsi until they are
+	 * retested at high-speed. */
+	maximum-speed = "high-speed";
 
-	/* Mirror the FIFO sizing we ship in U-Boot
-	 * (`uboot-mainline/patches/0002-…-u-boot.dtsi-wit.patch`). The mainline
-	 * dwc2 driver reads these per-endpoint TX FIFO depths and the
-	 * RX/non-periodic-TX depths from DT; without them it falls back to
-	 * dwc2's compile-time defaults (CONFIG_USB_DWC2_HOST_/_PERIPHERAL_
-	 * sizes), which on cv1800 leave the periodic-TX FIFOs at 64 entries
-	 * total and the RX FIFO at 1024. Under sustained bulk-OUT traffic
-	 * (NBD reads pumping into usb0), the host's TX queue can hand more
-	 * packets than the gadget can drain → `cdc_ether transmit queue 0
-	 * timed out 5000 ms`, the queue freezes, and the link dies.
+	/* Dedicated-FIFO layout for a network+ACM gadget. The core has
+	 * 3072 words of FIFO RAM (GHWCFG3, `total_fifo_size` in debugfs),
+	 * so upstream's 1536-word RX FIFO plus 128-word per-endpoint TX
+	 * FIFOs (a copy of U-Boot's fastboot layout) uses only 2144 and
+	 * gives the bulk-IN endpoint a single 512-byte packet of buffer,
+	 * which bounds board-to-host throughput: 154 Mbit/s with those
+	 * values, 184-188 Mbit/s with the layout below (ECM, same kernel).
 	 *
-	 * Values match what the U-Boot dwc2_udc_otg gadget uses on the same
-	 * silicon: 1536-byte RX, 32-entry non-periodic-TX, and 8 periodic-TX
-	 * FIFOs (128/128/64/64/64/64/32/32) for IN endpoints 1..8. CDC-ECM's
-	 * bulk IN sits on EP1 → the 128-entry FIFO. */
-	g-rx-fifo-size = <1536>;
+	 * RX: 1024 words = 8 high-speed bulk packets. dwc2 assigns each
+	 * IN endpoint the smallest listed TX FIFO that fits its maxpacket,
+	 * so two 512-word and two 480-word FIFOs serve the network bulk IN
+	 * and ACM bulk IN (~4 packets each), and two 16-word FIFOs serve
+	 * the two interrupt-IN notification endpoints. Sum: exactly 3072. */
+	g-rx-fifo-size = <1024>;
 	g-np-tx-fifo-size = <32>;
-	g-tx-fifo-size = <128 128 64 64 64 64 32 32>;
+	g-tx-fifo-size = <512 512 480 480 16 16>;
 };
 
 &pinctrl {

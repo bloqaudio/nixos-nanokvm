@@ -1,0 +1,14 @@
+/* SG2002 full-speed USB fallback.
+ *
+ * The shared carrier description runs the dwc2 gadget at high-speed.
+ * Concatenating this file last caps the link at full-speed (12 Mbit/s
+ * signalling, ~7.7 Mbit/s measured), leaving the kernel, FIFO layout,
+ * DMA mode, gadget functions, cable and host port unchanged. Use it on
+ * carriers where high-speed has not been validated (PicoClaw, which
+ * showed -71 EPROTO enumeration errors at high-speed in 2026-08) or to
+ * A/B a link problem against the larger full-speed signal margins.
+ */
+
+&usb {
+	maximum-speed = "full-speed";
+};
