@@ -78,20 +78,35 @@ struct Record {
     generation: u32,
     sequence: u32,
     result: u32,
-    reserved: [u8; 44],
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    reserved: [u8; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
     commit: u32,
 }
 const _: [(); 64] = [(); core::mem::size_of::<Record>()];
 const _: [(); 60] = [(); core::mem::offset_of!(Record, commit)];
+const _: [(); PICOCLAW_LCD_RECORD_RECT_OFFSET as usize] = [(); core::mem::offset_of!(Record, x)];
+const _: [(); 8] = [(); PICOCLAW_LCD_RECORD_RECT_SIZE];
 
+/// Requests carry the damaged rectangle and exactly its pixels, packed from
+/// the start of the slot. A full-screen update is the rectangle 0,0,240,240;
+/// there is no separate whole-frame form.
 fn valid_request(record: &Record, generation: u32, completed: u32) -> bool {
+    let width = u32::from(record.width);
+    let height = u32::from(record.height);
     record.magic == PICOCLAW_LCD_REQUEST_MAGIC
         && record.generation == generation
         && record.sequence != 0
         && record.sequence != completed
         && record.commit == record.sequence
-        && record.result == PICOCLAW_LCD_FRAME_SIZE as u32
-        && record.reserved == [0; 44]
+        && width != 0
+        && height != 0
+        && u32::from(record.x) + width <= PICOCLAW_LCD_WIDTH
+        && u32::from(record.y) + height <= PICOCLAW_LCD_HEIGHT
+        && record.result == width * height * 2
+        && record.reserved == [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE]
 }
 
 fn request(slot: usize, generation: u32, completed: u32) -> Option<Record> {
@@ -114,7 +129,11 @@ fn complete(slot: usize, generation: u32, sequence: u32, error: u32) {
         generation,
         sequence,
         result: error,
-        reserved: [0; 44],
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        reserved: [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
         commit: 0,
     };
     // SAFETY: exclusively C906L-written cacheline in fixed shared reservation.
@@ -224,10 +243,22 @@ impl Service {
                 PICOCLAW_LCD_FRAME_SLOT0_ADDRESS + slot * PICOCLAW_LCD_FRAME_SLOT_STRIDE as usize;
             // Linux published all bytes before the commit and cannot reclaim
             // this slot until our completion. Evict previous-generation data.
-            invalidate(address, PICOCLAW_LCD_FRAME_SIZE);
+            invalidate(
+                address,
+                usize::from(record.width) * usize::from(record.height) * 2,
+            );
             self.job_sequence = self.job_sequence.wrapping_add(1).max(1);
             if panel
-                .submit(self.job_sequence, Job::Frame { slot: slot as u8 })
+                .submit(
+                    self.job_sequence,
+                    Job::Frame {
+                        slot: slot as u8,
+                        x: record.x,
+                        y: record.y,
+                        width: record.width,
+                        height: record.height,
+                    },
+                )
                 .is_err()
             {
                 complete(slot, self.generation, record.sequence, 1);
@@ -297,7 +328,11 @@ mod tests {
             generation: 7,
             sequence: 1,
             result: PICOCLAW_LCD_FRAME_SIZE as u32,
-            reserved: [0; 44],
+            x: 0,
+            y: 0,
+            width: PICOCLAW_LCD_WIDTH as u16,
+            height: PICOCLAW_LCD_HEIGHT as u16,
+            reserved: [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
             commit: 1,
         }
     }
@@ -316,12 +351,44 @@ mod tests {
             },
             Record { magic: 0, ..r },
             Record {
-                reserved: [1; 44],
+                reserved: [1; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
+                ..r
+            },
+            // Rectangle must be non-empty, on-screen, and match frameBytes.
+            Record { width: 0, ..r },
+            Record { height: 0, ..r },
+            Record { x: 1, ..r },
+            Record { y: 1, ..r },
+            Record {
+                width: 8,
+                height: 4,
                 ..r
             },
         ] {
             assert!(!valid_request(&bad, 7, 0));
         }
+    }
+    #[test]
+    fn partial_rectangle_requires_exactly_its_own_pixels() {
+        let r = Record {
+            x: 16,
+            y: 32,
+            width: 64,
+            height: 8,
+            result: 64 * 8 * 2,
+            ..record()
+        };
+        assert!(valid_request(&r, 7, 0));
+        assert!(!valid_request(
+            &Record {
+                result: 64 * 8,
+                ..r
+            },
+            7,
+            0
+        ));
+        assert!(!valid_request(&Record { x: 200, ..r }, 7, 0));
+        assert!(!valid_request(&Record { y: 236, ..r }, 7, 0));
     }
     #[test]
     fn request_sequence_wrap_is_nonzero_and_per_slot() {

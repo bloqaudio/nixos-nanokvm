@@ -40,6 +40,7 @@
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_damage_helper.h>
 #include <drm/drm_rect.h>
 #include <drm/drm_vblank.h>
 
@@ -50,11 +51,14 @@
 
 struct frame_record {
 	__le32 magic, generation, sequence, result;
-	u8 reserved[44];
+	__le16 x, y, width, height;
+	u8 reserved[LCD(RECORD_RESERVED_SIZE)];
 	__le32 commit;
 };
 static_assert(sizeof(struct frame_record) == 64);
 static_assert(offsetof(struct frame_record, commit) == 60);
+static_assert(offsetof(struct frame_record, x) == LCD(RECORD_RECT_OFFSET));
+static_assert(LCD(RECORD_RECT_SIZE) == 8);
 
 struct lcd_frames {
 	struct drm_device drm;
@@ -125,7 +129,10 @@ static int frame_completed(struct lcd_frames *fb, unsigned int slot)
 	    le32_to_cpu(first.sequence) != fb->sequence[slot] ||
 	    le32_to_cpu(first.commit) != fb->sequence[slot])
 		return 0;
-	if (memchr_inv(first.reserved, 0, sizeof(first.reserved)))
+	/* A completion carries no rectangle: every byte after result is zero,
+	 * as it was before the request gained one. */
+	if (first.x || first.y || first.width || first.height ||
+	    memchr_inv(first.reserved, 0, sizeof(first.reserved)))
 		return -EPROTO;
 	if (le32_to_cpu(first.result))
 		return -EIO;
@@ -198,14 +205,15 @@ static int lock_until(struct lcd_frames *fb, unsigned long deadline, bool nonblo
 }
 
 /* A NULL plane blanks the panel on disable. No shared slot is user-mappable. */
-static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *plane)
+static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *old_plane,
+		       struct drm_plane_state *plane)
 {
 	struct frame_record record = { 0 };
 	struct drm_shadow_plane_state *shadow = plane ?
 		to_drm_shadow_plane_state(plane) : NULL;
-	struct drm_rect clip = DRM_RECT_INIT(0, 0, 240, 240);
+	struct drm_rect clip = DRM_RECT_INIT(0, 0, LCD(WIDTH), LCD(HEIGHT));
 	struct iosys_map destination;
-	unsigned int pitch = 240 * 2;
+	unsigned int pitch;
 	void __iomem *request, *pixels;
 	unsigned long deadline = jiffies + msecs_to_jiffies(WAIT_MS);
 	unsigned int slot;
@@ -242,6 +250,14 @@ static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *plane)
 	writel(0, request + offsetof(struct frame_record, commit));
 	wmb();
 	if (plane) {
+		/* Send only what changed. The firmware addresses the panel with
+		 * this rectangle and reads exactly its pixels, packed from the
+		 * start of the slot, so the destination pitch is the rectangle's
+		 * own width rather than the panel's. */
+		if (!drm_atomic_helper_damage_merged(old_plane, plane, &clip))
+			clip = (struct drm_rect)DRM_RECT_INIT(0, 0, LCD(WIDTH),
+							      LCD(HEIGHT));
+		pitch = drm_rect_width(&clip) * 2;
 		iosys_map_set_vaddr_iomem(&destination, pixels);
 		drm_fb_xrgb8888_to_rgb565be(&destination, &pitch, shadow->data,
 					  plane->fb, &clip, &shadow->fmtcnv_state);
@@ -252,7 +268,11 @@ static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *plane)
 	record.magic = cpu_to_le32(LCD(REQUEST_MAGIC));
 	record.generation = cpu_to_le32(fb->generation);
 	record.sequence = cpu_to_le32(sequence);
-	record.result = cpu_to_le32(LCD(FRAME_SIZE));
+	record.x = cpu_to_le16(clip.x1);
+	record.y = cpu_to_le16(clip.y1);
+	record.width = cpu_to_le16(drm_rect_width(&clip));
+	record.height = cpu_to_le16(drm_rect_height(&clip));
+	record.result = cpu_to_le32(drm_rect_width(&clip) * drm_rect_height(&clip) * 2);
 	memcpy_toio(request, &record, sizeof(record));
 	wmb();
 	writel(sequence, request + offsetof(struct frame_record, commit));
@@ -458,13 +478,14 @@ static void lcd_commit_tail(struct drm_atomic_commit *state)
 	struct drm_crtc_state *new = drm_atomic_get_new_crtc_state(state, &fb->crtc);
 	struct drm_crtc_state *old = drm_atomic_get_old_crtc_state(state, &fb->crtc);
 	struct drm_plane_state *plane = drm_atomic_get_new_plane_state(state, &fb->primary);
+	struct drm_plane_state *old_plane = drm_atomic_get_old_plane_state(state, &fb->primary);
 	int ret = READ_ONCE(fb->fault);
 
 	drm_atomic_helper_commit_modeset_disables(drm, state);
 	drm_atomic_helper_commit_planes(drm, state, 0);
 	drm_atomic_helper_commit_modeset_enables(drm, state);
 	if (!ret && new && (new->active || (old && old->active)))
-		ret = lcd_scanout(fb, new->active ? plane : NULL);
+		ret = lcd_scanout(fb, old_plane, new->active ? plane : NULL);
 	if (ret) {
 		WRITE_ONCE(fb->fault, ret);
 		dev_err(drm->dev, "C906L scanout failed: %d; ownership retained, reboot required\n", ret);

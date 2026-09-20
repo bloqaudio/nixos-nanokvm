@@ -454,8 +454,10 @@
         "recordGenerationOffset": 4,
         "recordSequenceOffset": 8,
         "recordResultOffset": 12,
-        "recordReservedOffset": 16,
-        "recordReservedSize": 44,
+        "recordReservedOffset": 24,
+        "recordReservedSize": 36,
+        "recordRectOffset": 16,
+        "recordRectSize": 8,
         "recordCommitOffset": 60,
         "errorSuccess": 0,
         "errorLcdFault": 1,
@@ -476,7 +478,7 @@
         "runtimeRebind": false
       },
       "framebuffer": {
-        "version": 1,
+        "version": 2,
         "region": "bulk",
         "pixelFormat": "RGB565BE",
         "slotCount": 2,
@@ -504,9 +506,29 @@
               "width": 4
             },
             {
-              "name": "reserved",
+              "name": "rectX",
               "offset": 16,
-              "width": 44
+              "width": 2
+            },
+            {
+              "name": "rectY",
+              "offset": 18,
+              "width": 2
+            },
+            {
+              "name": "rectWidth",
+              "offset": 20,
+              "width": 2
+            },
+            {
+              "name": "rectHeight",
+              "offset": 22,
+              "width": 2
+            },
+            {
+              "name": "reserved",
+              "offset": 24,
+              "width": 36
             },
             {
               "name": "commitSequence",

@@ -57,7 +57,7 @@ profile ID 17, and final capabilities `0x8b`. Its immutable digest covers the
 physical resources, panel geometry, pin preconditions and framebuffer protocol.
 It also covers the firmware-mediated Wi-Fi power protocol. The combined
 configuration has digest
-`2b8d53933053abe380f5a096eb00a1ddc092a74ea2b2c7c17d599bad8840a187`;
+`4c5a27ea53fbd605fc84ef6b1af65eda5a006e355ba62e36535e207759eb3aa5`;
 older LCD-only firmware deliberately fails this identity check.
 
 | Resource | Address | Size |
@@ -70,13 +70,24 @@ older LCD-only firmware deliberately fails this identity check.
 
 Each pair has a Linux-written request cacheline and a C906L-written completion
 cacheline. Requests contain the boot generation, a nonzero per-slot sequence,
-exact frame length, reserved zero bytes and a commit word written last.
-Completions match that generation and sequence and include an error result.
+the damaged rectangle, exactly that rectangle's byte count, reserved zero bytes
+and a commit word written last. Completions match that generation and sequence,
+include an error result, and carry a zero rectangle.
+
+Framebuffer protocol version 2 replaced the whole-frame request with that
+rectangle. Linux converts only the region DRM reports as damaged, packed from
+the start of the slot with the rectangle's own pitch, and the firmware
+addresses the panel with the same rectangle. A full-screen update is simply
+the rectangle 0,0,240,240; there is no separate whole-frame form, and a
+request whose byte count is not exactly `width * height * 2`, or whose
+rectangle leaves the panel, is rejected. Because the panel retains its own
+GRAM, an unchanged region is not retransmitted: a console line costs a few
+percent of a full frame on both the SPI link and the auxiliary core.
 
 Linux publishes pixels before the request commit using its write-combined
 mapping and write barriers. C906L accepts two identical, explicitly invalidated
-request snapshots, invalidates the complete pixel range, and reads the frame
-only while it owns the slot. It cleans its completion cacheline and publishes
+request snapshots, invalidates exactly the rectangle's pixel range, and reads
+it only while it owns the slot. It cleans its completion cacheline and publishes
 the completion commit last. Linux cannot reuse the slot until matching success.
 Errors retain ownership and fail closed rather than replaying partial transfers.
 
