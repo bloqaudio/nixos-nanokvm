@@ -18,14 +18,30 @@ static SNAPSHOT_COMPLETED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0
 
 /// Scanout task body: whole-frame SPI streams run here, below the control
 /// and RPMsg task priorities, so they are preempted by mailbox and RPMsg work.
+///
+/// A frame needs two steps — one to admit the request, one to stream it — so
+/// sleeping a whole scheduler tick between steps adds two 5 ms gaps to every
+/// frame, which is most of the cost of a 20 ms transfer. Yield without
+/// sleeping while the display is working and for a second afterwards, then
+/// return to tick sleeps so a static panel does not hold the core awake.
+/// Yielding cannot delay mailbox or RPMsg work: this is the lowest-priority
+/// task, so both preempt it.
+const ACTIVE_SPIN_TICKS: u32 = 200;
+
 pub(crate) fn run() -> ! {
     let mut service = Service::new();
+    let mut last_work = 0;
     loop {
         // SAFETY: this function runs only inside the live FreeRTOS task.
-        service.step(unsafe { crate::c906l_ticks() });
+        let now = unsafe { crate::c906l_ticks() };
+        service.step(now);
         service.publish_snapshot();
+        if service.working() {
+            last_work = now;
+        }
+        let ticks = u32::from(now.wrapping_sub(last_work) >= ACTIVE_SPIN_TICKS);
         // SAFETY: yielding this task is valid after scheduler startup.
-        unsafe { crate::c906l_delay(1) };
+        unsafe { crate::c906l_delay(ticks) };
     }
 }
 
@@ -222,6 +238,16 @@ impl Service {
             }
             break;
         }
+    }
+
+    /// True while a frame is in flight or the panel has not settled, so the
+    /// task keeps stepping without sleeping.
+    fn working(&self) -> bool {
+        self.active.is_some()
+            || !matches!(
+                self.panel.as_ref().map(Panel::status).map(|s| s.state),
+                None | Some(State::Ready)
+            )
     }
 
     fn publish_snapshot(&self) {
