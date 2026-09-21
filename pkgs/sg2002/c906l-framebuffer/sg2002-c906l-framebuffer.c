@@ -12,6 +12,7 @@
 #include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/jiffies.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
@@ -168,9 +169,27 @@ static int check_generation(struct lcd_frames *fb)
 	return 0;
 }
 
-static int wait_slot(struct lcd_frames *fb, unsigned int slot,
-		     unsigned long deadline, bool nonblock)
+/* Shortest useful poll interval, and the cap it backs off to. */
+#define POLL_US 250u
+#define POLL_MAX_US 2000u
+
+/* Bit time on the panel bus is exact and dominates every transfer, so the
+ * completion poll can sleep through almost all of it instead of waking on the
+ * timer tick. Deliberately an underestimate: it ignores the C906L's per-job
+ * command and scheduling overhead, so the fine poll below still decides. */
+static unsigned int wire_time_us(u32 pixels)
 {
+	u64 us = div_u64((u64)pixels * 16 * USEC_PER_SEC,
+			 LCD(SPI_CLOCK_HZ) / LCD(SPI_DIVIDER));
+
+	return clamp_t(u64, us, POLL_US, POLL_MAX_US * 16);
+}
+
+static int wait_slot(struct lcd_frames *fb, unsigned int slot,
+		     unsigned long deadline, bool nonblock, unsigned int predicted_us)
+{
+	unsigned int sleep_us = POLL_US;
+	bool slept = false;
 	int ret;
 
 	for (;;) {
@@ -190,7 +209,13 @@ static int wait_slot(struct lcd_frames *fb, unsigned int slot,
 			return -ETIMEDOUT;
 		/* Not interruptible: a pending signal in the committing task must
 		 * not abandon an acknowledged frame and latch a permanent fault. */
-		msleep(5);
+		/* Sleep through the predicted transfer once, then poll finely and
+		 * back off, so a stalled C906L cannot spin out the whole deadline. */
+		if (!slept && predicted_us > sleep_us)
+			sleep_us = predicted_us;
+		usleep_range(sleep_us, sleep_us + sleep_us / 8 + 1);
+		sleep_us = slept ? umin(sleep_us * 2, POLL_MAX_US) : POLL_US;
+		slept = true;
 	}
 }
 
@@ -234,7 +259,9 @@ static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *old_plane,
 	if (ret)
 		goto unlock;
 	slot = fb->next_slot;
-	ret = wait_slot(fb, slot, deadline, false);
+	/* The frame two commits ago; normally long finished, so poll, don't
+	 * predict. */
+	ret = wait_slot(fb, slot, deadline, false, POLL_US);
 	if (ret)
 		goto unlock;
 	if (plane) {
@@ -283,7 +310,8 @@ static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *old_plane,
 	fb->next_slot ^= 1;
 	/* Commit-last transfers immutable slot ownership until this acknowledgement.
 	 * A timeout never revokes ownership or permits another write to that slot. */
-	ret = wait_slot(fb, slot, deadline, false);
+	ret = wait_slot(fb, slot, deadline, false,
+			wire_time_us(drm_rect_width(&clip) * drm_rect_height(&clip)));
 unlock:
 	if (ret)
 		WRITE_ONCE(fb->fault, ret);

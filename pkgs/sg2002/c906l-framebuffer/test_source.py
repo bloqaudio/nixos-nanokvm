@@ -27,19 +27,30 @@ def declaration(source: str, pattern: str) -> str:
     return source[start:end]
 
 
+def macro(source: str, name: str) -> str:
+    """Return a production #define verbatim, so the tests cannot drift from it."""
+    match = re.search(rf"^#define {name} .*$", source, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"missing production macro: {name}")
+    return match.group(0)
+
+
 def main() -> None:
     source = Path(sys.argv[1]).read_text()
+    macros = ("POLL_US", "POLL_MAX_US")
     functions = (
         "manifest_valid",
         "slot_record",
         "read_record",
         "frame_completed",
         "check_generation",
+        "wire_time_us",
         "wait_slot",
         "lock_until",
         "lcd_cancel_events",
     )
-    production = declaration(source, r"^struct frame_record\s*") + "\n"
+    production = "".join(macro(source, name) + "\n" for name in macros)
+    production += declaration(source, r"^struct frame_record\s*") + "\n"
     for name in functions:
         production += declaration(source, rf"^static [^;\n]*\b{name}\([^;{{]*\)") + "\n"
     scanout = declaration(source, r"^static int lcd_scanout\([^;{]*\)")

@@ -18,8 +18,14 @@
 #define current NULL
 #define signal_pending(task) pending_signal
 #define time_after_eq(a, b) ((long)((a) - (b)) >= 0)
+#define USEC_PER_SEC 1000000L
+#define umin(a, b) ((a) < (b) ? (a) : (b))
+#define clamp_t(type, value, low, high) \
+	((type)(value) < (type)(low) ? (type)(low) : \
+	 (type)(value) > (type)(high) ? (type)(high) : (type)(value))
 typedef uint8_t u8;
 typedef uint32_t u32;
+typedef uint64_t u64;
 typedef uint32_t __le32;
 typedef uint16_t __le16;
 struct mutex { bool locked; };
@@ -33,6 +39,8 @@ static const u8 contract_digest[32] = SG2002_C906L_CONTRACT_SHA256_BYTES;
 static unsigned long jiffies;
 static bool pending_signal;
 static unsigned int sleeps, io_reads, mutate_read;
+/* Requested sleep lengths, so the poll backoff itself can be asserted. */
+static unsigned int slept_us[8];
 static void *mutate_address;
 static u8 memory[SG2002_C906L_SHMEM_SIZE];
 static void rmb(void) { }
@@ -58,6 +66,17 @@ static bool mutex_trylock(struct mutex *lock)
 	return true;
 }
 static void msleep(unsigned int delay) { jiffies += delay; sleeps++; }
+static uint64_t div_u64(uint64_t dividend, uint32_t divisor) { return dividend / divisor; }
+/* One deadline unit per wait regardless of the requested range: these tests
+ * cover loop structure, deadline handling and backoff, not real timing. */
+static void usleep_range(unsigned int low, unsigned int high)
+{
+	assert(low > 0 && high >= low);
+	if (sleeps < sizeof(slept_us) / sizeof(*slept_us))
+		slept_us[sleeps] = low;
+	jiffies++;
+	sleeps++;
+}
 
 /* Model only event ownership/refcounts; ordering is the production callback. */
 struct completion { unsigned int done, released; };
@@ -131,6 +150,7 @@ static void reset(void)
 	status->activation_state = SG2002_C906L_ACTIVATION_STATE_ACTIVE;
 	status->capabilities = SG2002_C906L_EXPECTED_CAPABILITIES;
 	io_reads = mutate_read = sleeps = 0;
+	memset(slept_us, 0, sizeof(slept_us));
 	mutate_address = NULL;
 	jiffies = 0;
 	pending_signal = false;
@@ -233,15 +253,24 @@ int main(void)
 	assert(check_generation(&fb) == -EAGAIN);
 	mutate_read = 0;
 	fb.sequence[0] = 1;
-	assert(wait_slot(&fb, 0, 10, false) == -ETIMEDOUT);
-	assert(jiffies == 10 && sleeps == 2);
+	/* Sleep through the predicted transfer first, then poll finely and back
+	 * off, so a stalled C906L cannot spin out the whole deadline. */
+	assert(wait_slot(&fb, 0, 10, false, 19000) == -ETIMEDOUT);
+	assert(jiffies == 10 && sleeps == 10);
+	assert(slept_us[0] == 19000 && slept_us[1] == POLL_US);
+	assert(slept_us[2] == 500 && slept_us[3] == 1000);
+	assert(slept_us[4] == POLL_MAX_US && slept_us[5] == POLL_MAX_US);
 	/* A pending signal never abandons a committed frame: wait to the deadline. */
 	pending_signal = true;
-	assert(wait_slot(&fb, 0, 15, false) == -ETIMEDOUT && jiffies == 15 && sleeps == 3);
+	assert(wait_slot(&fb, 0, 15, false, POLL_US) == -ETIMEDOUT && jiffies == 15 && sleeps == 15);
 	pending_signal = false; status->generation = 8;
-	assert(wait_slot(&fb, 0, 20, true) == -ESTALE);
+	assert(wait_slot(&fb, 0, 20, true, POLL_US) == -ESTALE);
 	status->generation = 7; status->flags = 1;
-	assert(wait_slot(&fb, 0, 20, true) == -EIO);
+	assert(wait_slot(&fb, 0, 20, true, POLL_US) == -EIO);
+	/* A full frame's wire time, and the cap that keeps the estimate sane. */
+	assert(wire_time_us(SG2002_C906L_PICOCLAW_LCD_WIDTH *
+			    SG2002_C906L_PICOCLAW_LCD_HEIGHT) == 19660);
+	assert(wire_time_us(0) == POLL_US && wire_time_us(~0u) == POLL_MAX_US * 16);
 
 	reset(); fb.lock.locked = true;
 	assert(lock_until(&fb, 10, true) == -EAGAIN && jiffies == 0);
