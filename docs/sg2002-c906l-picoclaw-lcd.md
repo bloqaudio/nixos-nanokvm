@@ -57,7 +57,7 @@ profile ID 17, and final capabilities `0x8b`. Its immutable digest covers the
 physical resources, panel geometry, pin preconditions and framebuffer protocol.
 It also covers the firmware-mediated Wi-Fi power protocol. The combined
 configuration has digest
-`4c5a27ea53fbd605fc84ef6b1af65eda5a006e355ba62e36535e207759eb3aa5`;
+`2f5c08ab56f6b3b5e04294c1ee44e95e4512040c6ecff4dfb0b3dc076130ff8f`;
 older LCD-only firmware deliberately fails this identity check.
 
 | Resource | Address | Size |
@@ -143,9 +143,17 @@ This standard supply relationship follows the Linux
 The Rust panel driver sends panel commands as complete eight-byte SPI
 transactions, at most 32 per service step, and each frame as one transmit-only
 stream, with scheduler-backed initialization deadlines. Mailbox and heartbeat
-processing stay independent. A terminal panel fault switches the
-backlight off and retains the lease until whole-board reset. Runtime unbind,
-module unload, suspend and C906L reset are not validated recovery paths.
+processing stay independent. A terminal panel fault retains the lease until
+whole-board reset. Runtime unbind, module unload, suspend and C906L reset are
+not validated recovery paths.
+
+The backlight is not part of the lease. Pad JTAG_CPU_TMS is muxed to PWM_7
+(`&pwm1` channel 3) and driven by `pwm-backlight`, so brightness is an
+ordinary `/sys/class/backlight` device and DPMS blanking works normally. Its
+`backlight` phandle on the framebuffer node makes `pwm-backlight` boot dark
+and wait for a driver to enable it: the DRM driver lights the panel only
+after a frame has actually reached it, and blanks it when it latches a
+scanout fault, so a torn frame is never left lit.
 
 The standalone initrd feeds the Linux watchdog independently of the USB host,
 and its ROM runner arms the reset-only U-Boot watchdog. Use RAM boot only; no

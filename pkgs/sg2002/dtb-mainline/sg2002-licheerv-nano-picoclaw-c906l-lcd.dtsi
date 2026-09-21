@@ -8,6 +8,7 @@
  */
 
 #include <dt-bindings/clock/sophgo,cv1800.h>
+#include <dt-bindings/pwm/pwm.h>
 
 / {
 	model = "Sipeed LicheeRV Nano PicoClaw (C906L LCD)";
@@ -47,9 +48,9 @@
 		};
 
 		control-pins {
-			/* A19 = backlight, A27 = reset, A28 = D/C. */
-			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 3)>,
-				 <PINMUX(PIN_EMMC_DAT3, 3)>,
+			/* A27 = reset, A28 = D/C.  The backlight pad is not here:
+			 * it carries PWM_7 so Linux can dim it, see below. */
+			pinmux = <PINMUX(PIN_EMMC_DAT3, 3)>,
 				 <PINMUX(PIN_IIC0_SCL, 3)>;
 			power-source = <3300>;
 		};
@@ -63,6 +64,34 @@
 			drive-strength-microamp = <10800>;
 			power-source = <3300>;
 		};
+	};
+};
+
+/* The backlight pad sits outside the C906L's GPIOA lease: function 2 on this
+ * pad is PWM_7, a separate peripheral, so Linux dims the panel through the
+ * ordinary backlight class without any cross-core request.  The firmware
+ * cannot darken the panel itself, so the DRM driver disables this backlight
+ * when it latches a scanout fault. */
+&pinctrl {
+	picoclaw_backlight_cfg: picoclaw-backlight-cfg {
+		backlight-pin {
+			pinmux = <PINMUX(PIN_JTAG_CPU_TMS, 2)>;
+			power-source = <3300>;
+		};
+	};
+};
+
+/ {
+	picoclaw_backlight: backlight {
+		compatible = "pwm-backlight";
+		/* Active low, as the panel module wires it.  5 kHz is far above
+		 * the flicker the eye resolves and far below the LED driver's
+		 * switching limit. */
+		pwms = <&pwm1 3 200000 PWM_POLARITY_INVERTED>;
+		brightness-levels = <0 4 8 16 32 64 128 192 255>;
+		default-brightness-level = <8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&picoclaw_backlight_cfg>;
 	};
 };
 

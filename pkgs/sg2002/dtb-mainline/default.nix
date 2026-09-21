@@ -275,6 +275,9 @@ let
             sophgo,manifest-flags = <0x${lib.toHexString contract.manifestFlags}>;
             sophgo,profile = "${contract.profileName}";
             sophgo,activation-required;
+            /* Blanked when the driver latches a scanout fault, so a torn or
+               stale frame is never left lit. */
+            backlight = <&picoclaw_backlight>;
           };
         };
       '';

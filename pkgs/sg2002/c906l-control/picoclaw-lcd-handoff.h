@@ -244,9 +244,9 @@ static int sg2002_picoclaw_lcd_prepare(struct device *dev,
 	ret = sg2002_picoclaw_expect(dev, lcd->pinmux, 0x130, 0x7, 0x6);
 	if (ret)
 		return ret;
-	ret = sg2002_picoclaw_expect(dev, lcd->pinmux, 0x064, 0x7, 0x3);
-	if (ret)
-		return ret;
+	/* SYS+0x064 (JTAG_CPU_TMS) is deliberately absent: that pad carries
+	 * PWM_7 for the Linux backlight, not XGPIOA_19, so it is outside this
+	 * lease and pwm-backlight may not have muxed it yet when we probe. */
 	ret = sg2002_picoclaw_expect(dev, lcd->pinmux, 0x058, 0x7, 0x3);
 	if (ret)
 		return ret;

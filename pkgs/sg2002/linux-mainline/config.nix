@@ -288,6 +288,9 @@ with lib.kernel; {
   FRAMEBUFFER_CONSOLE = yes;
   FRAMEBUFFER_CONSOLE_ROTATION = yes;
   BACKLIGHT_CLASS_DEVICE = yes;
+  # PicoClaw drives its panel backlight from PWM_7 rather than a GPIO, so
+  # brightness is a standard /sys/class/backlight device.
+  BACKLIGHT_PWM = yes;
   # Compile in the 4×6 micro-font for the 128×128 OLED. Default 8×16 gives
   # only 16 cols × 8 rows. MINI4x6 gives 32 columns and enough rows for
   # tools such as top. Selected at runtime via `fbcon=font:MINI4x6`; the

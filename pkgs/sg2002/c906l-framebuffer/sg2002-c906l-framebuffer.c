@@ -6,6 +6,7 @@
  * This transport has no periodic vblank or promised display refresh rate.
  * No peripheral registers or arbitrary physical addresses are exposed.
  */
+#include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/dma-fence.h>
 #include <linux/fs.h>
@@ -67,6 +68,7 @@ struct lcd_frames {
 	struct drm_encoder encoder;
 	struct drm_connector connector;
 	struct work_struct fault_work;
+	struct backlight_device *backlight;
 	u8 __iomem *shared;
 	struct mutex lock;
 	int fault;
@@ -488,10 +490,19 @@ static void lcd_commit_tail(struct drm_atomic_commit *state)
 		ret = lcd_scanout(fb, old_plane, new->active ? plane : NULL);
 	if (ret) {
 		WRITE_ONCE(fb->fault, ret);
+		/* The C906L cannot reach the backlight pad, so blanking a torn or
+		 * stale frame is ours to do. */
+		backlight_disable(fb->backlight);
 		dev_err(drm->dev, "C906L scanout failed: %d; ownership retained, reboot required\n", ret);
 		lcd_cancel_events(state, ret);
 		schedule_work(&fb->fault_work);
 	} else {
+		/* pwm-backlight boots dark because our phandle tells it another
+		 * driver owns power-on; light it only once a frame is really up.
+		 * Only on an active transition: a plain page flip must not undo a
+		 * brightness or bl_power setting, nor add work to the frame path. */
+		if (new && (!old || old->active != new->active))
+			(new->active ? backlight_enable : backlight_disable)(fb->backlight);
 		/* One completion notification, strictly after actual remote scanout.
 		 * There is deliberately no periodic vblank emulation/timer. */
 		drm_atomic_helper_fake_vblank(state);
@@ -609,6 +620,9 @@ static int lcd_probe(struct platform_device *pdev)
 	ret = check_generation(fb);
 	if (ret)
 		return ret == -EAGAIN ? -EPROBE_DEFER : ret;
+	fb->backlight = devm_of_find_backlight(&pdev->dev);
+	if (IS_ERR(fb->backlight))
+		return PTR_ERR(fb->backlight);
 	mutex_init(&fb->lock);
 	INIT_WORK(&fb->fault_work, lcd_fault_work);
 	ret = devm_add_action_or_reset(&pdev->dev, lcd_cancel_fault_work, fb);

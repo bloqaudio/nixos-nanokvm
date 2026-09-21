@@ -424,8 +424,6 @@
         "spiDivider": 4,
         "dcPin": 28,
         "resetPin": 27,
-        "backlightPin": 19,
-        "backlightActiveLow": 1,
         "wifiPowerPin": 26,
         "wifiPowerOwnershipAddress": 2415198464,
         "wifiPowerRequestMagic": 827347799,
@@ -642,12 +640,6 @@
           "address": 50336048,
           "mask": 7,
           "expected": 6,
-          "access": "read-only"
-        },
-        "backlightMux": {
-          "address": 50335844,
-          "mask": 7,
-          "expected": 3,
           "access": "read-only"
         },
         "resetMux": {
