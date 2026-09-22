@@ -23,9 +23,12 @@ static SNAPSHOT_COMPLETED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0
 /// sleeping a whole scheduler tick between steps adds two 5 ms gaps to every
 /// frame, which is most of the cost of a 20 ms transfer. Yield without
 /// sleeping while the display is working and for a second afterwards, then
-/// return to tick sleeps so a static panel does not hold the core awake.
-/// Yielding cannot delay mailbox or RPMsg work: this is the lowest-priority
-/// task, so both preempt it.
+/// return to tick sleeps.
+///
+/// This task still outranks idle, so the spin window starves it for its whole
+/// duration: only a panel that stops updating entirely lets the core idle, and
+/// anything refreshing at least once a second holds it at 100%. Shortening the
+/// window is the lever if that ever matters.
 const ACTIVE_SPIN_TICKS: u32 = 200;
 
 pub(crate) fn run() -> ! {

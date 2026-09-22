@@ -14,7 +14,6 @@
 #define le32_to_cpu(value) ((uint32_t)(value))
 #define le16_to_cpu(value) ((uint16_t)(value))
 #define cpu_to_le16(value) ((uint16_t)(value))
-#define le16_to_cpu(value) ((uint16_t)(value))
 #define le64_to_cpu(value) ((uint64_t)(value))
 #define current NULL
 #define signal_pending(task) pending_signal
@@ -207,7 +206,6 @@ int main(void)
 	finish(0, 1, 0); completion(0)->width = 1;
 	assert(frame_completed(&fb, 0) == -EPROTO);
 	completion(0)->width = 0;
-	completion(0)->reserved[43] = 0;
 	assert(frame_completed(&fb, 0) == 1 && fb.completed[0] == 1);
 
 	reset(); fb.sequence[0] = fb.sequence[1] = 1;

@@ -636,6 +636,11 @@ static int lcd_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 	drm_plane_helper_add(&fb->primary, &lcd_plane_helpers);
+	/* The scanout path merges damage, so advertise FB_DAMAGE_CLIPS: without
+	 * it an atomic client cannot describe what changed and every update
+	 * costs a whole frame, and drm_plane_get_damage_clips() warns. DIRTYFB
+	 * sets the blob directly and works either way. */
+	drm_plane_enable_fb_damage_clips(&fb->primary);
 	ret = drm_crtc_init_with_planes(&fb->drm, &fb->crtc, &fb->primary, NULL,
 					&lcd_crtc_funcs, NULL);
 	if (ret)

@@ -66,6 +66,9 @@ def main() -> None:
             [
                 os.environ.get("HOST_CC", "cc"),
                 "-std=gnu11",
+                # -Warray-bounds only runs under optimisation, and the harness
+                # indexes fixed-size contract fields by hand.
+                "-O2",
                 "-Wall",
                 "-Wextra",
                 "-Werror",
