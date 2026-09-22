@@ -5,11 +5,12 @@ profile and must not be deployed on a NanoKVM carrier with Ethernet in use.
 
 ## Architecture
 
-Linux applications use standard DRM/KMS dumb buffers and page flips. Linux
-renders XRGB8888 pixels into GEM shared-memory objects, converts a complete
-240x240 frame into RGB565 big-endian bytes, and publishes it into one of two
-reserved DDR slots. C906L's Rust service reads that immutable slot and drives
-the ST7789 through SPI1. Pixel data does not travel in RPMsg messages.
+Linux applications use standard DRM/KMS dumb buffers and page flips. The only
+pixel format is `DRM_FORMAT_RGB565`, which is also the slot format, so Linux
+copies the damaged rectangle of a GEM shared-memory object unchanged into one
+of two reserved DDR slots, packed from the start of the slot. C906L's Rust
+service reads that immutable slot and drives the ST7789 through SPI1. Pixel
+data does not travel in RPMsg messages.
 
 ```text
 Linux application -> DRM/KMS GEM buffer -> reserved RGB565 slot
@@ -33,10 +34,13 @@ The nominal DRM mode must not be interpreted as a guaranteed refresh rate.
 
 Frame data leaves the C906L as one transmit-only 16-bit SPI stream per frame
 at 187.5 MHz / 4 = 46.875 MHz (Sipeed's released image drives the same panel at
-45 MHz). Measured on a PicoClaw from the SD image with `sg2002-c906l-drm-test
-/dev/dri/card0 700`: 40 ms per acknowledged full frame, of which roughly 20 ms
-is SPI wire time; the remainder is Linux's RGB565 conversion and its 5 ms
-completion poll. Byte-sized control transactions keep the preloaded-FIFO path.
+45 MHz). Measured on a PicoClaw from the SD image, timing only the commit,
+over three runs of 40 commits each: `sg2002-c906l-drm-test /dev/dri/card0 41`
+takes 23.263 to 23.498 ms per acknowledged full frame under the default
+schedutil governor and 22.925 to 22.966 ms under performance, of which 19.66 ms
+is SPI wire time. A console-sized update, `sg2002-c906l-drm-test /dev/dri/card0
+41 240x16`, takes 1.717 to 1.745 ms under either governor. Byte-sized control
+transactions keep the preloaded-FIFO path.
 
 The standalone USB initrd uses this same DRM fbdev layer for a best-effort
 kernel console. `console=tty0` records boot text in the foreground virtual
@@ -57,8 +61,13 @@ profile ID 17, and final capabilities `0x8b`. Its immutable digest covers the
 physical resources, panel geometry, pin preconditions and framebuffer protocol.
 It also covers the firmware-mediated Wi-Fi power protocol. The combined
 configuration has digest
-`2f5c08ab56f6b3b5e04294c1ee44e95e4512040c6ecff4dfb0b3dc076130ff8f`;
+`3e5de4f393d18b9ec03f0ffb173bb863547c1d0d93cdcf0905f8a60a9b1fe9b2`;
 older LCD-only firmware deliberately fails this identity check.
+
+Framebuffer protocol version 3 changed the slot pixel format from big-endian
+RGB565 to `DRM_FORMAT_RGB565` (little-endian): Linux now copies pixels without
+converting them, and C906L reads each pixel as one little-endian 16-bit word
+that its 16-bit SPI frames already send high byte first.
 
 | Resource | Address | Size |
 | --- | --- | --- |
@@ -100,8 +109,8 @@ SPI1 and the whole GPIOA register bank then belong exclusively to C906L.
 
 The dedicated DT disables Linux SPI1/spidev, GPIOA, I2C0 and Ethernet. Both
 the SD-card controller and SDIO/Wi-Fi remain enabled. LCD D/C shares I2C0's
-clock pad; Wi-Fi power uses GPIOA26. C906L owns A26 alongside the LCD's A19,
-A27 and A28 in one Rust `OutputGroup`, serviced by one task. Linux never
+clock pad; Wi-Fi power uses GPIOA26. C906L owns A26 alongside the LCD's A27
+and A28 in one Rust `OutputGroup`, serviced by one task. Linux never
 maps the GPIOA bank or takes a separate GPIO handle. The normal U-Boot splash
 and Linux LCD service are not used.
 
@@ -169,9 +178,9 @@ NANOKVM_AUTHORIZED_KEYS="$HOME/.ssh/id_ed25519.pub" \
 
 On the board, verify `sg2002-c906l-ctl check` before display testing. The
 `sg2002-c906l-drm-test /dev/dri/card0 4` tool verifies the DRM driver identity,
-allocates two standard XRGB8888 dumb buffers, draws changing checkerboards,
-waits for page-flip events, holds the final pattern briefly, and restores the
-previous display mode. It refuses unrelated graphics devices.
+allocates two standard RGB565 dumb buffers, draws changing checkerboards,
+waits for page-flip events, prints how long each commit took, holds the final
+pattern briefly, and restores the previous display mode. It refuses unrelated graphics devices.
 
 Host tests cover the exact contract, invalid ownership records, frame bounds,
 cacheline layout, panel command sequencing, bounded SPI work, terminal errors,

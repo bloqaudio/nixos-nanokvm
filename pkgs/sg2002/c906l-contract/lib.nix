@@ -450,7 +450,7 @@ let
         "the LCD descriptor must use the PicoClaw lease identity")
       (require
         (builtins.hashString "sha256" (builtins.toJSON (stripDocumentation peripheral))
-          == "b5a55a764437ed82997873ca31762600e73c017b1c95b4821653841f17e2de08")
+          == "3748da4cdb9ff74546efbe6e32f599b01a29970c8e2db8f33f807c7885a4a202")
         "PicoClaw LCD does not match the frozen board and framebuffer contract")
       (require
         (contract.abi.capabilities.picoclawLcd.bit == 7
