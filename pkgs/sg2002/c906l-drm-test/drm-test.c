@@ -61,6 +61,11 @@ static void draw(struct buffer *b, unsigned frame)
     }
 }
 
+static double elapsed_ms(const struct timespec *start, const struct timespec *end)
+{
+    return (end->tv_sec - start->tv_sec) * 1e3 + (end->tv_nsec - start->tv_nsec) / 1e6;
+}
+
 static void flipped(int fd, unsigned sequence, unsigned sec, unsigned usec, void *data)
 {
     (void)fd; (void)sequence; (void)sec; (void)usec;
@@ -155,23 +160,33 @@ int main(int argc, char **argv)
     if (drmModeSetCrtc(fd, crtc, buffers[0].fb, 0, 0, &connector->connector_id, 1, &connector->modes[0])) goto out;
     modeset = true;
     puts("DRM modeset completed: 240x240 XRGB8888 -> shared RGB565BE -> C906L SPI");
+    /* Only the commit is timed: DIRTYFB returns after the blocking commit,
+     * and a flip ends at its event. Drawing happens before the clock starts. */
+    double total_ms = 0;
     for (unsigned frame = 1; frame < count; frame++) {
+        struct timespec start, end;
         if (stopping) { errno = EINTR; goto out; }
         if (damage_width) {
             drmModeClip clip = { .x1 = 0, .y1 = 0,
                                  .x2 = damage_width, .y2 = damage_height };
             draw(&buffers[0], frame);
-            if (drmModeDirtyFB(fd, buffers[0].fb, &clip, 1)) goto out;
-            printf("dirty_complete=%u\n", frame);
+            if (clock_gettime(CLOCK_MONOTONIC, &start) ||
+                drmModeDirtyFB(fd, buffers[0].fb, &clip, 1) ||
+                clock_gettime(CLOCK_MONOTONIC, &end)) goto out;
+            printf("dirty_complete=%u commit_ms=%.3f\n", frame, elapsed_ms(&start, &end));
         } else {
             bool done = false;
             draw(&buffers[frame & 1], frame);
-            if (drmModePageFlip(fd, crtc, buffers[frame & 1].fb, DRM_MODE_PAGE_FLIP_EVENT, &done) ||
-                wait_flip(fd, &done)) goto out;
-            printf("page_flip_complete=%u\n", frame);
+            if (clock_gettime(CLOCK_MONOTONIC, &start) ||
+                drmModePageFlip(fd, crtc, buffers[frame & 1].fb, DRM_MODE_PAGE_FLIP_EVENT, &done) ||
+                wait_flip(fd, &done) || clock_gettime(CLOCK_MONOTONIC, &end)) goto out;
+            printf("page_flip_complete=%u commit_ms=%.3f\n", frame, elapsed_ms(&start, &end));
         }
+        total_ms += elapsed_ms(&start, &end);
         fflush(stdout);
     }
+    if (count > 1)
+        printf("commit_mean_ms=%.3f commits=%u\n", total_ms / (count - 1), count - 1);
     printf("scanout_completed frames=%u; holding last pattern for 15 seconds\n", count);
     fflush(stdout);
     for (unsigned i = 0; i < 15 && !stopping; i++) sleep(1);
