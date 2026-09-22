@@ -34,10 +34,13 @@ The nominal DRM mode must not be interpreted as a guaranteed refresh rate.
 
 Frame data leaves the C906L as one transmit-only 16-bit SPI stream per frame
 at 187.5 MHz / 4 = 46.875 MHz (Sipeed's released image drives the same panel at
-45 MHz). Measured on a PicoClaw from the SD image with `sg2002-c906l-drm-test
-/dev/dri/card0 700`: 40 ms per acknowledged full frame, of which roughly 20 ms
-is SPI wire time; the remainder is Linux's RGB565 conversion and its 5 ms
-completion poll. Byte-sized control transactions keep the preloaded-FIFO path.
+45 MHz). Measured on a PicoClaw from the SD image, timing only the commit,
+over three runs of 40 commits each: `sg2002-c906l-drm-test /dev/dri/card0 41`
+takes 23.263 to 23.498 ms per acknowledged full frame under the default
+schedutil governor and 22.925 to 22.966 ms under performance, of which 19.66 ms
+is SPI wire time. A console-sized update, `sg2002-c906l-drm-test /dev/dri/card0
+41 240x16`, takes 1.717 to 1.745 ms under either governor. Byte-sized control
+transactions keep the preloaded-FIFO path.
 
 The standalone USB initrd uses this same DRM fbdev layer for a best-effort
 kernel console. `console=tty0` records boot text in the foreground virtual
