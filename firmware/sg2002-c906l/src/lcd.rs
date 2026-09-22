@@ -13,9 +13,10 @@ const HEIGHT: u16 = 240;
 const Y_OFFSET: u16 = 80;
 const DC: u32 = 1 << 28;
 const RESET: u32 = 1 << 27;
-const BACKLIGHT: u32 = 1 << 19;
 const WIFI_POWER: u32 = 1 << 26;
-const CONTROL_LINES: u32 = DC | RESET | BACKLIGHT | WIFI_POWER;
+// The backlight pad (A19) is muxed to PWM_7 and owned by Linux, so it is
+// deliberately absent here: this bank never drives it.
+const CONTROL_LINES: u32 = DC | RESET | WIFI_POWER;
 const MAX_CHUNKS: usize = 32;
 pub(crate) const FRAME_BYTES: usize = WIDTH as usize * HEIGHT as usize * 2;
 
@@ -50,9 +51,6 @@ pub(crate) enum Job {
         y: u16,
         width: u16,
         height: u16,
-    },
-    Backlight {
-        enabled: bool,
     },
 }
 
@@ -106,7 +104,6 @@ pub(crate) struct Status {
 trait Io {
     fn dc(&mut self, high: bool) -> Result<(), Error>;
     fn reset(&mut self, high: bool) -> Result<(), Error>;
-    fn backlight(&mut self, enabled: bool) -> Result<(), Error>;
     fn write(&mut self, bytes: &[u8]) -> Result<(), Error>;
     /// Stream `count` pixels of a frame slot starting at `first`, as one
     /// transmit-only SPI burst with D/C already high.
@@ -133,9 +130,6 @@ impl Io for Hardware {
     }
     fn reset(&mut self, high: bool) -> Result<(), Error> {
         self.line(RESET, high)
-    }
-    fn backlight(&mut self, enabled: bool) -> Result<(), Error> {
-        self.line(BACKLIGHT, !enabled)
     }
     fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
         if bytes.len() > 8 {
@@ -280,7 +274,6 @@ enum Phase {
     },
     Ready,
     Draw(Render),
-    Backlight(bool),
     Fault,
 }
 #[derive(Clone, Copy)]
@@ -319,7 +312,6 @@ impl Render {
                 height,
             } if slot < 2 => (x, y, width, height, Pixels::Frame(slot)),
             Job::Frame { .. } => return Err(Error::Bounds),
-            Job::Backlight { .. } => return Err(Error::Bounds),
         };
         if width == 0
             || height == 0
@@ -345,7 +337,6 @@ struct Engine<I> {
     phase: Phase,
     status: Status,
     last_job: Option<Job>,
-    backlight_requested: bool,
 }
 impl<I: Io> Engine<I> {
     fn new(io: I) -> Self {
@@ -359,7 +350,6 @@ impl<I: Io> Engine<I> {
                 error: None,
             },
             last_job: None,
-            backlight_requested: true,
         }
     }
     fn delay(ticks: u32, next: AfterDelay) -> Phase {
@@ -391,10 +381,7 @@ impl<I: Io> Engine<I> {
         if self.status.state == State::Busy {
             return Err(Error::Busy);
         }
-        let phase = match job {
-            Job::Backlight { enabled } => Phase::Backlight(enabled),
-            _ => Phase::Draw(Render::new(job)?),
-        };
+        let phase = Phase::Draw(Render::new(job)?);
         self.last_job = Some(job);
         self.phase = phase;
         self.status.state = State::Busy;
@@ -414,8 +401,8 @@ impl<I: Io> Engine<I> {
     fn step(&mut self, now: u32) {
         if let Err(error) = self.advance(now) {
             // SPI already halted on transfer failure. Keep bank ownership and
-            // fail dark. Do not automatically replay a partially drawn job.
-            let _ = self.io.backlight(false);
+            // leave the panel as it is; the Linux driver blanks the backlight
+            // when it observes the fault. Do not replay a partially drawn job.
             self.phase = Phase::Fault;
             self.status.state = State::Fault;
             self.status.error = Some(error);
@@ -503,12 +490,6 @@ impl<I: Io> Engine<I> {
                         };
                     }
                 }
-                Phase::Backlight(enabled) => {
-                    self.io.backlight(enabled)?;
-                    self.backlight_requested = enabled;
-                    self.complete();
-                    return Ok(());
-                }
                 Phase::Draw(mut render) => {
                     match render.stage {
                         0 => self.write(false, &[0x2a])?,
@@ -532,7 +513,6 @@ impl<I: Io> Engine<I> {
                                 // stay well inside the heartbeat period.
                                 self.io.dc(true)?;
                                 self.io.frame_stream(slot, render.pixel, remaining)?;
-                                self.io.backlight(self.backlight_requested)?;
                                 self.complete();
                                 return Ok(());
                             }
@@ -556,7 +536,6 @@ impl<I: Io> Engine<I> {
                             self.write(true, &bytes[..pixels as usize * 2])?;
                             render.pixel += pixels;
                             if pixels == remaining {
-                                self.io.backlight(self.backlight_requested)?;
                                 self.complete();
                                 return Ok(());
                             }
@@ -640,10 +619,10 @@ impl Panel {
         // exact PicoClaw addresses and scalar configuration were checked above.
         let mut bank = unsafe { gpio::Bank::from_base(gpio_base) };
         bank.mask_interrupts();
-        // Backlight and Wi-Fi off first; reset high and DC low before SPI.
-        // One OutputGroup owns all four lines, so Wi-Fi and LCD operations
-        // cannot race a whole-bank read/modify/write.
-        let outputs = bank.outputs(CONTROL_LINES, RESET | BACKLIGHT);
+        // Wi-Fi off first; reset high and DC low before SPI.  One OutputGroup
+        // owns all three lines, so Wi-Fi and LCD operations cannot race a
+        // whole-bank read/modify/write.
+        let outputs = bank.outputs(CONTROL_LINES, RESET);
         let mut spi = unsafe { spi::Spi::from_base(spi_base) };
         spi.configure(divider, embedded_hal::spi::MODE_0);
         Ok(Self {
@@ -698,7 +677,6 @@ mod tests {
     enum Event {
         Dc(bool),
         Reset(bool, u32),
-        Backlight(bool),
         Write(bool, Vec<u8>, u32),
         Frame(u8, usize, usize),
     }
@@ -718,10 +696,6 @@ mod tests {
         }
         fn reset(&mut self, high: bool) -> Result<(), Error> {
             self.events.push(Event::Reset(high, self.now));
-            Ok(())
-        }
-        fn backlight(&mut self, enabled: bool) -> Result<(), Error> {
-            self.events.push(Event::Backlight(enabled));
             Ok(())
         }
         fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -776,15 +750,8 @@ mod tests {
             .collect()
     }
     #[test]
-    fn initialization_keeps_backlight_off_and_preserves_full_tables() {
+    fn initialization_preserves_full_tables() {
         let (engine, _) = initialized(0);
-        assert!(
-            !engine
-                .io
-                .events
-                .iter()
-                .any(|event| matches!(event, Event::Backlight(true)))
-        );
         let transfers = writes(&engine);
         let mut expected = vec![(false, vec![0x11])];
         for item in INIT {
@@ -908,7 +875,7 @@ mod tests {
             ]
         );
         assert_eq!(engine.status.completed_sequence, 7);
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(true)));
+        assert_eq!(engine.status.state, State::Ready);
         let events = engine.io.events.len();
         engine
             .submit(
@@ -977,10 +944,9 @@ mod tests {
         assert_eq!(frames, vec![&Event::Frame(1, 0, FRAME_BYTES / 2)]);
         // Window setup and RAMWR go through byte transactions; no pixel bytes do.
         assert_eq!(writes(&engine).len(), 5);
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(true)));
     }
     #[test]
-    fn frame_stream_failure_is_sticky_and_fails_dark() {
+    fn frame_stream_failure_is_sticky() {
         let (mut engine, now) = initialized(0);
         engine
             .submit(
@@ -998,10 +964,12 @@ mod tests {
         step(&mut engine, now + 1);
         assert_eq!(engine.status.state, State::Fault);
         assert_eq!(engine.status.completed_sequence, 0);
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(false)));
+        let count = engine.io.events.len();
+        step(&mut engine, now + 2);
+        assert_eq!(engine.io.events.len(), count);
     }
     #[test]
-    fn spi_failure_is_sticky_and_fails_dark_without_completing_job() {
+    fn spi_failure_is_sticky_without_completing_job() {
         let (mut engine, now) = initialized(0);
         engine.submit(4, Job::Demo { seed: 0 }).unwrap();
         engine.io.fail_after = Some(engine.io.writes + 6);
@@ -1010,32 +978,10 @@ mod tests {
         assert_eq!(engine.status.accepted_sequence, 4);
         assert_eq!(engine.status.completed_sequence, 0);
         assert_eq!(engine.status.error.unwrap().code(), 0x103);
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(false)));
         let count = engine.io.events.len();
         step(&mut engine, now + 2);
         assert!(engine.submit(5, Job::Clear { color: 0 }).is_err());
         assert_eq!(engine.io.events.len(), count);
-    }
-    #[test]
-    fn explicit_backlight_off_survives_later_drawing() {
-        let (mut engine, now) = initialized(0);
-        engine.submit(1, Job::Backlight { enabled: false }).unwrap();
-        step(&mut engine, now + 1);
-        engine
-            .submit(
-                2,
-                Job::FillRect {
-                    x: 0,
-                    y: 0,
-                    width: 1,
-                    height: 1,
-                    color: 0,
-                },
-            )
-            .unwrap();
-        step(&mut engine, now + 2);
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(false)));
-        assert_eq!(engine.status.completed_sequence, 2);
     }
     #[test]
     fn demo_has_rgb_bars_and_seed_changes_checker() {
@@ -1106,7 +1052,6 @@ mod tests {
         assert_eq!(engine.status.accepted_sequence, 0);
         assert_eq!(engine.status.completed_sequence, 0);
         assert_eq!(engine.status.error, Some(Error::Spi(spi::Error::Timeout)));
-        assert_eq!(engine.io.events.last(), Some(&Event::Backlight(false)));
         assert_eq!(
             engine.submit(1, Job::Demo { seed: 0 }),
             Err(Error::Spi(spi::Error::Timeout))
