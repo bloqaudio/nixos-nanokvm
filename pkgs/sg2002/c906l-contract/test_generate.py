@@ -520,7 +520,8 @@ class ContractGenerationTests(unittest.TestCase):
         self.assertLess(
             constants["ownership1Address"] + 128, constants["frameSlot0Address"]
         )
-        self.assertEqual(lcd["framebuffer"]["pixelFormat"], "RGB565BE")
+        self.assertEqual(lcd["framebuffer"]["version"], 3)
+        self.assertEqual(lcd["framebuffer"]["pixelFormat"], "RGB565LE")
         for name in ("request", "completion"):
             fields = lcd["framebuffer"][name]["fields"]
             self.assertEqual(sum(field["width"] for field in fields), 64)

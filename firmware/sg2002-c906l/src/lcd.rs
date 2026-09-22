@@ -110,6 +110,16 @@ trait Io {
     fn frame_stream(&mut self, slot: u8, first: u32, count: u32) -> Result<(), Error>;
 }
 
+/// Slots hold DRM_FORMAT_RGB565 (little-endian); the 16-bit SPI frame shifts
+/// the word MSB first, which is the panel's byte order.
+///
+/// # Safety
+/// `address` must be a mapped, 2-byte aligned pixel inside an owned slot.
+unsafe fn slot_pixel(address: usize) -> u16 {
+    // SAFETY: upheld by the caller.
+    u16::from_le(unsafe { core::ptr::read_volatile(address as *const u16) })
+}
+
 struct Hardware {
     spi: spi::Spi<'static>,
     outputs: gpio::OutputGroup<'static>,
@@ -148,19 +158,10 @@ impl Io for Hardware {
         }
         let base = self.framebuffer_base + usize::from(slot) * self.framebuffer_stride;
         let words = (first..first + count).map(|pixel| {
-            // Slot bytes are already in wire order (high byte first); the
-            // 16-bit frame shifts MSB first, so assemble big-endian.
-            let address = base + pixel as usize * 2;
             // SAFETY: Panel::new's caller guarantees both permanently mapped
             // slots and frame ownership/cache invalidation before submission;
             // the validated range stays inside one 115200-byte frame.
-            let bytes = unsafe {
-                [
-                    core::ptr::read_volatile(address as *const u8),
-                    core::ptr::read_volatile((address + 1) as *const u8),
-                ]
-            };
-            u16::from_be_bytes(bytes)
+            unsafe { slot_pixel(base + pixel as usize * 2) }
         });
         self.spi
             .stream_words(words, self.poll_budget)
@@ -915,6 +916,17 @@ mod tests {
             (true, vec![0xab, 0xcd, 0xab, 0xcd, 0xab, 0xcd, 0xab, 0xcd])
         );
         assert_eq!(data[6], (true, vec![0xab, 0xcd]));
+    }
+    #[test]
+    fn slot_pixels_are_little_endian_rgb565() {
+        let slot: [u16; 2] = [
+            u16::from_le_bytes([0x34, 0x12]),
+            u16::from_le_bytes([0x00, 0xf8]),
+        ];
+        let base = slot.as_ptr() as usize;
+        // SAFETY: both addresses are aligned elements of `slot`.
+        let pixels = unsafe { [slot_pixel(base), slot_pixel(base + 2)] };
+        assert_eq!(pixels, [0x1234, 0xf800]);
     }
     #[test]
     fn frame_streams_selected_slot_in_one_step() {

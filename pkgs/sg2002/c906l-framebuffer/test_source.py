@@ -62,10 +62,13 @@ def main() -> None:
     )
     assert (
         scanout.index("writel(0,")
-        < scanout.index("drm_fb_xrgb8888_to_rgb565be(")
+        < scanout.index("drm_fb_memcpy(")
         < scanout.index("memcpy_toio(request,")
         < scanout.index("writel(sequence,")
     )
+    # Slots and buffers share DRM_FORMAT_RGB565, so no pixel is ever converted.
+    conversions = re.findall(r"\bdrm_fb_(?!memcpy\b)\w+\(|fmtcnv|conv_state", source)
+    assert not conversions, conversions
     assert scanout.count("wmb();") >= 3
     harness = Path(__file__).with_name("test_ownership.c").read_text()
     with tempfile.TemporaryDirectory(prefix="c906l-framebuffer-test-") as directory:

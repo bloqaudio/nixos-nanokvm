@@ -435,7 +435,6 @@
         "height": 240,
         "yOffset": 80,
         "rowStride": 480,
-        "pixelFormat": 1,
         "frameSize": 115200,
         "frameSlotStride": 118784,
         "frameSlot0Address": 2415202304,
@@ -476,9 +475,9 @@
         "runtimeRebind": false
       },
       "framebuffer": {
-        "version": 2,
+        "version": 3,
         "region": "bulk",
-        "pixelFormat": "RGB565BE",
+        "pixelFormat": "RGB565LE",
         "slotCount": 2,
         "request": {
           "writer": "linux",

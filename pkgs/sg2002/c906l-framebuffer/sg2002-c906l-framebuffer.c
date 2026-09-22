@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Atomic DRM/KMS with GEM shmem buffers and fbdev emulation. XRGB8888 pixels
- * are copied/converted into reserved RGB565BE slots; userspace never maps
+ * Atomic DRM/KMS with GEM shmem buffers and fbdev emulation. RGB565 pixels
+ * are copied unchanged into reserved RGB565 slots; userspace never maps
  * those slots. A flip completes only after C906L acknowledges the scanout.
  * This transport has no periodic vblank or promised display refresh rate.
  * No peripheral registers or arbitrary physical addresses are exposed.
@@ -288,8 +288,7 @@ static int lcd_scanout(struct lcd_frames *fb, struct drm_plane_state *old_plane,
 							      LCD(HEIGHT));
 		pitch = drm_rect_width(&clip) * 2;
 		iosys_map_set_vaddr_iomem(&destination, pixels);
-		drm_fb_xrgb8888_to_rgb565be(&destination, &pitch, shadow->data,
-					  plane->fb, &clip, &shadow->fmtcnv_state);
+		drm_fb_memcpy(&destination, &pitch, shadow->data, plane->fb, &clip);
 		drm_gem_fb_end_cpu_access(plane->fb, DMA_FROM_DEVICE);
 	} else {
 		memset_io(pixels, 0, LCD(FRAME_SIZE));
@@ -370,7 +369,6 @@ static int lcd_plane_check(struct drm_plane *plane, struct drm_atomic_commit *st
 {
 	struct drm_plane_state *new = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *crtc;
-	struct drm_shadow_plane_state *shadow = to_drm_shadow_plane_state(new);
 	int ret;
 
 	if (!new->crtc)
@@ -385,9 +383,6 @@ static int lcd_plane_check(struct drm_plane *plane, struct drm_atomic_commit *st
 	    new->crtc_w != 240 || new->crtc_h != 240 ||
 	    new->fb->width != 240 || new->fb->height != 240)
 		return -EINVAL;
-	/* Conversion cannot allocate/fail after the atomic state is installed. */
-	if (!drm_format_conv_state_reserve(&shadow->fmtcnv_state, 4096, GFP_KERNEL))
-		return -ENOMEM;
 	return 0;
 }
 
@@ -411,7 +406,7 @@ static int lcd_begin_fb_access(struct drm_plane *plane, struct drm_plane_state *
 
 	if (ret)
 		return ret;
-	/* The kernel RGB conversion helper accepts only RAM sources, including
+	/* The kernel copy helper accepts only RAM sources, including
 	 * imported dma-bufs. Reject an I/O mapping before swapping atomic state. */
 	if (state->fb && shadow->data[0].is_iomem) {
 		drm_gem_end_shadow_fb_access(plane, state);
@@ -599,7 +594,7 @@ static void lcd_cancel_fault_work(void *data)
 
 static int lcd_probe(struct platform_device *pdev)
 {
-	static const u32 formats[] = { DRM_FORMAT_XRGB8888 };
+	static const u32 formats[] = { DRM_FORMAT_RGB565 };
 	static const u64 modifiers[] = { DRM_FORMAT_MOD_LINEAR, DRM_FORMAT_MOD_INVALID };
 	struct sg2002_c906l_manifest manifest, again;
 	struct sg2002_c906l_status status;
@@ -673,6 +668,7 @@ static int lcd_probe(struct platform_device *pdev)
 	fb->drm.mode_config.helper_private = &lcd_mode_config_helpers;
 	fb->drm.mode_config.min_width = fb->drm.mode_config.max_width = 240;
 	fb->drm.mode_config.min_height = fb->drm.mode_config.max_height = 240;
+	fb->drm.mode_config.preferred_depth = 16;
 	ret = drm_universal_plane_init(&fb->drm, &fb->primary, 0, &lcd_plane_funcs,
 		formats, ARRAY_SIZE(formats), modifiers, DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (ret)
@@ -711,8 +707,8 @@ static int lcd_probe(struct platform_device *pdev)
 		return ret;
 	/* Attach-only lab device: do not release mappings during remote scanout. */
 	__module_get(THIS_MODULE);
-	drm_client_setup(&fb->drm, NULL);
-	dev_info(&pdev->dev, "C906L DRM: 240x240 XRGB8888, acknowledged remote scanout, generation %u\n",
+	drm_client_setup_with_fourcc(&fb->drm, DRM_FORMAT_RGB565);
+	dev_info(&pdev->dev, "C906L DRM: 240x240 RGB565, acknowledged remote scanout, generation %u\n",
 		 fb->generation);
 	return 0;
 }

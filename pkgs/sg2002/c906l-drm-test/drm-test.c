@@ -25,13 +25,13 @@ static void stop(int signal) { (void)signal; stopping = 1; }
 
 static int make_buffer(int fd, struct buffer *b)
 {
-    struct drm_mode_create_dumb create = { .width = 240, .height = 240, .bpp = 32 };
+    struct drm_mode_create_dumb create = { .width = 240, .height = 240, .bpp = 16 };
     struct drm_mode_map_dumb map = {0};
     uint32_t handles[4] = {0}, pitches[4] = {0}, offsets[4] = {0};
     if (drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create)) return -1;
     b->handle = create.handle; b->pitch = create.pitch; b->size = create.size;
     handles[0] = b->handle; pitches[0] = b->pitch;
-    if (drmModeAddFB2(fd, 240, 240, DRM_FORMAT_XRGB8888, handles, pitches, offsets, &b->fb, 0)) return -1;
+    if (drmModeAddFB2(fd, 240, 240, DRM_FORMAT_RGB565, handles, pitches, offsets, &b->fb, 0)) return -1;
     map.handle = b->handle;
     if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map)) return -1;
     b->pixels = mmap(NULL, b->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
@@ -50,12 +50,13 @@ static void destroy_buffer(int fd, struct buffer *b)
 
 static void draw(struct buffer *b, unsigned frame)
 {
-    const uint32_t colours[] = { 0xff0000, 0x00ff00, 0x0000ff, 0xffffff, 0xffff00, 0x00ffff };
+    /* Red, green, blue, white, yellow, cyan. */
+    const uint16_t colours[] = { 0xf800, 0x07e0, 0x001f, 0xffff, 0xffe0, 0x07ff };
     for (unsigned y = 0; y < 240; y++) {
-        uint32_t *row = (uint32_t *)(b->pixels + y * b->pitch);
+        uint16_t *row = (uint16_t *)(b->pixels + y * b->pitch);
         for (unsigned x = 0; x < 240; x++) {
-            uint32_t colour = ((x / 20 + y / 20 + frame) & 1) ? 0 : colours[(x / 40 + frame) % 6];
-            if (x < 3 || y < 3 || x >= 237 || y >= 237) colour = 0xffffff;
+            uint16_t colour = ((x / 20 + y / 20 + frame) & 1) ? 0 : colours[(x / 40 + frame) % 6];
+            if (x < 3 || y < 3 || x >= 237 || y >= 237) colour = 0xffff;
             row[x] = colour;
         }
     }
@@ -159,7 +160,7 @@ int main(int argc, char **argv)
     draw(&buffers[0], 0);
     if (drmModeSetCrtc(fd, crtc, buffers[0].fb, 0, 0, &connector->connector_id, 1, &connector->modes[0])) goto out;
     modeset = true;
-    puts("DRM modeset completed: 240x240 XRGB8888 -> shared RGB565BE -> C906L SPI");
+    puts("DRM modeset completed: 240x240 RGB565 -> shared RGB565 -> C906L SPI");
     /* Only the commit is timed: DIRTYFB returns after the blocking commit,
      * and a flip ends at its event. Drawing happens before the clock starts. */
     double total_ms = 0;
