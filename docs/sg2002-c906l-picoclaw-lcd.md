@@ -106,8 +106,8 @@ SPI1 and the whole GPIOA register bank then belong exclusively to C906L.
 
 The dedicated DT disables Linux SPI1/spidev, GPIOA, I2C0 and Ethernet. Both
 the SD-card controller and SDIO/Wi-Fi remain enabled. LCD D/C shares I2C0's
-clock pad; Wi-Fi power uses GPIOA26. C906L owns A26 alongside the LCD's A19,
-A27 and A28 in one Rust `OutputGroup`, serviced by one task. Linux never
+clock pad; Wi-Fi power uses GPIOA26. C906L owns A26 alongside the LCD's A27
+and A28 in one Rust `OutputGroup`, serviced by one task. Linux never
 maps the GPIOA bank or takes a separate GPIO handle. The normal U-Boot splash
 and Linux LCD service are not used.
 

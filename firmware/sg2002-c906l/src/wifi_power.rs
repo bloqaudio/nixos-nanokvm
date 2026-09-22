@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn acknowledged_changes_preserve_lcd_lines_and_replays_do_nothing() {
-        let lcd = (1 << 19) | (1 << 27) | (1 << 28);
+        let lcd = (1 << 27) | (1 << 28);
         let wifi = 1 << 26;
         let mut latch = lcd;
         let mut last = 0;
