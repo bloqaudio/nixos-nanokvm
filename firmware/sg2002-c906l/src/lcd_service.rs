@@ -18,14 +18,33 @@ static SNAPSHOT_COMPLETED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0
 
 /// Scanout task body: whole-frame SPI streams run here, below the control
 /// and RPMsg task priorities, so they are preempted by mailbox and RPMsg work.
+///
+/// A frame needs two steps — one to admit the request, one to stream it — so
+/// sleeping a whole scheduler tick between steps adds two 5 ms gaps to every
+/// frame, which is most of the cost of a 20 ms transfer. Yield without
+/// sleeping while the display is working and for a second afterwards, then
+/// return to tick sleeps.
+///
+/// This task still outranks idle, so the spin window starves it for its whole
+/// duration: only a panel that stops updating entirely lets the core idle, and
+/// anything refreshing at least once a second holds it at 100%. Shortening the
+/// window is the lever if that ever matters.
+const ACTIVE_SPIN_TICKS: u32 = 200;
+
 pub(crate) fn run() -> ! {
     let mut service = Service::new();
+    let mut last_work = 0;
     loop {
         // SAFETY: this function runs only inside the live FreeRTOS task.
-        service.step(unsafe { crate::c906l_ticks() });
+        let now = unsafe { crate::c906l_ticks() };
+        service.step(now);
         service.publish_snapshot();
+        if service.working() {
+            last_work = now;
+        }
+        let ticks = u32::from(now.wrapping_sub(last_work) >= ACTIVE_SPIN_TICKS);
         // SAFETY: yielding this task is valid after scheduler startup.
-        unsafe { crate::c906l_delay(1) };
+        unsafe { crate::c906l_delay(ticks) };
     }
 }
 
@@ -62,20 +81,35 @@ struct Record {
     generation: u32,
     sequence: u32,
     result: u32,
-    reserved: [u8; 44],
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    reserved: [u8; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
     commit: u32,
 }
 const _: [(); 64] = [(); core::mem::size_of::<Record>()];
 const _: [(); 60] = [(); core::mem::offset_of!(Record, commit)];
+const _: [(); PICOCLAW_LCD_RECORD_RECT_OFFSET as usize] = [(); core::mem::offset_of!(Record, x)];
+const _: [(); 8] = [(); PICOCLAW_LCD_RECORD_RECT_SIZE];
 
+/// Requests carry the damaged rectangle and exactly its pixels, packed from
+/// the start of the slot. A full-screen update is the rectangle 0,0,240,240;
+/// there is no separate whole-frame form.
 fn valid_request(record: &Record, generation: u32, completed: u32) -> bool {
+    let width = u32::from(record.width);
+    let height = u32::from(record.height);
     record.magic == PICOCLAW_LCD_REQUEST_MAGIC
         && record.generation == generation
         && record.sequence != 0
         && record.sequence != completed
         && record.commit == record.sequence
-        && record.result == PICOCLAW_LCD_FRAME_SIZE as u32
-        && record.reserved == [0; 44]
+        && width != 0
+        && height != 0
+        && u32::from(record.x) + width <= PICOCLAW_LCD_WIDTH
+        && u32::from(record.y) + height <= PICOCLAW_LCD_HEIGHT
+        && record.result == width * height * 2
+        && record.reserved == [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE]
 }
 
 fn request(slot: usize, generation: u32, completed: u32) -> Option<Record> {
@@ -98,7 +132,11 @@ fn complete(slot: usize, generation: u32, sequence: u32, error: u32) {
         generation,
         sequence,
         result: error,
-        reserved: [0; 44],
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        reserved: [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
         commit: 0,
     };
     // SAFETY: exclusively C906L-written cacheline in fixed shared reservation.
@@ -208,10 +246,22 @@ impl Service {
                 PICOCLAW_LCD_FRAME_SLOT0_ADDRESS + slot * PICOCLAW_LCD_FRAME_SLOT_STRIDE as usize;
             // Linux published all bytes before the commit and cannot reclaim
             // this slot until our completion. Evict previous-generation data.
-            invalidate(address, PICOCLAW_LCD_FRAME_SIZE);
+            invalidate(
+                address,
+                usize::from(record.width) * usize::from(record.height) * 2,
+            );
             self.job_sequence = self.job_sequence.wrapping_add(1).max(1);
             if panel
-                .submit(self.job_sequence, Job::Frame { slot: slot as u8 })
+                .submit(
+                    self.job_sequence,
+                    Job::Frame {
+                        slot: slot as u8,
+                        x: record.x,
+                        y: record.y,
+                        width: record.width,
+                        height: record.height,
+                    },
+                )
                 .is_err()
             {
                 complete(slot, self.generation, record.sequence, 1);
@@ -222,6 +272,16 @@ impl Service {
             }
             break;
         }
+    }
+
+    /// True while a frame is in flight or the panel has not settled, so the
+    /// task keeps stepping without sleeping.
+    fn working(&self) -> bool {
+        self.active.is_some()
+            || !matches!(
+                self.panel.as_ref().map(Panel::status).map(|s| s.state),
+                None | Some(State::Ready)
+            )
     }
 
     fn publish_snapshot(&self) {
@@ -271,7 +331,11 @@ mod tests {
             generation: 7,
             sequence: 1,
             result: PICOCLAW_LCD_FRAME_SIZE as u32,
-            reserved: [0; 44],
+            x: 0,
+            y: 0,
+            width: PICOCLAW_LCD_WIDTH as u16,
+            height: PICOCLAW_LCD_HEIGHT as u16,
+            reserved: [0; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
             commit: 1,
         }
     }
@@ -290,12 +354,44 @@ mod tests {
             },
             Record { magic: 0, ..r },
             Record {
-                reserved: [1; 44],
+                reserved: [1; PICOCLAW_LCD_RECORD_RESERVED_SIZE],
+                ..r
+            },
+            // Rectangle must be non-empty, on-screen, and match frameBytes.
+            Record { width: 0, ..r },
+            Record { height: 0, ..r },
+            Record { x: 1, ..r },
+            Record { y: 1, ..r },
+            Record {
+                width: 8,
+                height: 4,
                 ..r
             },
         ] {
             assert!(!valid_request(&bad, 7, 0));
         }
+    }
+    #[test]
+    fn partial_rectangle_requires_exactly_its_own_pixels() {
+        let r = Record {
+            x: 16,
+            y: 32,
+            width: 64,
+            height: 8,
+            result: 64 * 8 * 2,
+            ..record()
+        };
+        assert!(valid_request(&r, 7, 0));
+        assert!(!valid_request(
+            &Record {
+                result: 64 * 8,
+                ..r
+            },
+            7,
+            0
+        ));
+        assert!(!valid_request(&Record { x: 200, ..r }, 7, 0));
+        assert!(!valid_request(&Record { y: 236, ..r }, 7, 0));
     }
     #[test]
     fn request_sequence_wrap_is_nonzero_and_per_slot() {

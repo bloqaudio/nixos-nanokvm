@@ -46,6 +46,10 @@ pub(crate) enum Job {
     },
     Frame {
         slot: u8,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
     },
     Backlight {
         enabled: bool,
@@ -307,7 +311,13 @@ impl Render {
                 color,
             } => (x, y, width, height, Pixels::Solid(color)),
             Job::Demo { seed } => (0, 0, WIDTH, HEIGHT, Pixels::Demo(seed)),
-            Job::Frame { slot } if slot < 2 => (0, 0, WIDTH, HEIGHT, Pixels::Frame(slot)),
+            Job::Frame {
+                slot,
+                x,
+                y,
+                width,
+                height,
+            } if slot < 2 => (x, y, width, height, Pixels::Frame(slot)),
             Job::Frame { .. } => return Err(Error::Bounds),
             Job::Backlight { .. } => return Err(Error::Bounds),
         };
@@ -840,7 +850,19 @@ mod tests {
                 Err(Error::Bounds)
             );
         }
-        assert_eq!(engine.submit(1, Job::Frame { slot: 2 }), Err(Error::Bounds));
+        assert_eq!(
+            engine.submit(
+                1,
+                Job::Frame {
+                    slot: 2,
+                    x: 0,
+                    y: 0,
+                    width: WIDTH,
+                    height: HEIGHT,
+                },
+            ),
+            Err(Error::Bounds)
+        );
         assert_eq!(
             engine.submit(0, Job::Clear { color: 0 }),
             Err(Error::InvalidSequence)
@@ -931,7 +953,18 @@ mod tests {
     fn frame_streams_selected_slot_in_one_step() {
         let (mut engine, now) = initialized(0);
         engine.io.events.clear();
-        engine.submit(19, Job::Frame { slot: 1 }).unwrap();
+        engine
+            .submit(
+                19,
+                Job::Frame {
+                    slot: 1,
+                    x: 0,
+                    y: 0,
+                    width: WIDTH,
+                    height: HEIGHT,
+                },
+            )
+            .unwrap();
         step(&mut engine, now + 1);
         assert_eq!(engine.status.state, State::Ready);
         assert_eq!(engine.status.completed_sequence, 19);
@@ -949,7 +982,18 @@ mod tests {
     #[test]
     fn frame_stream_failure_is_sticky_and_fails_dark() {
         let (mut engine, now) = initialized(0);
-        engine.submit(3, Job::Frame { slot: 0 }).unwrap();
+        engine
+            .submit(
+                3,
+                Job::Frame {
+                    slot: 0,
+                    x: 0,
+                    y: 0,
+                    width: WIDTH,
+                    height: HEIGHT,
+                },
+            )
+            .unwrap();
         engine.io.fail_after = Some(engine.io.writes + 5);
         step(&mut engine, now + 1);
         assert_eq!(engine.status.state, State::Fault);

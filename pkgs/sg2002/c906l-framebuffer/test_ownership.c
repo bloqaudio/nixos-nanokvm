@@ -13,6 +13,7 @@
 #define LCD(name) SG2002_C906L_PICOCLAW_LCD_##name
 #define le32_to_cpu(value) ((uint32_t)(value))
 #define le16_to_cpu(value) ((uint16_t)(value))
+#define cpu_to_le16(value) ((uint16_t)(value))
 #define le64_to_cpu(value) ((uint64_t)(value))
 #define current NULL
 #define signal_pending(task) pending_signal
@@ -20,6 +21,7 @@
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint32_t __le32;
+typedef uint16_t __le16;
 struct mutex { bool locked; };
 /* Only members accessed by the extracted transport; kernel/DRM owns lifetime. */
 struct lcd_frames {
@@ -199,9 +201,11 @@ int main(void)
 	mutate_read = 0;
 	assert(frame_completed(&fb, 0) == -EIO);
 	assert(fb.completed[0] == 0); /* Error completion never reclaims. */
-	finish(0, 1, 0); completion(0)->reserved[43] = 1;
+	finish(0, 1, 0); completion(0)->reserved[LCD(RECORD_RESERVED_SIZE) - 1] = 1;
 	assert(frame_completed(&fb, 0) == -EPROTO);
-	completion(0)->reserved[43] = 0;
+	finish(0, 1, 0); completion(0)->width = 1;
+	assert(frame_completed(&fb, 0) == -EPROTO);
+	completion(0)->width = 0;
 	assert(frame_completed(&fb, 0) == 1 && fb.completed[0] == 1);
 
 	reset(); fb.sequence[0] = fb.sequence[1] = 1;

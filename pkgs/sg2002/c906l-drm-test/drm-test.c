@@ -95,13 +95,29 @@ int main(int argc, char **argv)
     if (sigaction(SIGINT, &action, NULL) || sigaction(SIGTERM, &action, NULL)) return 1;
     const char *path = argc > 1 ? argv[1] : "/dev/dri/card0";
     unsigned count = 4;
-    if (argc > 3) { fprintf(stderr, "usage: %s [DRM_DEVICE [FRAMES]]\n", argv[0]); return 2; }
-    if (argc == 3) {
+    unsigned damage_width = 0, damage_height = 0;
+    if (argc > 4) {
+        fprintf(stderr, "usage: %s [DRM_DEVICE [FRAMES [WxH]]]\n", argv[0]);
+        return 2;
+    }
+    if (argc >= 3) {
         char *end;
         errno = 0;
         unsigned long parsed = strtoul(argv[2], &end, 10);
         if (errno || *end || parsed < 1 || parsed > 1000) return 2;
         count = parsed;
+    }
+    /* With a rectangle, repeat DIRTYFB over that region instead of flipping
+     * whole frames: this is the path a console or a partial redraw takes. */
+    if (argc == 4) {
+        char *end;
+        errno = 0;
+        unsigned long w = strtoul(argv[3], &end, 10);
+        if (errno || *end != 'x' || w < 1 || w > 240) return 2;
+        unsigned long h = strtoul(end + 1, &end, 10);
+        if (errno || *end || h < 1 || h > 240) return 2;
+        damage_width = w;
+        damage_height = h;
     }
     int fd = open(path, O_RDWR | O_CLOEXEC);
     if (fd < 0) { perror(path); return 1; }
@@ -141,11 +157,19 @@ int main(int argc, char **argv)
     puts("DRM modeset completed: 240x240 XRGB8888 -> shared RGB565BE -> C906L SPI");
     for (unsigned frame = 1; frame < count; frame++) {
         if (stopping) { errno = EINTR; goto out; }
-        bool done = false;
-        draw(&buffers[frame & 1], frame);
-        if (drmModePageFlip(fd, crtc, buffers[frame & 1].fb, DRM_MODE_PAGE_FLIP_EVENT, &done) ||
-            wait_flip(fd, &done)) goto out;
-        printf("page_flip_complete=%u\n", frame);
+        if (damage_width) {
+            drmModeClip clip = { .x1 = 0, .y1 = 0,
+                                 .x2 = damage_width, .y2 = damage_height };
+            draw(&buffers[0], frame);
+            if (drmModeDirtyFB(fd, buffers[0].fb, &clip, 1)) goto out;
+            printf("dirty_complete=%u\n", frame);
+        } else {
+            bool done = false;
+            draw(&buffers[frame & 1], frame);
+            if (drmModePageFlip(fd, crtc, buffers[frame & 1].fb, DRM_MODE_PAGE_FLIP_EVENT, &done) ||
+                wait_flip(fd, &done)) goto out;
+            printf("page_flip_complete=%u\n", frame);
+        }
         fflush(stdout);
     }
     printf("scanout_completed frames=%u; holding last pattern for 15 seconds\n", count);
