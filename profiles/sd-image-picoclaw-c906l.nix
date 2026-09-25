@@ -33,6 +33,10 @@
       healthHost = null;
     };
 
+    # The Nano's onboard mic and speaker amplifier sit on the internal
+    # RXADC/TXDAC. The amplifier has no enable GPIO on this carrier.
+    audio.enable = true;
+
     # Keep the control/regulator transport in stage 1. The optional display
     # probes through udev and may defer until the firmware lease is ready.
     initrd.availableKernelModules = [
