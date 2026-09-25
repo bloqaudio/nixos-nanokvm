@@ -458,8 +458,9 @@
 		 *
 		 * The cv1800b-i2s driver only accepts CBP_CFP (codec
 		 * provider) or CBC_CFC (cpu provider). With no master
-		 * phandles, simple-card picks CBC_CFC — I2S generates
-		 * BCLK/FCLK and the on-die codec follows. */
+		 * phandles, simple-card picks CBC_CFC — I2S3 generates
+		 * BCLK/FCLK and the on-die DAC follows. The ADC always
+		 * drives its own clocks, so link@1 names it provider. */
 		simple-audio-card,dai-link@0 {
 			reg = <0>;
 			format = "i2s";
@@ -494,12 +495,17 @@
 			format = "i2s";
 			/* I2S0 = RX-only, internal-ADC data path. MCLK
 			 * comes from I2S3 (above). Same parse_clk fallback
-			 * trap as link@0; pin sysclk to 12.288 MHz. */
+			 * trap as link@0; pin sysclk to 12.288 MHz.
+			 *
+			 * I2S0 must not generate clocks here too, or it
+			 * samples the ADC's frame at an arbitrary offset. */
+			bitclock-master = <&adc_link_codec>;
+			frame-master = <&adc_link_codec>;
 			cpu {
 				sound-dai = <&i2s0>;
 				system-clock-frequency = <12288000>;
 			};
-			codec { sound-dai = <&audio_adc>; };
+			adc_link_codec: codec { sound-dai = <&audio_adc>; };
 		};
 	};
 };
