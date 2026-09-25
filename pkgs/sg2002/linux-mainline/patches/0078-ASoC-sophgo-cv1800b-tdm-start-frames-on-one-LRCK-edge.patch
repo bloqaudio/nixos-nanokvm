@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bloqaudio <qoshea@gmail.com>
+Date: Thu, 24 Sep 2026 22:25:56 -0500
+Subject: [PATCH 2/2] ASoC: sophgo: cv1800b-tdm: start frames on one LRCK edge
+ only
+
+FRAME_SETTING resets with FS_IDEF set, which starts a frame on both
+LRCK edges. When the internal ADC drives the clocks, a one-slot capture
+then alternates real samples with the empty half of the codec frame.
+Clear it so a frame starts once per LRCK period, as the vendor driver
+does in set_fmt.
+---
+ sound/soc/sophgo/cv1800b-tdm.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/sound/soc/sophgo/cv1800b-tdm.c b/sound/soc/sophgo/cv1800b-tdm.c
+index 4cbac8c..cd980f9 100644
+--- a/sound/soc/sophgo/cv1800b-tdm.c
++++ b/sound/soc/sophgo/cv1800b-tdm.c
+@@ -82,6 +82,7 @@
+ 
+ /* CV1800B_FRAME_SETTING (0x004) */
+ #define FRAME_LENGTH_MASK                  GENMASK(8, 0)
++#define FS_CHANNEL_SYNC_MASK               GENMASK(14, 14)
+ #define FS_ACTIVE_LENGTH_MASK              GENMASK(23, 16)
+ 
+ /* CV1800B_I2S_INT_EN (0x020) */
+@@ -512,6 +513,14 @@ static int cv1800b_i2s_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
+ 	val = readl(i2s->base + CV1800B_BLK_MODE_SETTING);
+ 	val = u32_replace_bits(val, master, BLK_MASTER_MODE_MASK);
+ 	writel(val, i2s->base + CV1800B_BLK_MODE_SETTING);
++
++	/*
++	 * The reset default starts a frame on both LRCK edges, so a
++	 * one-slot capture takes every other sample from the empty half.
++	 */
++	val = readl(i2s->base + CV1800B_FRAME_SETTING);
++	val = u32_replace_bits(val, 0, FS_CHANNEL_SYNC_MASK);
++	writel(val, i2s->base + CV1800B_FRAME_SETTING);
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+
