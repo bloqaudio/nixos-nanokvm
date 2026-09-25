@@ -90,6 +90,14 @@ let
       patch = ./patches/0005-ASoC-cv1800b-sound-adc-init-analog-stage.patch;
     })
     (patch {
+      name = "asoc-cv1800b-sound-adc-leave-end2us-and-capture-mono";
+      patch = ./patches/0077-ASoC-cv1800b-sound-adc-leave-END2US-alone-and-capture-mono.patch;
+    })
+    (patch {
+      name = "asoc-cv1800b-tdm-start-frames-on-one-lrck-edge";
+      patch = ./patches/0078-ASoC-sophgo-cv1800b-tdm-start-frames-on-one-LRCK-edge.patch;
+    })
+    (patch {
       name = "thermal-cv1800-Add-cv1800-thermal-driver-support";
       patch = ./patches/0006-thermal-cv1800-Add-cv1800-thermal-driver-support.patch;
     })
@@ -499,6 +507,25 @@ let
         we add SDM CTUNE (ANA3) + a cross-block DAC ANA0 ECO bit the
         vendor cv181xadc clears in hw_params. Without these the RXADC
         enables but produces no samples.
+      '';
+    };
+    "asoc-cv1800b-sound-adc-leave-end2us-and-capture-mono" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "folded into the analog-stage init patch it corrects";
+      notes = ''
+        Stops forcing the END2US override, which turned PGA gains of
+        16 dB and up into noise, and limits capture to the one channel
+        the RXADC actually fills.
+      '';
+    };
+    "asoc-cv1800b-tdm-start-frames-on-one-lrck-edge" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "cv1800b-tdm programs FS_IDEF itself upstream";
+      notes = ''
+        Clears FRAME_SETTING.FS_IDEF so a frame starts on one LRCK edge.
+        Needed once the internal ADC is the clock provider for I2S0.
       '';
     };
     "thermal-cv1800-Add-cv1800-thermal-driver-support" = {
