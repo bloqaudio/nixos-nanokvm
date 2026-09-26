@@ -5,11 +5,6 @@ let
   aux = config.sg2002.auxCore;
   lcd = builtins.elem "picoclawLcd" aux.peripherals;
   ctl = pkgs.sg2002-c906l-ctl-for (pkgs.sg2002-c906l-contract-for aux.peripherals);
-  # Direct hw: ALSA access only. The desktop wrapper adds PulseAudio,
-  # PipeWire and codec plugins to every executable's runtime closure.
-  alsaTools = (pkgs.alsa-utils.override { withPipewireLib = false; }).overrideAttrs (_: {
-    postFixup = "";
-  });
 in {
   imports = [
     ../modules/sg2002-usb-gadget-initrd.nix
@@ -183,9 +178,9 @@ in {
         iw = "${pkgs.iw}/bin/iw";
         wpa_cli = "${pkgs.wpa_supplicant}/bin/wpa_cli";
       } // lib.optionalAttrs config.sg2002.audio.enable {
-        aplay = "${alsaTools}/bin/aplay";
-        arecord = "${alsaTools}/bin/arecord";
-        amixer = "${alsaTools}/bin/amixer";
+        aplay = "${config.sg2002.audio.package}/bin/aplay";
+        arecord = "${config.sg2002.audio.package}/bin/arecord";
+        amixer = "${config.sg2002.audio.package}/bin/amixer";
       } // lib.optionalAttrs aux.enable {
         sg2002-c906l-ctl = "${ctl}/bin/sg2002-c906l-ctl";
       } // lib.optionalAttrs lcd {

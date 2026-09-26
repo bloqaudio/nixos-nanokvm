@@ -111,6 +111,18 @@ in {
     enable = lib.mkEnableOption "the SG2002 onboard RXADC/TXDAC ALSA simple-card";
 
     pipewire.enable = lib.mkEnableOption "a minimal system-wide PipeWire and WirePlumber audio service";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      # Direct hw: ALSA access only. The desktop wrapper adds PulseAudio,
+      # PipeWire and codec plugins (ffmpeg among them) to every executable's
+      # runtime closure.
+      default = (pkgs.alsa-utils.override { withPipewireLib = false; }).overrideAttrs (_: {
+        postFixup = "";
+      });
+      defaultText = lib.literalMD "`alsa-utils` without its plugin wrapper";
+      description = "aplay, arecord and amixer for the onboard card.";
+    };
   };
 
   config = lib.mkMerge [
@@ -126,6 +138,10 @@ in {
         }
       ];
     }
+
+    (lib.mkIf cfg.enable {
+      environment.systemPackages = [ cfg.package ];
+    })
 
     (lib.mkIf cfg.pipewire.enable {
       # A system unit is intentional here: this target has no permanent login
