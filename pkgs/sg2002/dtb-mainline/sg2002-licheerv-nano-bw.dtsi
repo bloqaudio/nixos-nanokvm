@@ -130,7 +130,9 @@
  *                         "Failed to initialize a non-removable card"
  *   - non-removable + no-mmc + no-sd — SDIO only
  *   - disable-wp        — no write-protect pin
- *   - max-frequency 50 MHz — matches huashan-pi
+ *   - max-frequency 75 MHz — the host divides a 300 MHz source by 2N,
+ *     so the steps above huashan-pi's 50 MHz are 75 and 150; tuning
+ *     fails at 150 MHz
  *   - resets = <&rst 17>   — deassert SDIO1 soft reset. Mainline
  *     U-Boot leaves this asserted; the cv18xx ops path in
  *     sdhci-of-dwcmshc never consumed a reset, so the IP stayed dead
@@ -152,7 +154,7 @@
 	non-removable;
 	no-mmc;
 	no-sd;
-	max-frequency = <50000000>;
+	max-frequency = <75000000>;
 	resets = <&rst 17>;
 
 	/* CLKGEN fixup — see sdhci-of-dwcmshc-cv18xx-reset.patch.
