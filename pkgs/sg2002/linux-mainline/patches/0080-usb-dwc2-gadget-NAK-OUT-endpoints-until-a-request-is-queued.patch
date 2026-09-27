@@ -1,0 +1,47 @@
+From: bloqaudio <qoshea@gmail.com>
+Date: Sun, 27 Sep 2026 12:30:00 -0500
+Subject: [PATCH] usb: dwc2: gadget: NAK OUT endpoints until a request is
+ queued
+
+dwc2_hsotg_ep_enable() sets SNAK only for isochronous OUT endpoints. A
+bulk or interrupt OUT endpoint comes up active with NAK clear, so until
+the function driver queues its first request the core ACKs OUT data and
+writes it into the RX FIFO. That FIFO is shared by every OUT endpoint;
+in DMA mode nothing drains an entry for an endpoint with no descriptor
+armed, and every later OUT packet, EP0 SETUPs included, queues behind it.
+
+u_serial queues ACM OUT requests only when the tty is opened. A host
+that writes to the ACM port first, as ModemManager's probe does, wedges
+the whole gadget: on an SG2002 (DWC_otg 4.20a, descriptor DMA), three
+bytes of "AT\r" left GRXSTSR pointing at a 3-byte packet on the idle
+ACM endpoint, the next CDC-ECM SET_ETHERNET_PACKET_FILTER never
+completed, and ECM bulk OUT stopped for good.
+
+Set SNAK on every non-EP0 OUT endpoint when it is enabled.
+dwc2_hsotg_start_req() already clears the NAK when it arms a request,
+and dwc2_hsotg_ep_disable() sets it again.
+---
+ drivers/usb/dwc2/gadget.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -4156,6 +4156,15 @@ static int dwc2_hsotg_ep_enable(struct usb_ep *ep,
+ 	}
+ 
+ 	/*
++	 * NAK OUT tokens until a request is queued; dwc2_hsotg_start_req()
++	 * clears the NAK. Otherwise the core accepts a packet into the RX
++	 * FIFO, which all OUT endpoints share, and in DMA mode nothing drains
++	 * it: every OUT endpoint, EP0 SETUPs included, stalls behind it.
++	 */
++	if (!dir_in && index)
++		epctrl |= DXEPCTL_SNAK;
++
++	/*
+ 	 * if the hardware has dedicated fifos, we must give each IN EP
+ 	 * a unique tx-fifo even if it is non-periodic.
+ 	 */
+-- 
+2.53.0
