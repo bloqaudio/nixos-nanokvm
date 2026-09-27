@@ -39,12 +39,8 @@
 	/* High-speed. Measured on a LicheeRV Nano W on 2026-09-19: full-speed tops out at
 	 * ~7.7 Mbit/s each way; high-speed carries ~220 Mbit/s into the
 	 * board and ~190 Mbit/s out with CDC-ECM. The old full-speed cap
-	 * dated from PicoClaw-carrier link errors (-71 EPROTO). Those did
-	 * not recur when the PicoClaw was retested at high-speed with this
-	 * layout on 2026-09-19, but that carrier's bulk-IN path stopped
-	 * once, silently, 12 minutes into a board-to-host soak, so the
-	 * PicoClaw compositions keep full-speed via
-	 * sg2002-usb-full-speed.dtsi. The Nano W has not been soaked for
+	 * dated from PicoClaw-carrier link errors (-71 EPROTO), which did
+	 * not recur with this layout. The Nano W has not been soaked for
 	 * longer than about ten minutes per boot at high-speed. */
 	maximum-speed = "high-speed";
 

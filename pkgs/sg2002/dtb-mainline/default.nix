@@ -207,21 +207,13 @@ let
   ];
 
   # PicoClaw: keep the proven no-WiFi USB/NFS base, then add the onboard
-  # ST7789 SPI panel and its three GPIO control lines. The carrier stays
-  # at full-speed. Retested at high-speed on 2026-09-19 with the shipped
-  # FIFO layout: the 2026-08 -71 EPROTO enumeration errors did not return
-  # and throughput matched the Nano W (225/181 Mbit/s), but 12 minutes
-  # into a board-to-host soak the gadget's bulk-IN path stopped completing
-  # requests with no kernel message on either side; EP0 and bulk-OUT kept
-  # working, and only a host-side port reset brought usb0 back. Two later
-  # soaks of 20 and 30 minutes were clean. A transport that can silently
-  # stop is worse than one that is slow, so the pin remains until that
-  # wedge is understood; picoclaw-lcd-high-speed is the retest DTB.
+  # ST7789 SPI panel and its three GPIO control lines. USB runs high-speed;
+  # a silent bulk-IN stall seen once at high speed was never root-caused,
+  # and only a host-side port reset recovers it.
   dtbPicoClawLcd = buildDtb "sg2002-licheerv-nano-picoclaw-lcd" [
     ./sg2002-licheerv-nano-bw.dtsi
     ./sg2002-licheerv-nano-bw-nowifi.dtsi
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
-    ./sg2002-usb-full-speed.dtsi
   ];
 
   # PicoClaw WiFi-root variant: retain the B-W board's SDIO1/AIC8800
@@ -229,14 +221,6 @@ let
   # not the SDIO1 pins, so the overlays can coexist.
   dtbPicoClawLcdWifi = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-wifi" [
     ./sg2002-licheerv-nano-bw.dtsi
-    ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
-    ./sg2002-usb-full-speed.dtsi
-  ];
-
-  # Opt-in high-speed PicoClaw for retesting that carrier.
-  dtbPicoClawLcdHighSpeed = buildDtb "sg2002-licheerv-nano-picoclaw-lcd-high-speed" [
-    ./sg2002-licheerv-nano-bw.dtsi
-    ./sg2002-licheerv-nano-bw-nowifi.dtsi
     ./sg2002-licheerv-nano-picoclaw-lcd.dtsi
   ];
 
@@ -288,7 +272,6 @@ let
           ./sg2002-licheerv-nano-bw-nowifi.dtsi
           ./sg2002-licheerv-nano-picoclaw-c906l-lcd.dtsi
           framebufferContractOverlay
-          ./sg2002-usb-full-speed.dtsi
         ]
         contract;
     in
@@ -465,7 +448,6 @@ in
   nowifi-full-speed = dtbNoWifiFullSpeed;
   picoclaw-lcd = dtbPicoClawLcd;
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
-  picoclaw-lcd-high-speed = dtbPicoClawLcdHighSpeed;
   picoclaw-c906l-lcd-for = dtbPicoClawC906LLcdFor;
   pcie = dtbPcie;
   pcie-nowifi = dtbPcieNoWifi;
