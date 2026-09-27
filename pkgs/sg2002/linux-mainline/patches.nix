@@ -70,6 +70,10 @@ let
       patch = ./patches/0076-usb-dwc2-gadget-ask-u_ether-for-DMA-friendly-RX-buffers.patch;
     })
     (patch {
+      name = "usb-dwc2-gadget-nak-out-endpoints-until-a-request-is-queued";
+      patch = ./patches/0080-usb-dwc2-gadget-NAK-OUT-endpoints-until-a-request-is-queued.patch;
+    })
+    (patch {
       name = "mmc-sdhci-of-dwcmshc-sg2002-sdio1-init";
       patch = ./patches/0002-mmc-sdhci-of-dwcmshc-SG2002-SDIO1-init-pinmux-readba.patch;
     })
@@ -84,6 +88,10 @@ let
     (patch {
       name = "dmaengine-cv1800b-dmamux-fix-channel-allocation-order";
       patch = ./patches/0003-dmaengine-cv1800b-dmamux-fix-channel-allocation-order.patch;
+    })
+    (patch {
+      name = "dmaengine-dw-axi-dmac-quiet-missing-apb-block";
+      patch = ./patches/0079-dmaengine-dw-axi-dmac-don-t-report-a-missing-APB-block-as-an-error.patch;
     })
     (patch {
       name = "asoc-cv1800b-sound-adc-init-analog-stage";
@@ -478,6 +486,18 @@ let
         not SoC-specific; verified by hardware A/B.
       '';
     };
+    "usb-dwc2-gadget-nak-out-endpoints-until-a-request-is-queued" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dwc2_hsotg_ep_enable sets SNAK on non-EP0 OUT endpoints upstream";
+      notes = ''
+        A bulk OUT endpoint came up with NAK clear, so host data sent before
+        the function queued a request landed in the shared RX FIFO with no
+        DMA target and blocked every OUT endpoint and EP0 SETUP behind it.
+        ModemManager's AT probe of the idle ACM port wedged CDC-ECM this way.
+        Generic dwc2 change, not SoC-specific.
+      '';
+    };
     "mmc-sdhci-of-dwcmshc-sg2002-sdio1-init" = {
       origin = "local";
       upstreamStatus = "local-only";
@@ -526,6 +546,15 @@ let
       notes = ''
         Clears FRAME_SETTING.FS_IDEF so a frame starts on one LRCK edge.
         Needed once the internal ADC is the clock provider for I2S0.
+      '';
+    };
+    "dmaengine-dw-axi-dmac-quiet-missing-apb-block" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dw-axi-dmac stops logging the missing APB block at error level upstream";
+      notes = ''
+        Every audio stream start logged "apb_regs not initialized" at
+        error level, which the PicoClaw prints over the LCD console.
       '';
     };
     "thermal-cv1800-Add-cv1800-thermal-driver-support" = {
