@@ -1,7 +1,0 @@
-/* PicoClaw Wi-Fi SDIO clock. The host divides a 300 MHz source by 2N, so
- * the steps above 50 MHz are 75 and 150; tuning fails at 150 MHz.
- */
-
-&sdhci1 {
-	max-frequency = <75000000>;
-};

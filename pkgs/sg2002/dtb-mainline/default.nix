@@ -289,7 +289,6 @@ let
           ./sg2002-licheerv-nano-picoclaw-c906l-lcd.dtsi
           framebufferContractOverlay
           ./sg2002-usb-full-speed.dtsi
-          ./sg2002-picoclaw-sdio-75mhz.dtsi
         ]
         contract;
     in
