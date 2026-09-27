@@ -70,6 +70,9 @@ in {
       matchConfig.Name = "wlan0";
       networkConfig.DHCP = "yes";
       linkConfig.RequiredForOnline = "no";
+      cakeConfig = lib.mkIf (config.sg2002.wifi.uplinkBandwidth != null) {
+        Bandwidth = config.sg2002.wifi.uplinkBandwidth;
+      };
     };
   };
 }

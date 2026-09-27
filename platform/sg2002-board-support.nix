@@ -149,6 +149,19 @@ in {
           the Nix store.
         '';
       };
+      uplinkBandwidth = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "60M";
+        description = ''
+          Cap wlan0 transmit with a CAKE qdisc, in systemd.network(5)
+          `Bandwidth=` syntax.  Wi-Fi is half-duplex: an uncapped uplink
+          takes most of the airtime and starves concurrent downlink traffic,
+          including this board's own TCP ACKs.  Applies to the stage-2
+          systemd-networkd wlan0 configuration; null leaves transmit
+          unshaped.
+        '';
+      };
     };
 
     authorizedKeys = mkOption {

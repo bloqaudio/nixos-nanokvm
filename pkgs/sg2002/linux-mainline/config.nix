@@ -666,7 +666,7 @@ with lib.kernel; {
   POWER_SUPPLY = no;
   MFD_AXP20X_I2C = no;
 
-  # Networking: no traffic shaping, software bridge, or VLANs. Netfilter
+  # Networking: no software bridge or VLANs. Netfilter
   # stays on — the RISC-V defconfig provides the whole iptables/conntrack
   # set as modules, so an unused firewall costs the board nothing loaded.
   NETFILTER = yes;
@@ -700,7 +700,10 @@ with lib.kernel; {
   IP6_NF_MATCH_RPFILTER = module;
   NFT_FIB_IPV4 = module;
   NFT_FIB_IPV6 = module;
-  NET_SCHED = no;
+  # A Wi-Fi board saturating its uplink starves its own downlink on the
+  # shared channel; CAKE lets sg2002.wifi.uplinkBandwidth cap it.
+  NET_SCHED = yes;
+  NET_SCH_CAKE = module;
   BRIDGE = no;
   VLAN_8021Q = no;
   XFRM = no;
