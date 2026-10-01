@@ -623,7 +623,6 @@ in
   sg2002-dtb-mainline-oled = dtbMainline.oled;
   sg2002-dtb-mainline-picoclaw-lcd = dtbMainline.picoclaw-lcd;
   sg2002-dtb-mainline-picoclaw-lcd-wifi = dtbMainline.picoclaw-lcd-wifi;
-  sg2002-dtb-mainline-picoclaw-lcd-high-speed = dtbMainline.picoclaw-lcd-high-speed;
   sg2002-dtb-mainline-picoclaw-c906l-lcd-for = contract:
     dtbMainline.picoclaw-c906l-lcd-for contract;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
