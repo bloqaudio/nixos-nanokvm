@@ -87,6 +87,7 @@ in
         # equivalent cfg80211/string API updates for the SDIO driver.
         patch -p1 < ${./patches/aic8800-sdio-linux-7.1-cfg80211.patch}
         patch -p1 < ${./patches/aic8800-sdio-vmalloc-include.patch}
+        patch -p1 < ${./patches/aic8800-sdio-rx-from-tx-thread.patch}
       )
     '';
 
