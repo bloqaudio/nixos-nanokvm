@@ -36,7 +36,7 @@
   diskDevice = config.disko.devices.disk.sg2002-sd.device;
   firmwarePart = partitionDevice diskDevice 1;
   rootPart = partitionDevice diskDevice 2;
-  upstreamExtlinuxBuilder = import "${pkgs.path}/nixos/modules/system/boot/loader/generic-extlinux-compatible/extlinux-conf-builder.nix" {
+  upstreamExtlinuxBuilder = import (pkgs.path + "/nixos/modules/system/boot/loader/generic-extlinux-compatible/extlinux-conf-builder.nix") {
     inherit lib pkgs;
   };
   # The generic builder's plain `cp` may use Btrfs copy_file_range and retain
