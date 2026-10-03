@@ -407,9 +407,10 @@
 	/* Thermal zone bound to the on-die tempsen above. Driver
 	 * requires devm_thermal_of_zone_register() to find a zone
 	 * referencing the sensor; without this it returns -ENODEV.
-	 * Critical at 125 °C — vendor cv181x DT uses 130 °C, but the
-	 * silicon datasheet absolute-max is 125 °C and we'd rather
-	 * orderly_poweroff before the SoC actually goes pop. The
+	 * SG2002 Preliminary Datasheet v1.0-alpha, section 2.5.2 note 3
+	 * (p. 27) and section 2.5.5 (p. 32), limits packaged DRAM to
+	 * 115 °C. Request shutdown at 105 °C to leave nominal margin
+	 * for detection and shutdown; 125 °C is destructive. The
 	 * 1 s polling delay is borrowed from vendor; the cv1800
 	 * driver also fires the zone via threshold IRQ when trips
 	 * are crossed, so polling is just a fallback. */
@@ -421,7 +422,7 @@
 
 			trips {
 				soc_crit: soc-crit {
-					temperature = <125000>; /* mC */
+					temperature = <105000>; /* mC */
 					hysteresis = <2000>;
 					type = "critical";
 				};
