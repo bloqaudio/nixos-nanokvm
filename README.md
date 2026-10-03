@@ -58,6 +58,10 @@ AIC8800 Wi-Fi support, audio, camera/ISP/codec drivers, C906L toolchain and
 firmware, and reusable board modules. The NanoKVM web application is packaged
 separately; it is not run by the minimal initrd.
 
+Mainline images expose the SG2002 hardware RNG through `/dev/hwrng`.
+The driver credits 900 bits of entropy per 1024 output bits when feeding
+Linux's random pool. This is the configured credit, not a measured entropy estimate.
+
 ```sh
 nix develop .#c906l
 nix build .#checks.x86_64-linux.sg2002-c906l-rust-all-timers
