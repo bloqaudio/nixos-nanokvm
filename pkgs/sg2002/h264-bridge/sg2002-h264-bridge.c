@@ -1,11 +1,10 @@
 /*
  * SG2002 V4L2 H.264 bridge:
  *
- *   /dev/video0 (UYVY capture) -> CPU UYVY->NV12/NV21 -> /dev/video1 (Coda)
- *   /dev/video0 (SRGGB12P capture) -> CPU box demosaic/downsample -> NV12
- *                                      -> /dev/video1 (Coda)
+ *   CSI (UYVY capture) -> CPU UYVY->NV12/NV21 -> Coda encoder
+ *   CSI (SRGGB12P capture) -> CPU box demosaic/downsample -> NV12 -> Coda
  * or, with --scaler vpss:
- *   /dev/video0 -> /dev/video2 (VPSS scaler/CSC mem2mem) -> /dev/video1,
+ *   CSI -> VPSS scaler/CSC mem2mem -> Coda encoder,
  *   a zero-copy dmabuf chain (capture expbuf -> scaler OUTPUT import;
  *   scaler CAPTURE and encoder OUTPUT share the same CMA-heap buffers).
  *   sinks: Annex-B file/stdout and/or RTSP publisher (mediamtx-style).
@@ -62,9 +61,10 @@
 #define ENCODER_OUT_BUFFERS 4
 #define ENCODER_CAP_BUFFERS 3
 #define SCALER_MID_BUFFERS 4
-#define DEFAULT_CAPTURE "/dev/video0"
-#define DEFAULT_ENCODER "/dev/video1"
-#define DEFAULT_SCALER "/dev/video2"
+/* Probe order can swap Coda and VPSS video numbers between boots. */
+#define DEFAULT_CAPTURE "/dev/v4l/by-path/platform-a0c2000.video-capture-video-index0"
+#define DEFAULT_ENCODER "/dev/v4l/by-path/platform-b030000.video-codec-video-index0"
+#define DEFAULT_SCALER "/dev/v4l/by-path/platform-a080000.vpss-video-index0"
 #define DMA_HEAP_SYSTEM "/dev/dma_heap/system"
 /* vb2-dma-contig imports must be single-segment; the system heap can
  * hand a multi-segment 3 MiB buffer, so prefer the guaranteed-contiguous
@@ -3301,6 +3301,7 @@ static void usage(const char *program)
 		"usage: %s [capture-node] [encoder-node] [options]\n"
 		"       %s [capture-node] [encoder-node] [h264-output|-] [full|half]   (legacy)\n"
 		"       %s --raw nv12|nv21|srggb12 width height input.raw output.raw\n"
+		"default nodes use stable /dev/v4l/by-path platform links\n"
 		"\n"
 		"options:\n"
 		"  --output PATH|-      write the Annex-B stream (repeatable with --rtsp)\n"
