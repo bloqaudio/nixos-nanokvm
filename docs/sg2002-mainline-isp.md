@@ -135,12 +135,17 @@ zero stale lines. Restoring the original flags reproduced 1,986 stale lines.
 The probe was unloaded afterwards.
 
 With the corrected flags, two HDMI-to-NV12 runs produced 301 strictly
-decodable pictures each at 960×540 and approximately 58–60 fps. The original
-hardware-to-hardware stream also decoded successfully: the demonstrated
-PCIe failure concerns CPU access to captured frames, unlike the camera's
-cached Coda output. PCIe validation used the runtime probe; an attempted
-warm boot into the corrected DT failed and the watchdog recovered the
-original SD system. The camera validation above used the final DT at boot.
+decodable pictures each at 960×540 and approximately 58–60 fps. A short
+hardware-to-hardware stream with the original flags also decoded successfully.
+However, a later 30-second 1920×1080 RTSP recording failed strict decoding
+after restoring the original flags. Reapplying the correction with the same
+service and bridge binary produced 1,342 strictly decodable pictures in
+29.996 seconds (44.7 fps). That bridge copied compressed access units into
+cached memory before RTSP packetisation; raw frames stayed in DMA-BUFs.
+The coherency correction is therefore still required at the higher setting.
+PCIe validation used the runtime probe; an attempted warm boot into the
+corrected DT failed and the watchdog recovered the original SD system.
+The camera validation above used the final DT at boot.
 
 ## Board evidence: 2026-09-13
 
