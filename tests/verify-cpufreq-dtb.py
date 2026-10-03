@@ -55,6 +55,12 @@ trip = zone + "/trips/cpu-passive"
 assert get(scaling, trip, "temperature") == "85000"
 assert get(scaling, trip, "hysteresis") == "5000"
 assert get(scaling, trip, "type", "s") == "passive"
+# Packaged DRAM is limited to 115 C. Check the final carrier DT, including
+# overlays, leaves 10 C nominal margin for shutdown after passive cooling.
+critical = zone + "/trips/soc-crit"
+assert get(scaling, critical, "type", "s") == "critical"
+critical_temp = int(get(scaling, critical, "temperature"))
+assert int(get(scaling, trip, "temperature")) < critical_temp <= 105000
 cooling = zone + "/cooling-maps/cpu-map"
 assert get(scaling, cooling, "trip") == get(scaling, trip, "phandle")
 assert get(scaling, cooling, "cooling-device").split() == [
