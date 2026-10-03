@@ -1659,8 +1659,8 @@ static int rtsp_send_au(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 /* Feed one coded access unit to the RTSP sink; handles (re)connect and
  * parameter-set discovery.  Never blocks the pipeline for long: failures
  * flip the sink into retry-later state and streaming continues. */
-static void rtsp_offer(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
-		       uint64_t pts_ms)
+static void rtsp_offer_buffer(struct rtsp_sink *sink, const uint8_t *buf,
+			      size_t size, uint64_t pts_ms)
 {
 	if (!sink->have_params) {
 		struct nal_view nals[32];
@@ -1695,6 +1695,24 @@ static void rtsp_offer(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
 		fprintf(stderr, "rtsp: send failed, will retry\n");
 		rtsp_close(sink);
 	}
+}
+
+static void rtsp_offer(struct rtsp_sink *sink, const uint8_t *buf, size_t size,
+		       uint64_t pts_ms)
+{
+	/* Coda's DMA output is uncached. Copy the compressed access unit once
+	 * before the byte-wise Annex-B scans and RTP packetisation. Raw video
+	 * frames stay in the hardware DMA-BUF pipeline. */
+	uint8_t *cached = malloc(size);
+
+	if (!cached) {
+		perror("rtsp: allocate access unit");
+		rtsp_close(sink);
+		return;
+	}
+	memcpy(cached, buf, size);
+	rtsp_offer_buffer(sink, cached, size, pts_ms);
+	free(cached);
 }
 
 #ifdef ENABLE_PCMA
