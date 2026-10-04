@@ -76,10 +76,9 @@
 		};
 	};
 
-	/* I2C0 on the dedicated IIC0 pair — pull-ups are required by
-	 * the I2C protocol and the on-die pad pulls (~50 kΩ) are weak;
-	 * external 4.7-10 kΩ resistors on the user's wiring are still
-	 * the right answer if they're driving long traces. */
+	/* Existing I2C0 configuration on pads named IIC0_SCL/SDA.
+	 * The on-die pad pulls are weak, so external 4.7-10 kΩ resistors
+	 * are recommended when driving long traces. */
 	i2c0_cfg: i2c0-cfg {
 		i2c0-pins {
 			pinmux = <PINMUX(PIN_IIC0_SCL, 0)>,
@@ -296,11 +295,13 @@
 	};
 };
 
-/* I2C0 on the dedicated IIC0 pair. IIC1..4 also have external
- * alternate-function routes, selected by carrier-specific overlays:
+/* IIC1..4 have external alternate-function routes, selected by
+ * carrier-specific overlays:
  * the OLED uses IIC1 on SD1_D3/D0 and the camera uses IIC4 on
  * PWR_WAKEUP0/PWR_BUTTON1. Their pins can conflict with SDIO,
- * camera, display or other clients, so leave routing to each board. */
+ * camera, display or other clients, so leave routing to each board.
+ * The existing I2C0 configuration uses IIC0_SCL/SDA function 0; vendor
+ * sources disagree on its signal name, so its routing needs validation. */
 &i2c0 {
 	pinctrl-0 = <&i2c0_cfg>;
 	pinctrl-names = "default";

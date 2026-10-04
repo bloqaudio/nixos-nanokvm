@@ -240,8 +240,8 @@ with lib.kernel; {
   SOPHGO_CV1800B_ADC = yes;
   SENSORS_IIO_HWMON = yes;
 
-  # DesignWare I2C controllers: IIC0 has a dedicated pair and IIC1..4
-  # have alternate-function routes. Board overlays select the pins
+  # DesignWare I2C controllers: IIC1..4 have alternate-function routes.
+  # The existing IIC0 pad routing needs validation. Overlays select pins
   # and clients (including the IIC1 OLED and IIC4 camera). Built-in
   # with the chardev for userspace access to each enabled bus.
   I2C = yes;
