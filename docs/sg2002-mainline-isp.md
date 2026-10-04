@@ -41,6 +41,17 @@ Coda's current SPS crop rewrite omits VUI. Until VUI support is implemented,
 image comparisons must explicitly decode as full-range BT.601 with a linear
 transfer function; decoder defaults do not establish correct colour rendering.
 
+The bridge always uses VPSS and feeds NV12 to Coda. The CPU conversion,
+offline `--raw` mode, `--io`, `--scaler`, `--format`, and legacy positional
+output/size arguments have been removed. Use `--isp` for a Bayer camera;
+HDMI capture goes directly to VPSS. Output and size use named options.
+
+`--max-fps N` caps the hardware pipeline's processing rate. Excess capture
+frames are requeued before scaling and encoding, without copying their pixels
+or sleeping while holding a capture buffer. The source keeps its original
+frame rate; the cap limits processing rather than changing the HDMI mode or
+sensor timing. A slower source is not duplicated to reach the requested rate.
+
 ## Reversible laboratory boot
 
 Build the dedicated profile:

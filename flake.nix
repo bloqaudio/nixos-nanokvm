@@ -551,7 +551,6 @@
             "sg2002-c906l-picoclaw-sd-module-eval"
             "sg2002-usb-boot-runner"
             "sg2002-h264-bridge-colour"
-            "sg2002-h264-bridge-c906"
             "sg2002-c906-tuning"
             "sg2002-wifi-ack-filter"
             "sg2002-clock-kunit"
@@ -701,21 +700,6 @@
             targetPkgs = boardSystems.picoclaw.mainline.initrd.default.pkgs;
             kernel = picoclawLcdConfig.boot.kernelPackages.kernel;
           };
-          sg2002-h264-bridge-c906 =
-            let
-              bridge = boardSystems.pcie.mainline.sd.pkgs.sg2002-h264-bridge;
-              baseline = pkgs.pkgsCross.riscv64.sg2002-h264-bridge.benchmark;
-            in pkgs.runCommand "sg2002-h264-bridge-c906-tests" {
-              nativeBuildInputs = [ pkgs.qemu pkgs.gnugrep ];
-            } ''
-              # QEMU verifies baseline ISA compatibility and output, not
-              # performance. Timing comparisons must run on the real C906.
-              for bench in ${baseline} ${bridge.benchmark}; do
-                qemu-riscv64 -cpu thead-c906 "$bench/bin/bench-convert" > result
-                grep -Eq '^frames=100 cpu_seconds=[0-9.]+ checksum=60633ec7$' result
-              done
-              touch "$out"
-            '';
           sg2002-vpss-state =
             pkgs.callPackage ./pkgs/sg2002/linux-mainline/tests/vpss-state.nix { };
           sg2002-clock-kunit =
