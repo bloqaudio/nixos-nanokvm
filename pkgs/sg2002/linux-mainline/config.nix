@@ -173,6 +173,8 @@ with lib.kernel; {
   EROFS_FS_ZIP = yes;
   EROFS_FS_ZIP_ZSTD = yes;
   BLK_DEV_LOOP = yes;
+  # Create loop devices on demand; eight idle ones cost udev time each boot.
+  BLK_DEV_LOOP_MIN_COUNT = freeform "0";
   OVERLAY_FS = yes;
 
   # The SD image has a small FAT firmware partition. Stage-1 mounts it

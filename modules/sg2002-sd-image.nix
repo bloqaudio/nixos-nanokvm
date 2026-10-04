@@ -174,6 +174,9 @@ in {
         "rootwait"
         "rw"
         "rootfstype=btrfs"
+        # NBD is built in for the USB live boots; an SD boot has no use for
+        # its sixteen preallocated devices.
+        "nbd.nbds_max=0"
         (if config.sg2002.consoleDevice == "tty0" then
           "console=tty0"
         else
