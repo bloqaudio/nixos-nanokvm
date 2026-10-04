@@ -46,6 +46,10 @@ let
       patch = ./patches/0084-hwrng-add-sg2002-support.patch;
     })
     (patch {
+      name = "dt-bindings-iio-adc-sophgo-describe-channel-consumers";
+      patch = ./patches/0082-dt-bindings-iio-adc-sophgo-describe-channel-consumers.patch;
+    })
+    (patch {
       name = "clk-cv18xx-check-pll-lock-status";
       patch = ./patches/0074-clk-cv18xx-check-pll-lock-status.patch;
     })
@@ -353,6 +357,12 @@ let
       upstreamStatus = "draft";
       dropWhen = "upstream Linux supports the SG2002 DesignWare NIST RNG";
       notes = "Uses fresh noise seeds, bounded polling and hardware alarm checks. Entropy credit is disabled by board policy pending characterization.";
+    };
+    "dt-bindings-iio-adc-sophgo-describe-channel-consumers" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "The CV1800B SARADC binding and SoC node describe IIO consumers upstream";
+      notes = "The one-cell argument selects the driver's zero-based channel index.";
     };
     "clk-cv18xx-check-pll-lock-status" = {
       origin = "local";
