@@ -134,7 +134,12 @@
     # ExecCondition succeeds only while more than 1 MiB remains after p2.
     # Once the image has consumed the card, skip cloud-utils growpart before
     # it takes an exclusive whole-device lock and waits for udev on every boot.
-    test "$((part_start + part_sectors + 2048))" -lt "$disk_sectors"
+    # Skip with 2, not 1: nixpkgs lists 1 in the unit's SuccessExitStatus,
+    # and systemd applies that list to ExecCondition as well.
+    if [ "$((part_start + part_sectors + 2048))" -lt "$disk_sectors" ]; then
+      exit 0
+    fi
+    exit 2
   '';
   sdImage = pkgs.runCommand "${imageName}-${config.system.nixos.label}" {} ''
     mkdir -p "$out/sd-image" "$out/nix-support"
