@@ -30,9 +30,10 @@ with Coda. Demosaic, scaling and encoding run in hardware without a CPU frame
 copy. All three DMA engines live under `/soc` to inherit `dma-noncoherent`;
 placing them at the DT root incorrectly gives Coda a cached userspace output
 mapping, which can return stale H.264 bytes when a buffer is reused. The default
-is quarter resolution (640×360 for GC4653). `--size half` requests 1280×720,
-but capture STREAMON runs out of the camera profile's 32 MiB media pool at
-that size.
+is quarter resolution (640×360 for GC4653). `--size half` requests 1280×720
+at the sensor's approximately 30 fps. The camera profile reserves 40 MiB for
+media DMA, which accommodates 720p encoding with two capture buffers; the
+previous 32 MiB pool failed at capture STREAMON at that size.
 
 The bridge passes the capture colour tuple to VPSS and Coda, including the
 extended V4L2 fields. VPSS reports this tuple on both queues because its YUV
@@ -86,6 +87,10 @@ sg2002-h264-bridge /dev/videoX /dev/videoY \
   --frames 300 --output /tmp/isp-300.h264
 ```
 
+For 1280×720, add `--size half` to the bridge command above. Keep both buffer
+counts at two. This uses four times as many output pixels as the default
+640×360 mode without changing the sensor's frame rate.
+
 The encoder retains one synthetic priming/reference picture at the beginning
 of the stream. `--frames 300` excludes it from the live-frame limit: the file
 contains 301 decoded pictures, of which 300 must come from the sensor. Exclude
@@ -129,8 +134,14 @@ also passed 60 frames each with mmap and DMA-BUF input. A separate
 kernel module was used for these final tests. DT regression checks require the
 media nodes to inherit the SoC's noncoherent setting.
 
-The 1280×720 request still failed at capture STREAMON with `ENOMEM` in the
+The 1280×720 request failed at capture STREAMON with `ENOMEM` in the original
 32 MiB media pool; the default 640×360 path restarted successfully afterwards.
+Increasing only that pool to 40 MiB in a subsequent RAM boot let two
+300-live-frame 1280×720 runs complete at 29.6 fps with two capture and two
+middle buffers. Both complete streams passed strict software decoding and
+contained 301 pictures, including the priming picture. A subsequent
+30-live-frame restart also passed strict decoding at 1280×720. This reserves
+an additional 8 MiB from the board's 256 MiB RAM; the sensor mode is unchanged.
 Stream restarts can still log CSI ECC/CRC/word-count indications, and ISP
 streamoff still reports its partial-frame reset. ISP image tuning and H.264
 VUI remain incomplete. No storage was flashed.
