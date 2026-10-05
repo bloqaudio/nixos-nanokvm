@@ -51,6 +51,7 @@
       ++ [ "-Dbpf-framework=disabled" ];
     patches = (old.patches or []) ++ [
       ../patches/systemd/0001-switch-root-clean-detached-initrd-ramfs.patch
+      ../patches/systemd/0002-udev-record-rules-files-under-the-path-the-reload-check-uses.patch
     ];
   });
 in {
