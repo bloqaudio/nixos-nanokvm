@@ -16,11 +16,7 @@
   cfg = config.sg2002;
 
   kernelPkg =
-    if cfg.kernel == "mainline" && cfg.audio.enable && cfg.bluetooth.enable
-    then pkgs.sg2002-kernel-mainline-audio-bluetooth
-    else if cfg.kernel == "mainline" && cfg.audio.enable
-    then pkgs.sg2002-kernel-mainline-audio
-    else if cfg.kernel == "mainline" && cfg.bluetooth.enable
+    if cfg.kernel == "mainline" && cfg.bluetooth.enable
     then pkgs.sg2002-kernel-mainline-bluetooth
     else pkgs."sg2002-kernel-${cfg.kernel}";
   fipPkg =

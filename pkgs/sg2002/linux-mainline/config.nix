@@ -276,12 +276,18 @@ with lib.kernel; {
   PWM = yes;
   PWM_SOPHGO_CV1800 = yes;
 
-  # Audio OFF on the KVM: the SoC has I2S/TDM + internal mic/speaker,
-  # but turning SND_SOC on against the full NixOS base drags ~400 codec
-  # modules we'll never use, and a KVM doesn't need audio. Force the
-  # whole sound subsystem off. (Re-enable SOUND/SND_SOC + the
-  # SND_SOC_CV1800B_* drivers here if audio is ever wanted.)
-  SOUND = no;
+  # The common Nano carrier DT describes the internal RXADC on I2S0 and
+  # TXDAC on I2S3 as the sg2002-onboard simple card. Build in only that
+  # lab-proven minimum: a diskless initrd must not depend on broad ALSA
+  # codec module discovery.
+  SOUND = yes;
+  SND = yes;
+  SND_PCM = yes;
+  SND_SOC = yes;
+  SND_SIMPLE_CARD = yes;
+  SND_SOC_CV1800B_TDM = yes;
+  SND_SOC_CV1800B_ADC_CODEC = yes;
+  SND_SOC_CV1800B_DAC_CODEC = yes;
   # DMA engine + dmamux required for the I2S DMA paths to work.
   # dw_axi_dmac drives the 8-channel AXI DMA at 4330000; the dmamux
   # (drivers/dma/cv1800b-dmamux.c) routes the peripheral request
