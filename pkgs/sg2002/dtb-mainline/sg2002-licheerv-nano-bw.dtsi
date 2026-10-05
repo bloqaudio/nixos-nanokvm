@@ -254,6 +254,31 @@
 		clock-names = "core", "apb";
 	};
 
+	/* Read-only public eFuse shadow words. The UID cell is the word
+	 * pair Sipeed's firmware derives the NanoKVM MAC and hostname
+	 * from (vendor /sys/class/cvi-base/base_uid). The driver turns
+	 * the mac-address cell over the same words into that MAC. */
+	efuse: efuse@3050000 {
+		compatible = "sophgo,sg2002-efuse";
+		reg = <0x03050000 0x1000>;
+		clocks = <&clk CLK_EFUSE>, <&clk CLK_APB_EFUSE>;
+		clock-names = "efuse", "apb";
+
+		nvmem-layout {
+			compatible = "fixed-layout";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			uid@c {
+				reg = <0x0c 0x8>;
+			};
+
+			efuse_mac: mac-address@c {
+				reg = <0x0c 0x8>;
+			};
+		};
+	};
+
 	/* On-die "tempsen" sensor. Driver in our 0006 kernel patch
 	 * (backport of Haylen Chu's v5 LKML series); compatible
 	 * sophgo,cv1800-thermal. The driver requires the IRQ for
@@ -269,6 +294,13 @@
 		#thermal-sensor-cells = <0>;
 		status = "okay";
 	};
+};
+
+/* The GMAC has no fused address; boards that enable it use the one
+ * Sipeed's firmware assigns, instead of a random one each boot. */
+&gmac0 {
+	nvmem-cells = <&efuse_mac>;
+	nvmem-cell-names = "mac-address";
 };
 
 /* Auxiliary SAR-ADC at 0x030F0000. The upstream driver exposes
