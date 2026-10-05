@@ -50,6 +50,14 @@ let
       patch = ./patches/0082-dt-bindings-iio-adc-sophgo-describe-channel-consumers.patch;
     })
     (patch {
+      name = "nvmem-add-sg2002-read-only-public-efuse";
+      patch = ./patches/0083-nvmem-add-SG2002-read-only-public-efuse.patch;
+    })
+    (patch {
+      name = "nvmem-sg2002-efuse-derive-sipeed-mac-address";
+      patch = ./patches/0085-nvmem-sg2002-efuse-derive-Sipeed-MAC-address.patch;
+    })
+    (patch {
       name = "clk-cv18xx-check-pll-lock-status";
       patch = ./patches/0074-clk-cv18xx-check-pll-lock-status.patch;
     })
@@ -363,6 +371,18 @@ let
       upstreamStatus = "draft";
       dropWhen = "The CV1800B SARADC binding and SoC node describe IIO consumers upstream";
       notes = "The one-cell argument selects the driver's zero-based channel index.";
+    };
+    "nvmem-add-sg2002-read-only-public-efuse" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "SG2002 public eFuse shadow support is available upstream";
+      notes = "Read-only NVMEM access to the UID, public user words and device ID; protected and undocumented ranges are never read.";
+    };
+    "nvmem-sg2002-efuse-derive-sipeed-mac-address" = {
+      origin = "local";
+      upstreamStatus = "local-only";
+      dropWhen = "boards no longer need the MAC address Sipeed's firmware assigns";
+      notes = "Reproduces Sipeed's S10uuid formula so a board keeps its MAC across vendor and mainline kernels.";
     };
     "clk-cv18xx-check-pll-lock-status" = {
       origin = "local";
