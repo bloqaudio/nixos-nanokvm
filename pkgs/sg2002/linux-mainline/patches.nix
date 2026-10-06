@@ -110,6 +110,14 @@ let
       patch = ./patches/0079-dmaengine-dw-axi-dmac-don-t-report-a-missing-APB-block-as-an-error.patch;
     })
     (patch {
+      name = "dmaengine-dw-axi-dmac-report-programmed-burst";
+      patch = ./patches/0086-dmaengine-dw-axi-dmac-report-the-burst-length-it-programs.patch;
+    })
+    (patch {
+      name = "dmaengine-dw-axi-dmac-queue-whole-sg-entry";
+      patch = ./patches/0087-dmaengine-dw-axi-dmac-queue-the-whole-scatterlist-entry.patch;
+    })
+    (patch {
       name = "asoc-cv1800b-sound-adc-init-analog-stage";
       patch = ./patches/0005-ASoC-cv1800b-sound-adc-init-analog-stage.patch;
     })
@@ -612,6 +620,18 @@ let
         Every audio stream start logged "apb_regs not initialized" at
         error level, which the PicoClaw prints over the LCD console.
       '';
+    };
+    "dmaengine-dw-axi-dmac-queue-whole-sg-entry" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dw_axi_dma_chan_prep_slave_sg queues a scatterlist entry whose length is not a multiple of its segment length";
+      notes = "Without it a 4095-byte spi-dw DMA transfer dereferences an uninitialised descriptor and resets the board.";
+    };
+    "dmaengine-dw-axi-dmac-report-programmed-burst" = {
+      origin = "local";
+      upstreamStatus = "draft";
+      dropWhen = "dw-axi-dmac honours the slave config's maxburst or reports the MSIZE it programs";
+      notes = "Without it spi-dw asks for receive requests at 8 FIFO entries while the DMAC takes 4, and every DMA receive times out.";
     };
     "thermal-cv1800-Add-cv1800-thermal-driver-support" = {
       origin = "linux-pm";
