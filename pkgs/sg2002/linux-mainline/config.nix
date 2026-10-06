@@ -268,6 +268,8 @@ with lib.kernel; {
   SPI = yes;
   SPI_DESIGNWARE = module;
   SPI_DW_MMIO = module;
+  # Inert until a board gives its SPI controller a `dmas` property.
+  SPI_DW_DMA = yes;
   SPI_SPIDEV = module;
 
   # PWM controller (driver in patches/0008). Built-in so /sys/class/
