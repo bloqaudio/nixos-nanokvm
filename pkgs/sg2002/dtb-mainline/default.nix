@@ -363,6 +363,20 @@ let
     ./sg2002-nanokvm-pcie.dtsi
   ];
 
+  # NanoKVM cube (beta carrier): the PCIe DT with the OLED at 0x3d.
+  dtbCube = buildDtb "sg2002-nanokvm-cube" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-nanokvm-cube.dtsi
+  ];
+
+  dtbCubeFullSpeed = buildDtb "sg2002-nanokvm-cube-full-speed" [
+    ./sg2002-licheerv-nano-bw.dtsi
+    ./sg2002-nanokvm-pcie.dtsi
+    ./sg2002-nanokvm-cube.dtsi
+    ./sg2002-usb-full-speed.dtsi
+  ];
+
   # LicheeRV-Nano with the GC4653 camera FFC: ethernet + camera overlay
   # (IIC4 on PWR_WAKEUP0/PWR_BUTTON1, CAM_MCLK1 on MIPIRX0N, sensor reset
   # on GPIOE1, 2-lane CSI capture).
@@ -450,6 +464,8 @@ in
   picoclaw-lcd-wifi = dtbPicoClawLcdWifi;
   picoclaw-c906l-lcd-for = dtbPicoClawC906LLcdFor;
   pcie = dtbPcie;
+  cube = dtbCube;
+  cube-full-speed = dtbCubeFullSpeed;
   pcie-nowifi = dtbPcieNoWifi;
   pcie-nowifi-c906l-for = dtbPcieNoWifiC906LFor;
   pcie-full-speed = dtbPcieFullSpeed;

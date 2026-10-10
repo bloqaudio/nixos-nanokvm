@@ -17,8 +17,9 @@ The raw image is under `result/sd-image/`. The initial login is `root` with
 password `nixos-nanokvm`; change this shared development password immediately.
 See [the SD guide](docs/sg2002-c906l-picoclaw-sd-image.md) for SSH keys, Wi-Fi
 provisioning and writing the card. Mainline wired SD targets also remain
-available as `boards.licheerv.mainline.sd` and `boards.pcie.mainline.sd`;
-their initial password is `nixos`.
+available as `boards.licheerv.mainline.sd`, `boards.pcie.mainline.sd` and
+`boards.cube.mainline.sd` (NanoKVM Lite/Full with the beta carrier); their
+initial password is `nixos`.
 
 ## USB boot
 
