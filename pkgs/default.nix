@@ -616,6 +616,8 @@ in
   sg2002-dtb-mainline-picoclaw-c906l-lcd-for = contract:
     dtbMainline.picoclaw-c906l-lcd-for contract;
   sg2002-dtb-mainline-pcie = dtbMainline.pcie;
+  sg2002-dtb-mainline-cube = dtbMainline.cube;
+  sg2002-dtb-mainline-cube-full-speed = dtbMainline.cube-full-speed;
   sg2002-dtb-mainline-pcie-nowifi = dtbMainline.pcie-nowifi;
   sg2002-dtb-mainline-pcie-nowifi-c906l-for = contract:
     dtbMainline.pcie-nowifi-c906l-for contract;
