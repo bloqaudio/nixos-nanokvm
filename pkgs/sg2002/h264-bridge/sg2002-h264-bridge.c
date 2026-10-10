@@ -2155,10 +2155,29 @@ static int live_bridge_vpss(const struct bridge_options *opts)
 			}
 		}
 		if (!progress) {
+			int scaler_busy = 0;
+			unsigned int slot;
+
+			for (slot = 0; slot < mid.count; slot++)
+				if (mid_state[slot] == MID_AT_VPSS)
+					scaler_busy = 1;
+
 			struct pollfd fds[3] = {
-				{ .fd = capture_fd, .events = POLLIN },
-				{ .fd = scaler_fd, .events = POLLIN | POLLOUT },
-				{ .fd = encoder_fd, .events = POLLIN | POLLOUT },
+				/* A held frame is waiting for a middle buffer, and
+				 * only the scaler or encoder can free one. The CSI
+				 * node stays readable meanwhile and must not wake
+				 * the loop, or it spins. poll() ignores fd -1.
+				 */
+				{ .fd = held_capture == UINT32_MAX ? capture_fd : -1,
+				  .events = POLLIN },
+				/* An m2m job finishes its OUTPUT and CAPTURE
+				 * buffers together, so POLLIN covers both. An
+				 * m2m node with nothing queued on either side
+				 * reports POLLERR at once, so leave the idle
+				 * scaler out as well.
+				 */
+				{ .fd = scaler_busy ? scaler_fd : -1, .events = POLLIN },
+				{ .fd = encoder_fd, .events = POLLIN },
 			};
 			if (poll(fds, 3,
 #ifdef ENABLE_PCMA
