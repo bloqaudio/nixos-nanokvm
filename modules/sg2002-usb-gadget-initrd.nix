@@ -28,18 +28,24 @@
   hidFunctions = [
     {
       name = "hid.GS0";
+      # Boot subclass: firmware setup screens and pre-boot PIN prompts
+      # only talk to boot keyboards, and f_hid stalls SET_PROTOCOL
+      # without it.
+      subclass = 1;
       protocol = 1;
       reportLength = 8;
       descriptor = "\\x05\\x01\\x09\\x06\\xa1\\x01\\x05\\x07\\x19\\xe0\\x29\\xe7\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x08\\x81\\x02\\x95\\x01\\x75\\x08\\x81\\x03\\x95\\x05\\x75\\x01\\x05\\x08\\x19\\x01\\x29\\x05\\x91\\x02\\x95\\x01\\x75\\x03\\x91\\x03\\x95\\x06\\x75\\x08\\x15\\x00\\x25\\xe7\\x05\\x07\\x19\\x00\\x29\\xe7\\x81\\x00\\xc0";
     }
     {
       name = "hid.GS1";
+      subclass = 0;
       protocol = 2;
       reportLength = 4;
       descriptor = "\\x05\\x01\\x09\\x02\\xa1\\x01\\x09\\x01\\xa1\\x00\\x05\\x09\\x19\\x01\\x29\\x03\\x15\\x00\\x25\\x01\\x95\\x03\\x75\\x01\\x81\\x02\\x95\\x01\\x75\\x05\\x81\\x03\\x05\\x01\\x09\\x30\\x09\\x31\\x09\\x38\\x15\\x81\\x25\\x7f\\x75\\x08\\x95\\x03\\x81\\x06\\xc0\\xc0";
     }
     {
       name = "hid.GS2";
+      subclass = 0;
       protocol = 2;
       reportLength = 6;
       descriptor = "\\x05\\x01\\x09\\x02\\xa1\\x01\\x09\\x01\\xa1\\x00\\x05\\x09\\x19\\x01\\x29\\x05\\x15\\x00\\x25\\x01\\x95\\x05\\x75\\x01\\x81\\x02\\x95\\x01\\x75\\x03\\x81\\x01\\x05\\x01\\x09\\x30\\x09\\x31\\x15\\x00\\x26\\xff\\x7f\\x35\\x00\\x46\\xff\\x7f\\x75\\x10\\x95\\x02\\x81\\x02\\x05\\x01\\x09\\x38\\x15\\x81\\x25\\x7f\\x35\\x00\\x45\\x00\\x75\\x08\\x95\\x01\\x81\\x06\\xc0\\xc0";
@@ -186,11 +192,9 @@
     # f_hid rejects attribute writes once the function is linked.
     if [ ! -e "$G/configs/c.1/${fn.name}" ]; then
       mkdir -p "$G/functions/${fn.name}"
+      echo ${toString fn.subclass} > "$G/functions/${fn.name}/subclass"
       echo ${toString fn.protocol} > "$G/functions/${fn.name}/protocol"
       echo ${toString fn.reportLength} > "$G/functions/${fn.name}/report_length"
-      # f_hid defaults to 10 ms at full-speed, which queues pointer
-      # reports behind a browser sending more than 100 a second.
-      echo 1 > "$G/functions/${fn.name}/interval"
       printf '${fn.descriptor}' > "$G/functions/${fn.name}/report_desc"
       ln -s "$G/functions/${fn.name}" "$G/configs/c.1/"
     fi
