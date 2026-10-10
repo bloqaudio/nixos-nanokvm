@@ -23,7 +23,7 @@ The splitter and the skip policy have tests:
 diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 --- /dev/null
 +++ b/server/common/h264_bridge.go
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,387 @@
 +//go:build nocamera
 +
 +package common
@@ -88,8 +88,8 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	return &h264Bridge{path: os.Getenv(H264BridgeEnv)}
 +}
 +
-+// read returns the oldest queued access unit without blocking; callers
-+// poll at the frame rate and skip empty results.
++// read waits at most bridgeReadWait for a picture; callers poll at the
++// frame rate and skip empty results.
 +func (b *h264Bridge) read(height uint16, bitRate uint16) ([]byte, int) {
 +	if b.path == "" {
 +		return nil, -1
@@ -142,9 +142,8 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	return unit.data, resultPredictFrame
 +}
 +
-+// drainLocked moves everything the splitter has produced into pending. A
-+// reader that fell behind then resumes at the newest key picture instead
-+// of showing the backlog late.
++// A reader that fell behind resumes at the newest key picture instead of
++// showing the backlog late.
 +func (b *h264Bridge) drainLocked() {
 +	for b.units != nil {
 +		select {
@@ -275,8 +274,6 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	waitKey bool
 +}
 +
-+// startsPicture reports whether a NAL with this header and first payload
-+// byte cannot belong to the picture already being assembled.
 +func startsPicture(nalType byte, firstPayload byte) bool {
 +	if nalType != nalTypeSlice && nalType != nalTypeIDR {
 +		return true
@@ -325,8 +322,6 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	}
 +}
 +
-+// nextStartCode returns the offset and length of the first start code at
-+// or after from, or -1.
 +func nextStartCode(buf []byte, from int) (int, int) {
 +	index := bytes.Index(buf[from:], startCode)
 +	if index < 0 {
@@ -339,9 +334,9 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	return index, 3
 +}
 +
-+// pipeDrainedProbe reports whether the pipe holds no more bytes. The writer
-+// emits each picture with one write, and a pipe this large takes it whole,
-+// so an empty pipe after a read means the picture is complete.
++// The writer emits each picture with one write, and a pipe this large
++// takes it whole, so an empty pipe after a read means the picture is
++// complete.
 +func pipeDrainedProbe(pipe *os.File) func() bool {
 +	fd := pipe.Fd()
 +	_, _, _ = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETPIPE_SZ, bridgePipeSize)
@@ -353,9 +348,8 @@ diff -urN a/server/common/h264_bridge.go b/server/common/h264_bridge.go
 +	}
 +}
 +
-+// splitAccessUnits groups an Annex-B byte stream into whole pictures. A
-+// picture is emitted when the header of the next one is seen, or at once
-+// when drained reports that the writer has nothing more queued.
++// A picture is emitted when the header of the next one is seen, or at
++// once when drained reports that the writer has nothing more queued.
 +func splitAccessUnits(r io.Reader, out chan<- accessUnit, drained func() bool) {
 +	assembler := &unitAssembler{out: out}
 +	chunk := make([]byte, 64*1024)
@@ -503,12 +497,12 @@ diff -urN a/server/common/h264_bridge_test.go b/server/common/h264_bridge_test.g
 +		a.add(nal(true, header, 0x88), header&0x1f)
 +	}
 +	feed(0x65)
-+	feed(0x41) // queued: IDR
-+	feed(0x41) // dropped: P (queue full)
++	feed(0x41)
++	feed(0x41)
 +	<-out
-+	feed(0x41) // dropped: P while waiting for key
-+	feed(0x65) // dropped: P
-+	feed(0x41) // queued: IDR
++	feed(0x41)
++	feed(0x65)
++	feed(0x41)
 +	select {
 +	case unit := <-out:
 +		if !unit.key {
